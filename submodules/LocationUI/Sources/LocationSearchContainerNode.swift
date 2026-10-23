@@ -24,9 +24,11 @@ private struct LocationSearchEntry: Identifiable, Comparable {
     let title: String?
     let distance: Double
     let story: Bool
+    let wegramSelected: Bool?
+    let wegramQuery: String?
     
     var stableId: String {
-        return self.location.venue?.id ?? ""
+        return self.wegramSelected == nil ? (self.location.venue?.id ?? "") : WegramLocationPickerSelection.rowIdentity(self.location, index: self.index)
     }
     
     static func ==(lhs: LocationSearchEntry, rhs: LocationSearchEntry) -> Bool {
@@ -51,6 +53,8 @@ private struct LocationSearchEntry: Identifiable, Comparable {
         if lhs.distance != rhs.distance {
             return false
         }
+        if lhs.wegramSelected != nil && !WegramLocationPickerSelection.sameContent(lhs.location, rhs.location) { return false }
+        if lhs.wegramSelected != rhs.wegramSelected || lhs.wegramQuery != rhs.wegramQuery { return false }
         if lhs.story != rhs.story {
             return false
         }
@@ -79,7 +83,7 @@ private struct LocationSearchEntry: Identifiable, Comparable {
             sendVenue(venue, queryId, resultId)
         }, infoAction: self.story && venue.venue == nil ? {
             goToVenue(venue)
-        } : nil, header: header)
+        } : nil, header: self.wegramSelected == nil ? header : nil, wegramSelected: self.wegramSelected, wegramHighlightedQuery: self.wegramQuery)
     }
 }
 
@@ -126,7 +130,7 @@ final class LocationSearchContainerNode: ASDisplayNode {
         return self._isSearching.get()
     }
     
-    public init(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, coordinate: CLLocationCoordinate2D, interaction: LocationPickerInteraction, story: Bool) {
+    public init(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, coordinate: CLLocationCoordinate2D, interaction: LocationPickerInteraction, story: Bool, wegramSelectedVenue: TelegramMediaMap? = nil) {
         self.context = context
         self.interaction = interaction
         self.story = story
@@ -157,8 +161,8 @@ final class LocationSearchContainerNode: ASDisplayNode {
         
         super.init()
         
-        self.backgroundColor = nil
-        self.isOpaque = false
+        self.backgroundColor = interaction.usesWegramSelection ? presentationData.theme.list.plainBackgroundColor : nil
+        self.isOpaque = interaction.usesWegramSelection
         
         self.addSubnode(self.dimNode)
         self.addSubnode(self.listNode)
@@ -208,7 +212,7 @@ final class LocationSearchContainerNode: ASDisplayNode {
                             }
                             let location = TelegramMediaMap(latitude: placemarkLocation.coordinate.latitude, longitude: placemarkLocation.coordinate.longitude, heading: nil, accuracyRadius: nil, venue: nil, address: address, liveBroadcastingTimeout: nil, liveProximityNotificationRadius: nil)
                             
-                            entries.append(LocationSearchEntry(index: index, theme: themeAndStrings.0, location: location, queryId: nil, resultId: nil, title: placemark.name ?? "Name", distance: placemarkLocation.distance(from: currentLocation), story: story))
+                            entries.append(LocationSearchEntry(index: index, theme: themeAndStrings.0, location: location, queryId: nil, resultId: nil, title: placemark.name ?? "Name", distance: placemarkLocation.distance(from: currentLocation), story: story, wegramSelected: interaction.usesWegramSelection ? (wegramSelectedVenue.map { WegramLocationPickerSelection.matches($0, location) } ?? false) : nil, wegramQuery: interaction.usesWegramSelection ? query : nil))
                             
                             index += 1
                         }
@@ -219,7 +223,7 @@ final class LocationSearchContainerNode: ASDisplayNode {
                             switch result.message {
                                 case let .mapLocation(mapMedia, _):
                                     if let _ = mapMedia.venue {
-                                        entries.append(LocationSearchEntry(index: index, theme: themeAndStrings.0, location: mapMedia, queryId: contextResult.queryId, resultId: result.id, title: nil, distance: 0.0, story: story))
+                                        entries.append(LocationSearchEntry(index: index, theme: themeAndStrings.0, location: mapMedia, queryId: contextResult.queryId, resultId: result.id, title: nil, distance: 0.0, story: story, wegramSelected: interaction.usesWegramSelection ? (wegramSelectedVenue.map { WegramLocationPickerSelection.matches($0, mapMedia) } ?? false) : nil, wegramQuery: interaction.usesWegramSelection ? query : nil))
                                         index += 1
                                     }
                                 default:
@@ -291,6 +295,7 @@ final class LocationSearchContainerNode: ASDisplayNode {
     func updatePresentationData(_ presentationData: PresentationData) {
         self.presentationData = presentationData
         self.themeAndStringsPromise.set(.single((presentationData.theme, presentationData.strings)))
+        if self.interaction.usesWegramSelection { self.backgroundColor = presentationData.theme.list.plainBackgroundColor }
         self.listNode.backgroundColor = self.presentationData.theme.list.plainBackgroundColor
     }
     
@@ -310,7 +315,7 @@ final class LocationSearchContainerNode: ASDisplayNode {
         transition.updateFrame(node: self.dimNode, frame: CGRect(origin: CGPoint(x: 0.0, y: topInset), size: CGSize(width: layout.size.width, height: layout.size.height - topInset)))
         
         self.listNode.frame = CGRect(origin: CGPoint(), size: layout.size)
-        self.listNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous], scrollToItem: nil, updateSizeAndInsets: ListViewUpdateSizeAndInsets(size: layout.size, insets: UIEdgeInsets(top: topInset, left: layout.intrinsicInsets.left, bottom: layout.intrinsicInsets.bottom, right: layout.intrinsicInsets.right), duration: 0.0, curve: .Default(duration: nil)), stationaryItemRange: nil, updateOpaqueState: nil, completion: { _ in })
+        self.listNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous], scrollToItem: nil, updateSizeAndInsets: ListViewUpdateSizeAndInsets(size: layout.size, insets: UIEdgeInsets(top: topInset, left: self.interaction.usesWegramSelection ? layout.safeInsets.left : layout.intrinsicInsets.left, bottom: layout.intrinsicInsets.bottom, right: self.interaction.usesWegramSelection ? layout.safeInsets.right : layout.intrinsicInsets.right), duration: 0.0, curve: .Default(duration: nil)), stationaryItemRange: nil, updateOpaqueState: nil, completion: { _ in })
         
         let padding: CGFloat = 16.0
         let emptyTitleSize = self.emptyResultsTitleNode.updateLayout(CGSize(width: layout.size.width - layout.safeInsets.left - layout.safeInsets.right - padding * 2.0, height: CGFloat.greatestFiniteMagnitude))

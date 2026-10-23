@@ -11,6 +11,8 @@ import TelegramAnimatedStickerNode
 import SolidRoundedButtonNode
 
 final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UITextFieldDelegate {
+    private let usesWegramAppearance: Bool
+    private let passwordLabelNode: ASTextNode
     private let strings: PresentationStrings
     private let theme: PresentationTheme
     
@@ -59,20 +61,29 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
     
     private let appearanceTimestamp = CACurrentMediaTime()
     
-    init(strings: PresentationStrings, theme: PresentationTheme) {
+    init(strings: PresentationStrings, theme: PresentationTheme, usesWegramAppearance: Bool = false) {
+        self.usesWegramAppearance = usesWegramAppearance
+        self.passwordLabelNode = ASTextNode()
+        self.passwordLabelNode.isUserInteractionEnabled = false
+        self.passwordLabelNode.displaysAsynchronously = false
+        self.passwordLabelNode.isHidden = !usesWegramAppearance
+        self.passwordLabelNode.attributedText = NSAttributedString(string: strings.Login_VoiceOver_Password, font: Font.regular(17), textColor: theme.list.itemPrimaryTextColor)
         self.strings = strings
         self.theme = theme
         
         self.animationNode = DefaultAnimatedStickerNodeImpl(lottieSettings: .noAccountFallback)
-        self.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: "IntroPassword"), width: 256, height: 256, playbackMode: .still(.start), mode: .direct(cachePathPrefix: nil))
+        if !usesWegramAppearance {
+            self.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: "IntroPassword"), width: 256, height: 256, playbackMode: .still(.start), mode: .direct(cachePathPrefix: nil))
+        }
         
         self.titleNode = ASTextNode()
         self.titleNode.isUserInteractionEnabled = false
         self.titleNode.displaysAsynchronously = false
-        self.titleNode.attributedText = NSAttributedString(string: strings.LoginPassword_Title, font: Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
+        self.titleNode.attributedText = NSAttributedString(string: strings.LoginPassword_Title, font: usesWegramAppearance ? Font.regular(22) : Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
         
         self.titleActivateAreaNode = AccessibilityAreaNode()
         self.titleActivateAreaNode.accessibilityTraits = .staticText
+        self.titleActivateAreaNode.accessibilityIdentifier = "Auth.PasswordEntry.Title"
         
         self.noticeNode = ASTextNode()
         self.noticeNode.isUserInteractionEnabled = false
@@ -85,7 +96,7 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
         
         self.forgotNode = HighlightableButtonNode()
         self.forgotNode.displaysAsynchronously = false
-        self.forgotNode.setAttributedTitle(NSAttributedString(string: self.strings.TwoStepAuth_EnterPasswordForgot, font: Font.regular(16.0), textColor: self.theme.list.itemAccentColor, paragraphAlignment: .center), for: [])
+        self.forgotNode.setAttributedTitle(NSAttributedString(string: self.strings.TwoStepAuth_EnterPasswordForgot, font: Font.regular(16.0), textColor: usesWegramAppearance ? UIColor(rgb: theme.overallDarkAppearance ? 0x7d90a9 : 0x576b95) : self.theme.list.itemAccentColor, paragraphAlignment: .center), for: [])
         self.forgotNode.accessibilityLabel = self.strings.TwoStepAuth_EnterPasswordForgot
         self.forgotNode.accessibilityTraits = [.button]
         
@@ -93,22 +104,30 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
         self.resetNode.displaysAsynchronously = false
         self.resetNode.setAttributedTitle(NSAttributedString(string: self.strings.LoginPassword_ResetAccount, font: Font.regular(16.0), textColor: self.theme.list.itemDestructiveColor, paragraphAlignment: .center), for: [])
         
+        self.resetNode.accessibilityLabel = self.strings.LoginPassword_ResetAccount
+        self.resetNode.accessibilityTraits = [.button]
+        self.resetNode.accessibilityIdentifier = "Auth.PasswordEntry.Reset"
+        self.forgotNode.accessibilityIdentifier = "Auth.PasswordEntry.Forgot"
+
         self.codeSeparatorNode = ASDisplayNode()
         self.codeSeparatorNode.isLayerBacked = true
         self.codeSeparatorNode.backgroundColor = self.theme.list.itemPlainSeparatorColor
         
         self.codeField = TextFieldNode()
-        self.codeField.textField.font = Font.regular(20.0)
+        self.codeField.textField.font = Font.regular(usesWegramAppearance ? 17 : 20)
         self.codeField.textField.textColor = self.theme.list.itemPrimaryTextColor
         self.codeField.textField.textAlignment = .natural
         self.codeField.textField.isSecureTextEntry = true
         self.codeField.textField.returnKeyType = .done
         self.codeField.textField.keyboardAppearance = self.theme.rootController.keyboardColor.keyboardAppearance
         self.codeField.textField.disableAutomaticKeyboardHandling = [.forward, .backward]
-        self.codeField.textField.tintColor = self.theme.list.itemAccentColor
+        self.codeField.textField.tintColor = usesWegramAppearance ? UIColor(rgb: 0x07c160) : self.theme.list.itemAccentColor
+        self.codeField.textField.accessibilityIdentifier = "Auth.PasswordEntry.Password"
+        self.codeField.textField.accessibilityLabel = self.strings.Login_VoiceOver_Password
         self.codeField.textField.accessibilityHint = self.strings.Login_VoiceOver_Password
         
-        self.proceedNode = SolidRoundedButtonNode(title: self.strings.Login_Continue, theme: SolidRoundedButtonTheme(theme: self.theme), glass: false, height: 50.0, cornerRadius: 50.0 * 0.5)
+        self.proceedNode = SolidRoundedButtonNode(title: self.strings.Login_Continue, theme: usesWegramAppearance ? SolidRoundedButtonTheme(backgroundColor: UIColor(rgb: 0x07c160), foregroundColor: .white) : SolidRoundedButtonTheme(theme: self.theme), glass: false, font: usesWegramAppearance ? .regular : .bold, height: usesWegramAppearance ? 44 : 50, cornerRadius: usesWegramAppearance ? 5 : 25)
+        self.proceedNode.accessibilityIdentifier = "Auth.PasswordEntry.Continue"
         self.proceedNode.progressType = .embedded
         self.proceedNode.isEnabled = false
         
@@ -124,6 +143,7 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
         self.codeField.textField.addTarget(self, action: #selector(self.textDidChange), for: .editingChanged)
         
         self.addSubnode(self.codeSeparatorNode)
+        self.addSubnode(self.passwordLabelNode)
         self.addSubnode(self.codeField)
         self.addSubnode(self.titleNode)
         self.addSubnode(self.titleActivateAreaNode)
@@ -143,10 +163,12 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
             }
         }
         
-        self.timer = SwiftSignalKit.Timer(timeout: 7.5, repeat: true, completion: { [weak self] in
-            self?.animationNode.playOnce()
-        }, queue: Queue.mainQueue())
-        self.timer?.start()
+        if !usesWegramAppearance {
+            self.timer = SwiftSignalKit.Timer(timeout: 7.5, repeat: true, completion: { [weak self] in
+                self?.animationNode.playOnce()
+            }, queue: Queue.mainQueue())
+            self.timer?.start()
+        }
     }
     
     deinit {
@@ -156,7 +178,7 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
     func updateData(hint: String, didForgotWithNoRecovery: Bool, suggestReset: Bool) {
         self.didForgotWithNoRecovery = didForgotWithNoRecovery
         self.suggestReset = suggestReset
-        self.codeField.textField.attributedPlaceholder = NSAttributedString(string: hint, font: Font.regular(20.0), textColor: self.theme.list.itemPlaceholderTextColor)
+        self.codeField.textField.attributedPlaceholder = NSAttributedString(string: hint, font: Font.regular(self.usesWegramAppearance ? 17 : 20), textColor: self.theme.list.itemPlaceholderTextColor)
         if let (layout, navigationHeight) = self.layoutArguments {
             self.containerLayoutUpdated(layout, navigationBarHeight: navigationHeight, transition: .immediate)
         }
@@ -173,19 +195,19 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
             layout = layout.withUpdatedInputHeight(previousInputHeight)
         }
         
-        let inset: CGFloat = 24.0
+        let inset: CGFloat = self.usesWegramAppearance ? 30 : 24
         let maximumWidth: CGFloat = min(430.0, layout.size.width)
         
         var insets = layout.insets(options: [])
-        insets.top = layout.statusBarHeight ?? 20.0
+        insets.top = self.usesWegramAppearance ? navigationBarHeight : (layout.statusBarHeight ?? 20.0)
         if let inputHeight = layout.inputHeight, !inputHeight.isZero {
             insets.bottom = max(inputHeight, insets.bottom)
         }
         
         let titleInset: CGFloat = layout.size.width > 320.0 ? 18.0 : 0.0
-        let additionalBottomInset: CGFloat = layout.size.width > 320.0 ? 110.0 : 20.0
+        let additionalBottomInset: CGFloat = self.usesWegramAppearance ? 44 + inset + 8 : (layout.size.width > 320.0 ? 110 : 20)
         
-        self.titleNode.attributedText = NSAttributedString(string: self.strings.LoginPassword_Title, font: Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
+        self.titleNode.attributedText = NSAttributedString(string: self.strings.LoginPassword_Title, font: self.usesWegramAppearance ? Font.regular(22) : Font.semibold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
         
         let animationSize = CGSize(width: 100.0, height: 100.0)
         let titleSize = self.titleNode.measure(CGSize(width: maximumWidth, height: CGFloat.greatestFiniteMagnitude))
@@ -200,10 +222,10 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
         items.append(AuthorizationLayoutItem(node: self.titleNode, size: titleSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: titleInset, maxValue: titleInset), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         items.append(AuthorizationLayoutItem(node: self.noticeNode, size: noticeSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 18.0, maxValue: 18.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         
-        items.append(AuthorizationLayoutItem(node: self.codeField, size: CGSize(width: maximumWidth - 80.0, height: 44.0), spacingBefore: AuthorizationLayoutItemSpacing(weight: 32.0, maxValue: 60.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
-        items.append(AuthorizationLayoutItem(node: self.codeSeparatorNode, size: CGSize(width: maximumWidth - 48.0, height: UIScreenPixel), spacingBefore: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
+        items.append(AuthorizationLayoutItem(node: self.codeField, size: CGSize(width: maximumWidth - (self.usesWegramAppearance ? 60 : 80), height: self.usesWegramAppearance ? 52 : 44), spacingBefore: AuthorizationLayoutItemSpacing(weight: 32.0, maxValue: 60.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
+        items.append(AuthorizationLayoutItem(node: self.codeSeparatorNode, size: CGSize(width: maximumWidth - inset * 2, height: UIScreenPixel), spacingBefore: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         
-        items.append(AuthorizationLayoutItem(node: self.forgotNode, size: forgotSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 48.0, maxValue: 100.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
+        items.append(AuthorizationLayoutItem(node: self.forgotNode, size: forgotSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: self.usesWegramAppearance ? 24 : 48, maxValue: self.usesWegramAppearance ? 24 : 100), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         
         if self.didForgotWithNoRecovery || self.suggestReset {
             self.resetNode.isHidden = false
@@ -212,14 +234,14 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
             self.resetNode.isHidden = true
         }
         
-        if layout.size.width > 320.0 {
+        if !self.usesWegramAppearance && layout.size.width > 320.0 {
             items.insert(AuthorizationLayoutItem(node: self.animationNode, size: animationSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 10.0, maxValue: 10.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)), at: 0)
             self.proceedNode.isHidden = false
             self.animationNode.isHidden = false
             self.animationNode.visibility = true
         } else {
             insets.top = navigationBarHeight
-            self.proceedNode.isHidden = true
+            self.proceedNode.isHidden = !self.usesWegramAppearance
             self.animationNode.isHidden = true
         }
         
@@ -229,6 +251,15 @@ final class AuthorizationSequencePasswordEntryControllerNode: ASDisplayNode, UIT
         
         let _ = layoutAuthorizationItems(bounds: CGRect(origin: CGPoint(x: 0.0, y: insets.top), size: CGSize(width: layout.size.width, height: layout.size.height - insets.top - insets.bottom - additionalBottomInset)), items: items, transition: transition, failIfDoesNotFit: false)
         
+        if self.usesWegramAppearance {
+            self.animationNode.visibility = false
+            let row = self.codeField.frame
+            let labelSize = self.passwordLabelNode.measure(CGSize(width: min(120, row.width * 0.45), height: 52))
+            let labelWidth = max(86, labelSize.width)
+            transition.updateFrame(node: self.passwordLabelNode, frame: CGRect(x: row.minX, y: row.midY - labelSize.height / 2, width: labelSize.width, height: labelSize.height))
+            transition.updateFrame(node: self.codeField, frame: CGRect(x: row.minX + labelWidth + 8, y: row.minY, width: max(0, row.width - labelWidth - 8), height: row.height))
+        }
+
         self.titleActivateAreaNode.accessibilityLabel = self.titleNode.attributedText?.string ?? ""
         self.noticeActivateAreaNode.accessibilityLabel = self.noticeNode.attributedText?.string ?? ""
         

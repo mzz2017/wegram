@@ -10,6 +10,7 @@ final class AuthorizationSequenceAwaitingAccountResetController: ViewController 
         return self.displayNode as! AuthorizationSequenceAwaitingAccountResetControllerNode
     }
     
+    private let usesWegramAppearance: Bool
     private let strings: PresentationStrings
     private let theme: PresentationTheme
     
@@ -25,16 +26,17 @@ final class AuthorizationSequenceAwaitingAccountResetController: ViewController 
                 let item = UIBarButtonItem(customDisplayNode: ProgressNavigationButtonNode(color: self.theme.rootController.navigationBar.accentTextColor))
                 self.navigationItem.rightBarButtonItem = item
             } else {
-                self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.strings.Common_Next, style: .done, target: self, action: #selector(self.logoutPressed))
+                self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.usesWegramAppearance ? self.strings.Settings_Logout : self.strings.Common_Next, style: .done, target: self, action: #selector(self.logoutPressed))
             }
         }
     }
     
-    init(strings: PresentationStrings, theme: PresentationTheme, back: @escaping () -> Void) {
+    init(strings: PresentationStrings, theme: PresentationTheme, usesWegramAppearance: Bool = false, back: @escaping () -> Void) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.strings = strings
         self.theme = theme
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: AuthorizationSequenceController.navigationBarTheme(theme), strings: NavigationBarStrings(presentationStrings: strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: usesWegramAppearance ? NavigationBarTheme(wegramTheme: theme) : AuthorizationSequenceController.navigationBarTheme(theme), strings: NavigationBarStrings(presentationStrings: strings)))
         
         self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
         
@@ -56,7 +58,7 @@ final class AuthorizationSequenceAwaitingAccountResetController: ViewController 
     }
     
     override public func loadDisplayNode() {
-        self.displayNode = AuthorizationSequenceAwaitingAccountResetControllerNode(strings: self.strings, theme: self.theme)
+        self.displayNode = AuthorizationSequenceAwaitingAccountResetControllerNode(strings: self.strings, theme: self.theme, usesWegramAppearance: self.usesWegramAppearance)
         self.displayNodeDidLoad()
         
         self.controllerNode.reset = { [weak self] in

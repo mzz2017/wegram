@@ -88,11 +88,13 @@ public final class QrCodeScanScreen: ViewController {
     
     private let context: AccountContext
     private let subject: QrCodeScanScreen.Subject
+    fileprivate let usesWegramAppearance: Bool
     private var presentationData: PresentationData
     
     private var codeDisposable: Disposable?
     private var inForegroundDisposable: Disposable?
     private let approveDisposable = MetaDisposable()
+    private let myCodeDisposable = MetaDisposable()
     
     private var controllerNode: QrCodeScanScreenNode {
         return self.displayNode as! QrCodeScanScreenNode
@@ -104,11 +106,13 @@ public final class QrCodeScanScreen: ViewController {
     
     private var codeResolved = false
     
+    private var wegramVisible = false
     private var validLayout: ContainerViewLayout?
     
-    public init(context: AccountContext, subject: QrCodeScanScreen.Subject) {
+    public init(context: AccountContext, subject: QrCodeScanScreen.Subject, usesWegramAppearance: Bool = false) {
         self.context = context
         self.subject = subject
+        if case .peer = subject { self.usesWegramAppearance = usesWegramAppearance } else { self.usesWegramAppearance = false }
         
         self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
         
@@ -137,8 +141,25 @@ public final class QrCodeScanScreen: ViewController {
         self.codeDisposable?.dispose()
         self.inForegroundDisposable?.dispose()
         self.approveDisposable.dispose()
+        self.myCodeDisposable.dispose()
     }
     
+    fileprivate func openWegramMyCode() {
+        self.controllerNode.wegramControls.myCode.isEnabled = false
+        self.controllerNode.wegramControls.myCode.configuration?.showsActivityIndicator = true
+        self.myCodeDisposable.set((combineLatest(self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: self.context.account.peerId)), self.context.engine.privacy.requestAccountPrivacySettings()) |> take(1) |> deliverOnMainQueue).start(next: { [weak self] peer, privacy in
+            guard let self, self.wegramVisible else { return }
+            self.controllerNode.wegramControls.myCode.isEnabled = true
+            self.controllerNode.wegramControls.myCode.configuration?.showsActivityIndicator = false
+            guard let peer else {
+                self.present(textAlertController(context: self.context, title: nil, text: self.presentationData.strings.Login_UnknownError, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+                return
+            }
+            let temporary = (peer.addressName ?? "").isEmpty && !privacy.phoneDiscoveryEnabled
+            self.push(self.context.sharedContext.makeChatQrCodeScreen(context: self.context, peer: peer, threadId: nil, temporary: temporary))
+        }))
+    }
+
     @objc fileprivate func cancelPressed() {
         self.completion(nil)
         self.dismissAnimated()
@@ -147,6 +168,8 @@ public final class QrCodeScanScreen: ViewController {
     private var animatedIn = false
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        self.wegramVisible = true
+        self.controllerNode.updateVisibility(true)
 
         let isCustom: Bool
         switch self.subject {
@@ -166,7 +189,7 @@ public final class QrCodeScanScreen: ViewController {
             return
         }
         if let navigationController = navigationController as? NavigationController {
-            self.present(UndoOverlayController(presentationData: self.presentationData, content: .actionSucceeded(title: self.presentationData.strings.AuthSessions_AddedDeviceTitle, text: session?.appName ?? "Telegram for macOS", cancel: self.presentationData.strings.AuthSessions_AddedDeviceTerminate, destructive: true), elevatedLayout: false, animateInAsReplacement: false, action: { value in
+            self.present(UndoOverlayController(presentationData: self.presentationData, content: .actionSucceeded(title: self.presentationData.strings.AuthSessions_AddedDeviceTitle, text: session?.appName ?? "WeGram", cancel: self.presentationData.strings.AuthSessions_AddedDeviceTerminate, destructive: true), elevatedLayout: false, animateInAsReplacement: false, action: { value in
                 if value == .undo, let session = session {
                     let _ = activeSessionsContext.remove(hash: session.hash).start()
                     return true
@@ -227,6 +250,17 @@ public final class QrCodeScanScreen: ViewController {
         }
     }
     
+    override public func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        self.wegramVisible = false
+        if self.usesWegramAppearance {
+            self.myCodeDisposable.set(nil)
+            self.controllerNode.wegramControls.myCode.isEnabled = true
+            self.controllerNode.wegramControls.myCode.configuration?.showsActivityIndicator = false
+            self.controllerNode.updateVisibility(false)
+        }
+    }
+
     override public func loadDisplayNode() {
         self.displayNode = QrCodeScanScreenNode(context: self.context, presentationData: self.presentationData, controller: self, subject: self.subject)
         
@@ -397,6 +431,10 @@ private final class QrCodeScanScreenNode: ViewControllerTracingNode, ASScrollVie
     private var presentationData: PresentationData
     private weak var controller: QrCodeScanScreen?
     private let subject: QrCodeScanScreen.Subject
+    fileprivate let wegramControls = WegramScannerControls()
+    private var hasTorch = false
+    private var previewVisible = false
+    private var appInForeground = true
     
     private let previewView: CameraSimplePreviewView
     private let fadeNode: ASDisplayNode
@@ -521,7 +559,9 @@ private final class QrCodeScanScreenNode: ViewControllerTracingNode, ASScrollVie
         self.torchDisposable = (self.camera.hasTorch
         |> deliverOnMainQueue).start(next: { [weak self] hasTorch in
             if let strongSelf = self {
-                strongSelf.torchButtonNode.isHidden = !hasTorch
+                strongSelf.hasTorch = hasTorch
+                strongSelf.torchButtonNode.isHidden = strongSelf.controller?.usesWegramAppearance == true || !hasTorch
+                strongSelf.updateWegramControls()
             }
         })
         
@@ -543,6 +583,14 @@ private final class QrCodeScanScreenNode: ViewControllerTracingNode, ASScrollVie
             self?.torchPressed()
         }
 
+        if controller.usesWegramAppearance {
+            self.view.addSubview(self.wegramControls)
+            self.wegramControls.back.addAction(UIAction { [weak controller] _ in controller?.dismiss() }, for: .touchUpInside)
+            self.wegramControls.gallery.addAction(UIAction { [weak self] _ in self?.galleryPressed() }, for: .touchUpInside)
+            self.wegramControls.torch.addAction(UIAction { [weak self] _ in self?.torchPressed() }, for: .touchUpInside)
+            self.wegramControls.myCode.addAction(UIAction { [weak controller] _ in controller?.openWegramMyCode() }, for: .touchUpInside)
+            self.updateWegramControls()
+        }
         self.previewView.resetPlaceholder(front: false)
         if #available(iOS 13.0, *) {
             let _ = (self.previewView.isPreviewing
@@ -566,11 +614,22 @@ private final class QrCodeScanScreenNode: ViewControllerTracingNode, ASScrollVie
     }
     
     fileprivate func updateInForeground(_ inForeground: Bool) {
-        if !inForeground {
+        self.appInForeground = inForeground
+        if !inForeground || (self.controller?.usesWegramAppearance == true && !self.previewVisible) {
+            if self.controller?.usesWegramAppearance == true && self.torchButtonNode.isSelected {
+                self.torchButtonNode.isSelected = false
+                self.camera.setTorchActive(false)
+                self.updateWegramControls()
+            }
             self.camera.stopCapture(invalidate: false)
         } else {
             self.camera.startCapture()
         }
+    }
+
+    fileprivate func updateVisibility(_ visible: Bool) {
+        self.previewVisible = visible
+        if self.controller?.usesWegramAppearance == true { self.updateInForeground(self.appInForeground) }
     }
     
     override func didLoad() {
@@ -578,7 +637,7 @@ private final class QrCodeScanScreenNode: ViewControllerTracingNode, ASScrollVie
         
         self.view.insertSubview(self.previewView, at: 0)
         self.layer.insertSublayer(self.dimLayer, above: self.fadeNode.layer)
-        self.camera.startCapture()
+        if self.controller?.usesWegramAppearance != true || (self.previewVisible && self.appInForeground) { self.camera.startCapture() }
         
         var detectedCodes = self.camera.detectedCodes
         #if DEBUG && targetEnvironment(simulator)
@@ -912,6 +971,18 @@ private final class QrCodeScanScreenNode: ViewControllerTracingNode, ASScrollVie
             self.animateIn()
             self.containerLayoutUpdated(layout: layout, navigationHeight: navigationHeight, animateIn: true, transition: .animated(duration: 0.8, curve: .customSpring(damping: 88.0, initialVelocity: 0.0)))
         }
+        if self.controller?.usesWegramAppearance == true {
+            self.topNavigationButton.view?.isHidden = true
+            self.galleryButtonNode.isHidden = true
+            self.torchButtonNode.isHidden = true
+            self.titleNode.isHidden = true
+            self.textNode.isHidden = true
+            self.frameNode.isHidden = self.focusedRect == nil
+            self.dimLayer.opacity = self.focusedRect == nil ? 0.0 : 0.625
+            self.wegramControls.updateLayout(size: layout.size, safe: layout.safeInsets, top: layout.statusBarHeight ?? 0)
+            self.wegramControls.setControlsAlpha(controlsAlpha)
+        }
+
     }
     
     @objc private func galleryPressed() {
@@ -971,6 +1042,11 @@ private final class QrCodeScanScreenNode: ViewControllerTracingNode, ASScrollVie
     @objc private func torchPressed() {
         self.torchButtonNode.isSelected = !self.torchButtonNode.isSelected
         self.camera.setTorchActive(self.torchButtonNode.isSelected)
+        self.updateWegramControls()
+    }
+
+    private func updateWegramControls() {
+        self.wegramControls.update(chinese: self.presentationData.strings.baseLanguageCode.hasPrefix("zh"), hasTorch: self.hasTorch, torchOn: self.torchButtonNode.isSelected)
     }
     
     fileprivate func resolveCode(code: String, completion: @escaping (Bool) -> Void) {

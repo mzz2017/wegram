@@ -19,6 +19,7 @@ public final class AuthorizationSequenceCodeEntryController: ViewController {
     private let sharedContext: SharedAccountContext
     private let strings: PresentationStrings
     private let theme: PresentationTheme
+    private let usesWegramAppearance: Bool
     
     public var loginWithCode: ((String) -> Void)?
     public var signInWithApple: (() -> Void)?
@@ -48,12 +49,13 @@ public final class AuthorizationSequenceCodeEntryController: ViewController {
         return self.data?.6 ?? false
     }
     
-    public init(sharedContext: SharedAccountContext, presentationData: PresentationData, back: @escaping () -> Void) {
+    public init(sharedContext: SharedAccountContext, presentationData: PresentationData, usesWegramAppearance: Bool = false, back: @escaping () -> Void) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.sharedContext = sharedContext
         self.strings = presentationData.strings
         self.theme = presentationData.theme
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: AuthorizationSequenceController.navigationBarTheme(theme), strings: NavigationBarStrings(presentationStrings: strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: usesWegramAppearance ? NavigationBarTheme(wegramTheme: theme) : AuthorizationSequenceController.navigationBarTheme(theme), strings: NavigationBarStrings(presentationStrings: strings)))
         
         self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
         
@@ -82,10 +84,17 @@ public final class AuthorizationSequenceCodeEntryController: ViewController {
                 stop = presentationData.strings.Login_CancelPhoneVerificationStop
             }
             
-            self.present(textAlertController(sharedContext: self.sharedContext, title: nil, text: text, actions: [TextAlertAction(type: .genericAction, title: proceed, action: {
+            let actions = [TextAlertAction(type: .genericAction, title: proceed, action: {
             }), TextAlertAction(type: .defaultAction, title: stop, action: {
                 back()
-            })]), in: .window(.root))
+            })]
+            let controller: ViewController
+            if self.usesWegramAppearance {
+                controller = wegramAuthorizationConfirmationController(updatedPresentationData: (initial: presentationData, signal: self.sharedContext.presentationData), text: text, actions: actions)
+            } else {
+                controller = textAlertController(sharedContext: self.sharedContext, title: nil, text: text, actions: actions)
+            }
+            self.present(controller, in: .window(.root))
         }
     }
     
@@ -94,7 +103,7 @@ public final class AuthorizationSequenceCodeEntryController: ViewController {
     }
     
     override public func loadDisplayNode() {
-        self.displayNode = AuthorizationSequenceCodeEntryControllerNode(strings: self.strings, theme: self.theme)
+        self.displayNode = AuthorizationSequenceCodeEntryControllerNode(strings: self.strings, theme: self.theme, usesWegramAppearance: self.usesWegramAppearance)
         self.displayNodeDidLoad()
         
         self.controllerNode.view.disableAutomaticKeyboardHandling = [.forward, .backward]

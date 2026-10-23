@@ -84,7 +84,7 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
                 self.action()
             }
             
-            func update(size: CGSize, presentationData: PresentationData, item: MediaGroupItem, isLast: Bool, syncronousLoad: Bool) {
+            func update(size: CGSize, presentationData: PresentationData, item: MediaGroupItem, isLast: Bool, syncronousLoad: Bool, selectedCollectionId: String?) {
                 let leftInset: CGFloat = 16.0
                 let rightInset: CGFloat = 48.0
 
@@ -98,11 +98,19 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
                     }
                 }
                 
+                let marksSelection = selectedCollectionId != nil
+                let isSelected = item.collection.localIdentifier == selectedCollectionId
+                if marksSelection {
+                    self.accessibilityLabel = item.collection.localizedTitle
+                    self.accessibilityValue = "\(item.count)"
+                    self.accessibilityTraits = isSelected ? [.button, .selected] : .button
+                }
+
                 self.highlightBackgroundNode.backgroundColor = presentationData.theme.contextMenu.itemHighlightedBackgroundColor
 
                 self.highlightBackgroundNode.frame = CGRect(origin: CGPoint(), size: size)
 
-                self.titleLabelNode.attributedText = NSAttributedString(string: item.collection.localizedTitle ?? "", font: Font.regular(17.0), textColor: presentationData.theme.contextMenu.primaryColor)
+                self.titleLabelNode.attributedText = NSAttributedString(string: item.collection.localizedTitle ?? "", font: Font.regular(17.0), textColor: isSelected ? UIColor(rgb: 0x07c160) : presentationData.theme.contextMenu.primaryColor)
                 
                 self.subtitleLabelNode.attributedText = NSAttributedString(string: "\(item.count)", font: Font.regular(15.0), textColor: presentationData.theme.contextMenu.secondaryColor)
                 let maxTextWidth: CGFloat = size.width - leftInset - rightInset
@@ -116,7 +124,7 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
                 let titleFrame = CGRect(origin: CGPoint(x: leftInset, y: floor((size.height - contentHeight) / 2.0)), size: titleSize)
                 self.titleLabelNode.frame = titleFrame
                 
-                let subtitleFrame = CGRect(origin: CGPoint(x: leftInset, y: titleFrame.maxY + spacing), size: titleSize)
+                let subtitleFrame = CGRect(origin: CGPoint(x: leftInset, y: titleFrame.maxY + spacing), size: marksSelection ? subtitleSize : titleSize)
                 self.subtitleLabelNode.frame = subtitleFrame
                 
                 let iconSize = CGSize(width: 24.0, height: 24.0)
@@ -131,6 +139,7 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
 
         private let context: AccountContext
         private let items: [MediaGroupItem]
+        private let selectedCollectionId: String?
         private let requestUpdate: (GroupsListNode, ContainedViewLayoutTransition) -> Void
         private let requestUpdateApparentHeight: (GroupsListNode, ContainedViewLayoutTransition) -> Void
         private let selectGroup: (PHAssetCollection) -> Void
@@ -149,12 +158,14 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
         init(
             context: AccountContext,
             items: [MediaGroupItem],
+            selectedCollectionId: String?,
             requestUpdate: @escaping (GroupsListNode, ContainedViewLayoutTransition) -> Void,
             requestUpdateApparentHeight: @escaping (GroupsListNode, ContainedViewLayoutTransition) -> Void,
             selectGroup: @escaping (PHAssetCollection) -> Void
         ) {
             self.context = context
             self.items = items
+            self.selectedCollectionId = selectedCollectionId
             self.requestUpdate = requestUpdate
             self.requestUpdateApparentHeight = requestUpdateApparentHeight
             self.selectGroup = selectGroup
@@ -231,7 +242,7 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
                             self.scrollNode.addSubnode(itemNode)
                         }
                         
-                        itemNode.update(size: itemFrame.size, presentationData: presentationData, item: item, isLast: index == self.items.count - 1, syncronousLoad: syncronousLoad)
+                        itemNode.update(size: itemFrame.size, presentationData: presentationData, item: item, isLast: index == self.items.count - 1, syncronousLoad: syncronousLoad, selectedCollectionId: self.selectedCollectionId)
                         itemNode.frame = itemFrame
                     }
                 }
@@ -302,6 +313,7 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
     final class ItemsNode: ASDisplayNode, ContextControllerItemsNode {
         private let context: AccountContext
         private let items: [MediaGroupItem]
+        private let selectedCollectionId: String?
         private let requestUpdate: (ContainedViewLayoutTransition) -> Void
         private let requestUpdateApparentHeight: (ContainedViewLayoutTransition) -> Void
 
@@ -317,12 +329,14 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
         init(
             context: AccountContext,
             items: [MediaGroupItem],
+            selectedCollectionId: String?,
             requestUpdate: @escaping (ContainedViewLayoutTransition) -> Void,
             requestUpdateApparentHeight: @escaping (ContainedViewLayoutTransition) -> Void,
             selectGroup: @escaping (PHAssetCollection) -> Void
         ) {
             self.context = context
             self.items = items
+            self.selectedCollectionId = selectedCollectionId
             self.selectGroup = selectGroup
             self.presentationData = context.sharedContext.currentPresentationData.with({ $0 })
 
@@ -365,6 +379,7 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
                     tabNode = GroupsListNode(
                         context: self.context,
                         items: self.items,
+                        selectedCollectionId: self.selectedCollectionId,
                         requestUpdate: { [weak self] tab, transition in
                             guard let strongSelf = self else {
                                 return
@@ -413,15 +428,18 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
 
     let context: AccountContext
     let items: [MediaGroupItem]
+    let selectedCollectionId: String?
     let selectGroup: (PHAssetCollection) -> Void
 
     public init(
         context: AccountContext,
         items: [MediaGroupItem],
+        selectedCollectionId: String? = nil,
         selectGroup: @escaping (PHAssetCollection) -> Void
     ) {
         self.context = context
         self.items = items
+        self.selectedCollectionId = selectedCollectionId
         self.selectGroup = selectGroup
     }
 
@@ -432,6 +450,7 @@ final class MediaGroupsContextMenuContent: ContextControllerItemsContent {
         return ItemsNode(
             context: self.context,
             items: self.items,
+            selectedCollectionId: self.selectedCollectionId,
             requestUpdate: requestUpdate,
             requestUpdateApparentHeight: requestUpdateApparentHeight,
             selectGroup: self.selectGroup

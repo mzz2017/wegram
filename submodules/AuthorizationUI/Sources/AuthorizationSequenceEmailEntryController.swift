@@ -13,6 +13,7 @@ public final class AuthorizationSequenceEmailEntryController: ViewController {
         case change
     }
     
+    private let usesWegramAppearance: Bool
     private let mode: Mode
     private let blocking: Bool
     
@@ -44,12 +45,13 @@ public final class AuthorizationSequenceEmailEntryController: ViewController {
     private var inBackground = false
     private var inBackgroundDisposable: Disposable?
     
-    public init(context: AccountContext? = nil, presentationData: PresentationData, mode: Mode, blocking: Bool = false, back: @escaping () -> Void) {
+    public init(context: AccountContext? = nil, presentationData: PresentationData, mode: Mode, blocking: Bool = false, usesWegramAppearance: Bool = false, back: @escaping () -> Void) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.presentationData = presentationData
         self.mode = mode
         self.blocking = blocking
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: AuthorizationSequenceController.navigationBarTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: usesWegramAppearance ? NavigationBarTheme(wegramTheme: presentationData.theme) : AuthorizationSequenceController.navigationBarTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
         
         self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
         
@@ -101,7 +103,7 @@ public final class AuthorizationSequenceEmailEntryController: ViewController {
     }
     
     override public func loadDisplayNode() {
-        self.displayNode = AuthorizationSequenceEmailEntryControllerNode(strings: self.presentationData.strings, theme: self.presentationData.theme, mode: self.mode)
+        self.displayNode = AuthorizationSequenceEmailEntryControllerNode(strings: self.presentationData.strings, theme: self.presentationData.theme, mode: self.mode, usesWegramAppearance: self.usesWegramAppearance)
         self.displayNodeDidLoad()
         
         self.controllerNode.view.disableAutomaticKeyboardHandling = [.forward, .backward]
@@ -124,6 +126,10 @@ public final class AuthorizationSequenceEmailEntryController: ViewController {
     }
     
     func updateNavigationItems() {
+        if self.usesWegramAppearance {
+            self.navigationItem.rightBarButtonItem = nil
+            return
+        }
         guard let layout = self.validLayout, layout.size.width < 360.0 else {
             return
         }

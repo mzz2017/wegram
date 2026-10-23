@@ -104,7 +104,9 @@ public final class CallListController: TelegramBaseController {
     
     private let peerViewDisposable = MetaDisposable()
     
-    private let segmentedTitleView: ItemListControllerSegmentedTitleView
+    private var callListScope: EngineCallList.Scope = .all
+    private let wegramFilterTitle = WegramCallFilterTitleView(frame: .zero)
+    private weak var wegramFilterMenu: ActionSheetController?
     
     private var isEmpty: Bool?
     private var editingMode: Bool = false
@@ -124,9 +126,7 @@ public final class CallListController: TelegramBaseController {
         
         self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
         
-        self.segmentedTitleView = ItemListControllerSegmentedTitleView(theme: self.presentationData.theme, segments: [self.presentationData.strings.Calls_All, self.presentationData.strings.Calls_Missed], selectedIndex: 0)
-        
-        super.init(context: context, navigationBarPresentationData: NavigationBarPresentationData(presentationData: self.presentationData, style: .glass))
+        super.init(context: context, navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: self.presentationData.theme), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)))
         
         self.tabBarItemContextActionType = .always
         
@@ -149,13 +149,6 @@ public final class CallListController: TelegramBaseController {
             }
         }
         
-        self.segmentedTitleView.indexUpdated = { [weak self] index in
-            if let strongSelf = self {
-                strongSelf.segmentedTitleView.index = index
-                strongSelf.controllerNode.updateType(index == 0 ? .all : .missed)
-            }
-        }
-        
         self.presentationDataDisposable = (context.sharedContext.presentationData
         |> deliverOnMainQueue).startStrict(next: { [weak self] presentationData in
             if let strongSelf = self {
@@ -174,7 +167,9 @@ public final class CallListController: TelegramBaseController {
             self?.controllerNode.scrollToLatest()
         }
         
-        self.navigationItem.titleView = self.segmentedTitleView
+        self.wegramFilterTitle.openFilter = { [weak self] in self?.openWegramCallFilter() }
+        self.navigationItem.titleView = self.wegramFilterTitle
+        self.updateWegramFilterTitle()
         if case .navigation = self.mode {
             self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
         }
@@ -192,11 +187,38 @@ public final class CallListController: TelegramBaseController {
         self.createConferenceCallDisposable?.dispose()
     }
     
+    private func updateWegramFilterTitle() {
+        let missed = self.callListScope == .missed
+        let strings = self.presentationData.strings
+        self.wegramFilterTitle.update(title: strings.Calls_TabTitle, selectedTitle: missed ? strings.Calls_Missed : strings.Calls_All, missed: missed, color: WegramNavigationColors(isDark: self.presentationData.theme.overallDarkAppearance).control, hint: strings.baseLanguageCode.hasPrefix("zh") ? "筛选全部或未接来电" : "Filter all or missed calls")
+        self.wegramFilterTitle.frame.size = self.wegramFilterTitle.intrinsicContentSize
+    }
+
+    private func setWegramCallFilter(_ scope: EngineCallList.Scope) {
+        self.callListScope = scope
+        self.controllerNode.updateType(scope)
+        self.updateWegramFilterTitle()
+    }
+
+    private func openWegramCallFilter() {
+        guard self.isNodeLoaded, self.displayNode.view.window != nil, self.wegramFilterMenu == nil else { return }
+        let strings = self.presentationData.strings
+        let sheet = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: self.presentationData.theme, fontSize: self.presentationData.listsFontSize))
+        self.wegramFilterMenu = sheet
+        let items: [ActionSheetItem] = [(EngineCallList.Scope.all, strings.Calls_All), (.missed, strings.Calls_Missed)].map { scope, title in
+            let selected = scope == self.callListScope
+            return ActionSheetButtonItem(title: (selected ? "✓ " : "") + title, font: selected ? .bold : .default, action: { [weak self, weak sheet] in
+                sheet?.dismissAnimated()
+                guard let self, self.isNodeLoaded, self.displayNode.view.window != nil else { return }
+                self.setWegramCallFilter(scope)
+            })
+        }
+        sheet.setItemGroups([ActionSheetItemGroup(items: items), ActionSheetItemGroup(items: [ActionSheetButtonItem(title: strings.Common_Cancel, action: { [weak sheet] in sheet?.dismissAnimated() })])])
+        self.present(sheet, in: .window(.root))
+    }
+
     private func updateThemeAndStrings() {
-        let index = self.segmentedTitleView.index
-        self.segmentedTitleView.segments = [self.presentationData.strings.Calls_All, self.presentationData.strings.Calls_Missed]
-        self.segmentedTitleView.theme = self.presentationData.theme
-        self.segmentedTitleView.index = index
+        self.updateWegramFilterTitle()
             
         self.tabBarItem.title = self.presentationData.strings.Calls_TabTitle
         if !self.presentationData.reduceMotion {
@@ -210,7 +232,7 @@ public final class CallListController: TelegramBaseController {
                 if let isEmpty = self.isEmpty, isEmpty {
                 } else {
                     if self.editingMode {
-                        self.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "___done", style: .done, target: self, action: #selector(self.donePressed))
+                        self.navigationItem.leftBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Done, style: .done, target: self, action: #selector(self.donePressed))
                     } else {
                         self.navigationItem.leftBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Edit, style: .plain, target: self, action: #selector(self.editPressed))
                     }
@@ -219,14 +241,14 @@ public final class CallListController: TelegramBaseController {
                 self.navigationItem.rightBarButtonItem = UIBarButtonItem(image: PresentationResourcesRootController.navigationCallIcon(self.presentationData.theme), style: .plain, target: self, action: #selector(self.callPressed))
             case .navigation:
                 if self.editingMode {
-                    self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "___done", style: .done, target: self, action: #selector(self.donePressed))
+                    self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Done, style: .done, target: self, action: #selector(self.donePressed))
                 } else {
                     self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Edit, style: .plain, target: self, action: #selector(self.editPressed))
                 }
         }
         
         self.statusBar.statusBarStyle = self.presentationData.theme.rootController.statusBarStyle.style
-        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(presentationData: self.presentationData, style: .glass), transition: .immediate)
+        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: self.presentationData.theme), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)), transition: .immediate)
         
         if self.isNodeLoaded {
             self.controllerNode.updateThemeAndStrings(presentationData: self.presentationData)
@@ -369,9 +391,29 @@ public final class CallListController: TelegramBaseController {
                     TelegramEngine.EngineData.Item.Peer.Peer(id: peerId)
                 )
                 |> deliverOnMainQueue).startStandalone(next: { peer in
-                    if let strongSelf = self, let peer = peer, let controller = strongSelf.context.sharedContext.makePeerInfoController(context: strongSelf.context, updatedPresentationData: nil, peer: peer, mode: .calls(messages: messages), avatarInitiallyExpanded: false, fromChat: false, requestsContext: nil) {
-                        (strongSelf.navigationController as? NavigationController)?.pushViewController(controller)
+                    guard let strongSelf = self, let peer else { return }
+                    let fullDetails: () -> ViewController? = { [weak strongSelf] in
+                        guard let strongSelf else { return nil }
+                        return strongSelf.context.sharedContext.makePeerInfoController(context: strongSelf.context, updatedPresentationData: nil, peer: peer, mode: .calls(messages: messages), avatarInitiallyExpanded: false, fromChat: false, requestsContext: nil)
                     }
+                    let controller: ViewController?
+                    if peer.id != strongSelf.context.account.peerId, WegramCallDetailsController.supports(peer: peer, messages: messages) {
+                        let video = messages.compactMap { message -> Bool? in
+                            for media in message.media {
+                                if let action = media as? TelegramMediaAction, case let .phoneCall(_, _, _, video) = action.action { return video }
+                            }
+                            return nil
+                        }.first ?? false
+                        controller = WegramCallDetailsController(context: strongSelf.context, peer: peer, messages: messages, message: { [weak strongSelf] in
+                            guard let strongSelf, let navigation = strongSelf.navigationController as? NavigationController else { return }
+                            strongSelf.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigation, context: strongSelf.context, chatLocation: .peer(peer)))
+                        }, call: { [weak strongSelf] in
+                            strongSelf?.call(peerId, isVideo: video)
+                        }, fullDetails: fullDetails)
+                    } else {
+                        controller = fullDetails()
+                    }
+                    if let controller { (strongSelf.navigationController as? NavigationController)?.pushViewController(controller) }
                 })
             }
         }, emptyStateUpdated: { [weak self] empty in
@@ -432,8 +474,7 @@ public final class CallListController: TelegramBaseController {
         }, focusOnItemTag: self.focusOnItemTag)
         
         if case .navigation = self.mode {
-            self.controllerNode.navigationBar = self.navigationBar
-            self.navigationBar?.updateBackgroundAlpha(0.0, transition: .immediate)
+            self.navigationBar?.updateBackgroundAlpha(1.0, transition: .immediate)
         }
         
         self.controllerNode.startNewCall = { [weak self] in
@@ -447,8 +488,7 @@ public final class CallListController: TelegramBaseController {
             self.editPressed()
         case .missed:
             Queue.mainQueue().after(0.1) {
-                self.segmentedTitleView.index = 1
-                self.controllerNode.updateType(.missed)
+                self.setWegramCallFilter(.missed)
             }
         default:
             break
@@ -456,7 +496,7 @@ public final class CallListController: TelegramBaseController {
     }
     
     override public var navigationEdgeEffectExtension: CGFloat {
-        return self.controllerNode.navigationEdgeEffectExtension
+        return 0
     }
     
     override public func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
@@ -676,7 +716,7 @@ public final class CallListController: TelegramBaseController {
         
         switch self.mode {
             case .tab:
-                self.navigationItem.setLeftBarButton(UIBarButtonItem(title: "___done", style: .done, target: self, action: #selector(self.donePressed)), animated: true)
+                self.navigationItem.setLeftBarButton(UIBarButtonItem(title: self.presentationData.strings.Common_Done, style: .done, target: self, action: #selector(self.donePressed)), animated: true)
                
                 self.navigationItem.setRightBarButton(UIBarButtonItem(customDisplayNode: buttonNode), animated: true)
                 self.navigationItem.rightBarButtonItem?.setCustomAction({
@@ -688,7 +728,7 @@ public final class CallListController: TelegramBaseController {
                     pressedImpl?()
                 })
             
-                self.navigationItem.setRightBarButton(UIBarButtonItem(title: "___done", style: .done, target: self, action: #selector(self.donePressed)), animated: true)
+                self.navigationItem.setRightBarButton(UIBarButtonItem(title: self.presentationData.strings.Common_Done, style: .done, target: self, action: #selector(self.donePressed)), animated: true)
         }
         
         self.controllerNode.updateState { state in

@@ -16,16 +16,13 @@ import TelegramStringFormatting
 import ChatTimerScreen
 import NotificationPeerExceptionController
 
-func archiveContextMenuItems(context: AccountContext, group: EngineChatList.Group, chatListController: ChatListControllerImpl?) -> Signal<[ContextMenuItem], NoError> {
+func archiveContextMenuItems(context: AccountContext, group: EngineChatList.Group) -> Signal<[ContextMenuItem], NoError> {
     let presentationData = context.sharedContext.currentPresentationData.with({ $0 })
     let strings = presentationData.strings
-    return combineLatest(
-        context.engine.messages.unreadChatListPeerIds(groupId: group, filterPredicate: nil),
-        context.engine.data.get(
-            TelegramEngine.EngineData.Item.Configuration.ApplicationSpecificPreference(key: ApplicationSpecificPreferencesKeys.chatArchiveSettings)
-        )
-    )
-    |> map { [weak chatListController] unreadChatListPeerIds, chatArchiveSettingsPreference -> [ContextMenuItem] in
+    // No Hide/Unhide Archive: WeGram's Folded Chats row sorts among the chats by its newest message and
+    // is never hidden above the list, so the toggle would change nothing on screen.
+    return context.engine.messages.unreadChatListPeerIds(groupId: group, filterPredicate: nil)
+    |> map { unreadChatListPeerIds -> [ContextMenuItem] in
         var items: [ContextMenuItem] = []
         
         if !unreadChatListPeerIds.isEmpty {
@@ -36,14 +33,7 @@ func archiveContextMenuItems(context: AccountContext, group: EngineChatList.Grou
                 })
             })))
         }
-        
-        let settings = chatArchiveSettingsPreference?.get(ChatArchiveSettings.self) ?? ChatArchiveSettings.default
-        let isPinned = !settings.isHiddenByDefault
-        items.append(.action(ContextMenuActionItem(text: isPinned ? strings.ChatList_Context_HideArchive : strings.ChatList_Context_UnhideArchive, icon: { theme in generateTintedImage(image: UIImage(bundleImageName: isPinned ? "Chat/Context Menu/Unpin": "Chat/Context Menu/Pin"), color: theme.contextMenu.primaryColor) }, action: { [weak chatListController] _, f in
-            chatListController?.toggleArchivedFolderHiddenByDefault()
-            f(.default)
-        })))
-        
+
         return items
     }
 }
@@ -193,6 +183,18 @@ func chatContextMenuItems(context: AccountContext, peerId: EnginePeer.Id, promoI
                                 })))
                                 items.append(.separator)
                             }
+                        }
+                        
+                        // WeGram drops the row's inline Open App button (ChatListItem `hidesWegramListAccessories`), so the
+                        // same web app is offered here instead: one long press and one tap.
+                        if case .chatList = source, case let .user(user) = peer, let botInfo = user.botInfo, botInfo.flags.contains(.hasWebApp) {
+                            items.append(.action(ContextMenuActionItem(text: strings.ChatList_InlineButtonOpenApp, icon: { theme in generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Apps"), color: theme.contextMenu.primaryColor) }, action: { [weak chatListController] _, f in
+                                f(.default)
+                                guard let chatListController else { return }
+                                // The same call as the row button (ChatListController `mainContainerNode.openWebApp`).
+                                context.sharedContext.openWebApp(context: context, parentController: chatListController, updatedPresentationData: chatListController.updatedPresentationData, botPeer: .user(user), chatPeer: nil, threadId: nil, buttonText: "", url: "", simple: true, source: .generic, skipTermsOfService: true, payload: nil, verifyAgeCompletion: nil)
+                            })))
+                            items.append(.separator)
                         }
                         
                         let isMuted = chatContextMenuPeerIsMuted(peer: peer, notificationSettings: notificationSettings, globalNotificationSettings: globalNotificationSettings)

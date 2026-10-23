@@ -67,3 +67,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramLocationPickerSelection.swift", "Sources/WegramLocationControls.swift"])

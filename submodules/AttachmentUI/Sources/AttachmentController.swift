@@ -192,6 +192,7 @@ public protocol AttachmentContainable: ViewController, MinimizableController {
     var ignoresInputHeightInRegularLayout: Bool { get }
     var mediaPickerContext: AttachmentMediaPickerContext? { get }
     var getCurrentSendMessageContextMediaPreview: (() -> ChatSendMessageContextScreenMediaPreview?)? { get }
+    var expandedBackgroundColor: UIColor? { get }
 
     func isContainerPanningUpdated(_ panning: Bool)
 
@@ -205,6 +206,7 @@ public protocol AttachmentContainable: ViewController, MinimizableController {
 }
 
 public extension AttachmentContainable {
+    var expandedBackgroundColor: UIColor? { nil }
     func isContainerPanningUpdated(_ panning: Bool) {
 
     }
@@ -282,6 +284,7 @@ public enum AttachmentMediaPickerAttachmentMode {
 }
 
 public protocol AttachmentMediaPickerContext {
+    var customBottomPanel: Signal<AttachmentCustomBottomPanel?, NoError> { get }
     var selectionCount: Signal<Int, NoError> { get }
     var caption: Signal<NSAttributedString?, NoError> { get }
 
@@ -309,6 +312,7 @@ public protocol AttachmentMediaPickerContext {
 }
 
 public extension AttachmentMediaPickerContext {
+    var customBottomPanel: Signal<AttachmentCustomBottomPanel?, NoError> { .single(nil) }
     var selectionCount: Signal<Int, NoError> {
         return .single(0)
     }
@@ -438,6 +442,7 @@ public class AttachmentController: ViewController, MinimizableController {
     public enum Style {
         case glass
         case legacy
+        case wegram
     }
 
     private let context: AccountContext
@@ -503,6 +508,7 @@ public class AttachmentController: ViewController, MinimizableController {
 
         private let loadingProgressDisposable = MetaDisposable()
         private let mainButtonStateDisposable = MetaDisposable()
+        private let customBottomPanelDisposable = MetaDisposable()
         private let secondaryButtonStateDisposable = MetaDisposable()
         private let bottomPanelBackgroundColorDisposable = MetaDisposable()
 
@@ -511,6 +517,11 @@ public class AttachmentController: ViewController, MinimizableController {
         var mediaPickerContext: AttachmentMediaPickerContext? {
             didSet {
                 if let mediaPickerContext = self.mediaPickerContext {
+                    self.customBottomPanelDisposable.set((mediaPickerContext.customBottomPanel |> deliverOnMainQueue).start(next: { [weak self] panel in
+                        guard let self else { return }
+                        self.panel.customBottomPanel = panel
+                        if let layout = self.validLayout { self.containerLayoutUpdated(layout, transition: .immediate) }
+                    }))
                     self.captionDisposable.set((mediaPickerContext.caption
                     |> deliverOnMainQueue).startStrict(next: { [weak self] caption in
                         if let strongSelf = self {
@@ -581,6 +592,8 @@ public class AttachmentController: ViewController, MinimizableController {
                         }
                     }))
                 } else {
+                    self.customBottomPanelDisposable.set(nil)
+                    self.panel.customBottomPanel = nil
                     self.updateSelectionCount(0)
                     self.mediaSelectionCountDisposable.set(nil)
                     self.loadingProgressDisposable.set(nil)
@@ -617,14 +630,14 @@ public class AttachmentController: ViewController, MinimizableController {
             self.wrapperNode = ASDisplayNode()
             self.wrapperNode.clipsToBounds = true
 
-            self.container = AttachmentContainer(presentationData: self.presentationData, isFullSize: controller.isFullSize, glass: controller._hasGlassStyle, hasPill: controller.style == .glass, roundsTopCornersInRegularLayout: controller.roundsTopCornersInRegularLayout)
+            self.container = AttachmentContainer(presentationData: self.presentationData, isFullSize: controller.isFullSize, glass: controller._hasGlassStyle, hasPill: controller.style == .glass, roundsTopCornersInRegularLayout: controller.roundsTopCornersInRegularLayout, usesWegramAppearance: controller.style == .wegram)
             self.container.canHaveKeyboardFocus = true
 
             let panelStyle: AttachmentPanel.Style
             switch controller.style {
             case .glass:
                 panelStyle = .glass
-            case .legacy:
+            case .legacy, .wegram:
                 panelStyle = .legacy
             }
 
@@ -655,6 +668,15 @@ public class AttachmentController: ViewController, MinimizableController {
                     }
 
                     strongSelf.modalProgress = progress
+                    if controller.style == .wegram {
+                        let hasExpandedBackground: Bool
+                        if case .compact = layout.metrics.widthClass, layout.orientation != .landscape {
+                            hasExpandedBackground = strongSelf.container.isExpanded && strongSelf.currentControllers.last?.expandedBackgroundColor != nil
+                        } else {
+                            hasExpandedBackground = false
+                        }
+                        controller.statusBar.statusBarStyle = hasExpandedBackground ? (strongSelf.presentationData.theme.overallDarkAppearance ? .White : .Black) : .Ignore
+                    }
                     strongSelf.controller?.minimizedTopEdgeOffset = topInset
                     strongSelf.controller?.minimizedBounds = bounds
 
@@ -896,6 +918,7 @@ public class AttachmentController: ViewController, MinimizableController {
             self.mediaSelectionCountDisposable.dispose()
             self.loadingProgressDisposable.dispose()
             self.mainButtonStateDisposable.dispose()
+            self.customBottomPanelDisposable.dispose()
             self.secondaryButtonStateDisposable.dispose()
             self.bottomPanelBackgroundColorDisposable.dispose()
             self.presentationDataDisposable?.dispose()
@@ -1629,7 +1652,7 @@ public class AttachmentController: ViewController, MinimizableController {
 
         super.init(navigationBarPresentationData: nil)
 
-        self._hasGlassStyle = true //style == .glass
+        self._hasGlassStyle = style != .wegram
 
         self.statusBar.statusBarStyle = .Ignore
         self.blocksBackgroundWhenInOverlay = true

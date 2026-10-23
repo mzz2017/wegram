@@ -11,6 +11,7 @@ import LocationResources
 import AccountContext
 
 let locationPinReuseIdentifier = "locationPin"
+let wegramLocationPinReuseIdentifier = "wegram-locationPin"
 
 private func generateSmallBackgroundImage(color: UIColor) -> UIImage? {
     return generateImage(CGSize(width: 56.0, height: 56.0), contextGenerator: { size, context in
@@ -158,6 +159,9 @@ private func removePulseAnimations(layer: CALayer) {
 }
 
 public class LocationPinAnnotationView: MKAnnotationView {
+    let usesWegramAppearance: Bool
+    private var pinBaseline: CGFloat { self.usesWegramAppearance ? -28 : -36 }
+    private var pinX: CGFloat { self.usesWegramAppearance ? 0 : UIScreenPixel }
     let shadowNode: ASImageNode
     let pulseNode: ASImageNode
     let backgroundNode: ASImageNode
@@ -189,7 +193,8 @@ public class LocationPinAnnotationView: MKAnnotationView {
         }
     }
     
-    public init(annotation: LocationPinAnnotation) {
+    public init(annotation: LocationPinAnnotation, usesWegramAppearance: Bool = false) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.shadowNode = ASImageNode()
         self.shadowNode.image = UIImage(bundleImageName: "Location/PinShadow")
         if let image = self.shadowNode.image {
@@ -230,7 +235,7 @@ public class LocationPinAnnotationView: MKAnnotationView {
             self.dotNode.bounds = CGRect(origin: CGPoint(), size: image.size)
         }
         
-        super.init(annotation: annotation, reuseIdentifier: locationPinReuseIdentifier)
+        super.init(annotation: annotation, reuseIdentifier: usesWegramAppearance ? wegramLocationPinReuseIdentifier : locationPinReuseIdentifier)
         
         self.addSubnode(self.dotNode)
         
@@ -242,6 +247,16 @@ public class LocationPinAnnotationView: MKAnnotationView {
         self.addSubnode(self.smallNode)
         self.smallNode.addSubnode(self.smallIconNode)
         
+        if usesWegramAppearance {
+            self.shadowNode.image = WegramLocationPinVisual.image
+            self.shadowNode.bounds = CGRect(origin: .zero, size: WegramLocationPinVisual.size)
+            self.smallNode.image = WegramLocationPinVisual.dot
+            self.smallNode.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+            self.smallIconNode.isHidden = true
+            self.backgroundNode.isHidden = true
+            self.dotNode.isHidden = true
+            self.arrowNode.isHidden = true
+        }
         self.annotation = annotation
     }
     
@@ -270,6 +285,14 @@ public class LocationPinAnnotationView: MKAnnotationView {
     override public var annotation: MKAnnotation? {
         didSet {
             if let annotation = self.annotation as? LocationPinAnnotation {
+                if self.usesWegramAppearance {
+                    self.headingKvoToken?.invalidate()
+                    self.headingKvoToken = nil
+                    self.accessibilityLabel = annotation.location?.venue?.title
+                    self.setSelected(annotation.peer != nil || annotation.forcedSelection, animated: false)
+                    self.setNeedsLayout()
+                    return
+                }
                 if let message = annotation.message {
                     self.iconNode.isHidden = true
                     self.dotNode.isHidden = false
@@ -360,6 +383,7 @@ public class LocationPinAnnotationView: MKAnnotationView {
     }
 
     private func updateHeading() {
+        if self.usesWegramAppearance { return }
         if let heading = (self.annotation as? LocationPinAnnotation)?.heading?.doubleValue {
             self.arrowNode.isHidden = false
             self.arrowNode.transform = CATransform3DMakeRotation((CGFloat(heading) - self.mapHeading) / 180.0 * CGFloat.pi, 0.0, 0.0, 1.0)
@@ -369,7 +393,27 @@ public class LocationPinAnnotationView: MKAnnotationView {
         }
     }
     
+    func interactionFrame(in view: UIView) -> CGRect {
+        if self.usesWegramAppearance {
+            return self.convert(WegramLocationPinVisual.hitFrame(selected: self.isSelected, raised: self.isRaised), to: view)
+        }
+        return self.superview?.convert(self.frame.insetBy(dx: -16, dy: -16), to: view) ?? .zero
+    }
+
+    override public func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if self.usesWegramAppearance { return WegramLocationPinVisual.hitFrame(selected: self.isSelected, raised: self.isRaised).contains(point) }
+        return super.point(inside: point, with: event)
+    }
+
     override public func prepareForReuse() {
+        if self.usesWegramAppearance {
+            super.prepareForReuse()
+            self.shadowNode.layer.removeAllAnimations()
+            self.isRaised = false
+            self.animating = false
+            self.setNeedsLayout()
+            return
+        }
         self.previousPeerId = nil
         self.smallNode.isHidden = true
         self.backgroundNode.isHidden = false
@@ -377,6 +421,14 @@ public class LocationPinAnnotationView: MKAnnotationView {
     }
     
     override public func setSelected(_ selected: Bool, animated: Bool) {
+        if self.usesWegramAppearance {
+            let selected = (self.annotation as? LocationPinAnnotation)?.forcedSelection == true || selected
+            super.setSelected(selected, animated: false)
+            self.shadowNode.isHidden = !selected
+            self.smallNode.isHidden = selected
+            self.setNeedsLayout()
+            return
+        }
         super.setSelected(selected, animated: animated)
         
         if let annotation = self.annotation as? LocationPinAnnotation {
@@ -608,7 +660,7 @@ public class LocationPinAnnotationView: MKAnnotationView {
             
             if raised {
                 let previousPosition = self.shadowNode.position
-                self.shadowNode.position = CGPoint(x: UIScreenPixel, y: -66.0)
+                self.shadowNode.position = CGPoint(x: self.pinX, y: self.pinBaseline - 30)
                 self.shadowNode.layer.animatePosition(from: previousPosition, to: self.shadowNode.position, duration: 0.2, delay: 0.0, timingFunction: kCAMediaTimingFunctionSpring) { finished in
                     self.animating = false
                     if finished {
@@ -617,7 +669,7 @@ public class LocationPinAnnotationView: MKAnnotationView {
                 }
             } else {
                 UIView.animate(withDuration: 0.2, delay: 0.0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.0, options: [.allowAnimatedContent], animations: {
-                    self.shadowNode.position = CGPoint(x: UIScreenPixel, y: -36.0)
+                    self.shadowNode.position = CGPoint(x: self.pinX, y: self.pinBaseline)
                 }) { finished in
                     self.animating = false
                     if finished {
@@ -626,12 +678,16 @@ public class LocationPinAnnotationView: MKAnnotationView {
                 }
             }
         } else {
-            self.shadowNode.position = CGPoint(x: UIScreenPixel, y: raised ? -66.0 : -36.0)
+            self.shadowNode.position = CGPoint(x: self.pinX, y: self.pinBaseline - (raised ? 30 : 0))
             completion()
         }
     }
     
     public func setCustom(_ custom: Bool, animated: Bool) {
+        if self.usesWegramAppearance {
+            self.setSelected(true, animated: false)
+            return
+        }
         if let annotation = self.annotation as? LocationPinAnnotation {
             self.iconNode.setSignal(venueIcon(engine: annotation.context.engine, type: "", background: false))
         }
@@ -683,6 +739,7 @@ public class LocationPinAnnotationView: MKAnnotationView {
     }
     
     public func animateAppearance() {
+        if self.usesWegramAppearance { return }
         guard let annotation = self.annotation as? LocationPinAnnotation, annotation.location != nil && !annotation.forcedSelection else {
             return
         }
@@ -702,7 +759,13 @@ public class LocationPinAnnotationView: MKAnnotationView {
     
     override public func layoutSubviews() {
         super.layoutSubviews()
-    
+        if self.usesWegramAppearance {
+            if !self.animating {
+                self.shadowNode.position = CGPoint(x: 0, y: self.pinBaseline - (self.isRaised ? 30 : 0))
+                self.smallNode.position = .zero
+            }
+            return
+        }
         guard !self.animating else {
             return
         }

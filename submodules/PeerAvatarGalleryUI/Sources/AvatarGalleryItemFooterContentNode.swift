@@ -223,6 +223,12 @@ final class AvatarGalleryItemFooterContentNode: GalleryFooterContentNode {
         self.delete?(sourceView)
     }
     
+    var canShareFromMenu: Bool { self.displayActionButton && self.share != nil && self.controllerInteraction != nil }
+    func shareFromMenu() {
+        guard self.canShareFromMenu else { return }
+        self.actionButtonPressed()
+    }
+
     @objc private func actionButtonPressed() {
         if let controllerInteraction = self.controllerInteraction {
             self.share?(controllerInteraction)

@@ -1180,7 +1180,7 @@ extension WalletContextImpl {
         #else
         let platform: TonConnectDevicePlatform = .mac
         #endif
-        return TonConnectDevice(platform: platform, appName: "Telegram", appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
+        return TonConnectDevice(platform: platform, appName: "WeGram", appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
     }
 }
 

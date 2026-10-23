@@ -17,6 +17,7 @@ import FastBlur
 import MediaEditor
 import RadialStatusNode
 import MediaAssetsContext
+import AttachmentUI
 
 private let leftShadowImage: UIImage = {
     let baseImage = UIImage(bundleImageName: "Peer Info/MediaGridShadow")!
@@ -50,6 +51,7 @@ enum MediaPickerGridItemContent: Equatable {
     case asset(PHFetchResult<PHAsset>, Int)
     case media(MediaPickerScreenImpl.Subject.Media, Int)
     case draft(MediaEditorDraft, Int)
+    case limitedAccess
 }
 
 final class MediaPickerGridItem: GridItem {
@@ -75,27 +77,41 @@ final class MediaPickerGridItem: GridItem {
     
     func node(layout: GridNodeLayout, synchronousLoad: Bool) -> GridItemNode {
         switch self.content {
+        case .limitedAccess:
+            let node = MediaPickerLimitedAccessItemNode()
+            node.update(interaction: self.interaction, theme: self.theme, strings: self.strings)
+            return node
         case let .asset(fetchResult, index):
             let node = MediaPickerGridItemNode()
+            node.selectionStrings = self.strings
             node.setup(interaction: self.interaction, fetchResult: fetchResult, index: index, theme: self.theme, selectable: self.selectable, enableAnimations: self.enableAnimations, stories: self.stories)
             return node
         case let .media(media, index):
             let node = MediaPickerGridItemNode()
+            node.selectionStrings = self.strings
             node.setup(interaction: self.interaction, media: media, index: index, theme: self.theme, selectable: self.selectable, enableAnimations: self.enableAnimations, stories: self.stories)
             return node
         case let .draft(draft, index):
             let node = MediaPickerGridItemNode()
+            node.selectionStrings = self.strings
             node.setup(interaction: self.interaction, draft: draft, index: index, theme: self.theme, strings: self.strings, selectable: self.selectable, enableAnimations: self.enableAnimations, stories: self.stories)
             return node
         }
     }
     
     func update(node: GridItemNode) {
+        if case .limitedAccess = self.content, let node = node as? MediaPickerLimitedAccessItemNode {
+            node.update(interaction: self.interaction, theme: self.theme, strings: self.strings)
+            return
+        }
         guard let node = node as? MediaPickerGridItemNode else {
             assertionFailure()
             return
         }
+        node.selectionStrings = self.strings
         switch self.content {
+        case .limitedAccess:
+            assertionFailure()
         case let .asset(fetchResult, index):
             node.setup(interaction: self.interaction, fetchResult: fetchResult, index: index, theme: self.theme, selectable: self.selectable, enableAnimations: self.enableAnimations, stories: self.stories)
         case let .media(media, index):
@@ -103,6 +119,23 @@ final class MediaPickerGridItem: GridItem {
         case let .draft(draft, index):
             node.setup(interaction: self.interaction, draft: draft, index: index, theme: self.theme, strings: self.strings, selectable: self.selectable, enableAnimations: self.enableAnimations, stories: self.stories)
         }
+    }
+}
+
+private final class MediaPickerLimitedAccessItemNode: GridItemNode {
+    private let button = WegramPhotoAddAccessButton(frame: .zero)
+
+    override init() {
+        super.init()
+        self.view.addSubview(self.button)
+    }
+    func update(interaction: MediaPickerInteraction, theme: PresentationTheme, strings: PresentationStrings) {
+        self.button.update(title: strings.baseLanguageCode.hasPrefix("zh") ? "添加更多\n可访问照片" : "Add More\nPhotos", fontSize: 14, dark: theme.overallDarkAppearance)
+        self.button.pressed = { [weak interaction] in interaction?.addLimitedPhotos() }
+    }
+    override func layout() {
+        super.layout()
+        self.button.frame = self.bounds
     }
 }
 
@@ -120,6 +153,10 @@ final class MediaPickerGridItemNode: GridItemNode {
     private let backgroundNode: ASImageNode
     private let imageNode: ImageNode
     private var checkNode: InteractiveCheckNode?
+    private var wegramCheckButton: TGCheckButtonView?
+    private let selectionDimNode = ASDisplayNode()
+    var selectionStrings: PresentationStrings?
+    private let selectionIndexNode = ImmediateTextNode()
     private let leftShadowNode: ASImageNode
     private let rightShadowNode: ASImageNode
     private let typeIconNode: ASImageNode
@@ -191,7 +228,16 @@ final class MediaPickerGridItemNode: GridItemNode {
         self.clipsToBounds = true
         
         self.addSubnode(self.imageNode)
+        self.selectionDimNode.isLayerBacked = true
+        self.selectionDimNode.backgroundColor = UIColor(white: 0, alpha: 0.5)
+        self.selectionDimNode.alpha = 0
+        self.selectionDimNode.isUserInteractionEnabled = false
+        self.addSubnode(self.selectionDimNode)
         self.addSubnode(self.activateAreaNode)
+        self.selectionIndexNode.isUserInteractionEnabled = false
+        self.selectionIndexNode.isAccessibilityElement = false
+        self.selectionIndexNode.maximumNumberOfLines = 1
+        self.addSubnode(self.selectionIndexNode)
         
         self.imageNode.contentUpdated = { [weak self] image in
             self?.spoilerNode?.setImage(image)
@@ -242,9 +288,34 @@ final class MediaPickerGridItemNode: GridItemNode {
         }
     }
     
+    private var selectionTheme: CheckNodeTheme? {
+        guard let theme = self.theme else { return nil }
+        return CheckNodeTheme(theme: theme, style: .overlay)
+    }
+
     func updateSelectionState(isFirstTime: Bool = false, animated: Bool = false) {
-        if self.checkNode == nil, let _ = self.interaction?.selectionState, self.selectable, let theme = self.theme {
-            let checkNode = InteractiveCheckNode(theme: CheckNodeTheme(theme: theme, style: .overlay))
+        self.selectionIndexNode.isHidden = true
+        self.selectionIndexNode.attributedText = nil
+        let usesWegramAppearance = self.interaction?.usesWegramAppearance == true
+        self.checkNode?.isHidden = usesWegramAppearance
+        if usesWegramAppearance, self.selectable, self.interaction?.selectionState != nil, self.wegramCheckButton == nil {
+            let button = TGCheckButtonView(style: TGCheckButtonStyleGallery)!
+            button.usesWegramGridAppearance = true
+            button.usesWegramAppearance = true
+            button.addAction(UIAction { [weak self] _ in
+                guard let self, let interaction = self.interaction, let item = self.selectableItem,
+                      let selection = interaction.selectionState, let button = self.wegramCheckButton,
+                      wegramViewAcceptsActions(button), button.isEnabled, button.window != nil else { return }
+                _ = interaction.toggleSelection(item, !selection.isIdentifierSelected(item.uniqueIdentifier), false)
+            }, for: .touchUpInside)
+            self.view.addSubview(button)
+            self.wegramCheckButton = button
+            self.setNeedsLayout()
+        }
+        self.wegramCheckButton?.isHidden = !usesWegramAppearance || !self.selectable
+        if !usesWegramAppearance || self.interaction?.selectionState == nil { self.selectionDimNode.alpha = 0 }
+        if !usesWegramAppearance, self.checkNode == nil, let _ = self.interaction?.selectionState, self.selectable, let theme = self.selectionTheme {
+            let checkNode = InteractiveCheckNode(theme: theme)
             checkNode.valueChanged = { [weak self] value in
                 if let strongSelf = self, let interaction = strongSelf.interaction, let selectableItem = strongSelf.selectableItem {
                     if !interaction.toggleSelection(selectableItem, value, false) {
@@ -261,6 +332,7 @@ final class MediaPickerGridItemNode: GridItemNode {
                 checkNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.5, timingFunction: kCAMediaTimingFunctionSpring)
             }
         }
+        if let theme = self.selectionTheme, self.checkNode?.theme != theme { self.checkNode?.theme = theme }
 
         if let interaction = self.interaction, let selectionState = interaction.selectionState {
             let selected = selectionState.isIdentifierSelected(self.identifier)
@@ -268,13 +340,30 @@ final class MediaPickerGridItemNode: GridItemNode {
             if let selectableItem = self.selectableItem {
                 let index = selectionState.index(of: selectableItem)
                 if index != NSNotFound {
-                    self.checkNode?.content = .counter(Int(index))
+                    if interaction.usesWegramAppearance {
+                        if selected {
+                            let shadow = NSShadow()
+                            shadow.shadowColor = UIColor(white: 0, alpha: 0.4)
+                            shadow.shadowBlurRadius = 2
+                            shadow.shadowOffset = CGSize(width: 0, height: 0.5)
+                            self.selectionIndexNode.attributedText = NSAttributedString(string: String(index), attributes: [.font: Font.regular(14), .foregroundColor: UIColor.white, .shadow: shadow])
+                            self.selectionIndexNode.isHidden = false
+                        }
+                    } else {
+                        self.checkNode?.content = .counter(Int(index))
+                    }
                     selectionIndex = Int(index)
                 }
             }
             self.checkNode?.setSelected(selected, animated: animated)
+            self.wegramCheckButton?.setSelected(selected, animated: false)
+            let chinese = self.selectionStrings?.baseLanguageCode.hasPrefix("zh") == true
+            self.wegramCheckButton?.accessibilityLabel = selected ? (chinese ? "取消选择" : "Deselect") : (chinese ? "选择" : "Select")
+            let dimTransition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.2, curve: .easeInOut) : .immediate
+            dimTransition.updateAlpha(node: self.selectionDimNode, alpha: usesWegramAppearance && selected ? 1 : 0)
             self.selectionPromise.set(SelectionState(selected: selected, index: selectionIndex, count: selectionState.selectedItems().count))
         }
+        self.setNeedsLayout()
     }
     
     private var innerIsHidden = false
@@ -294,6 +383,7 @@ final class MediaPickerGridItemNode: GridItemNode {
     
     func animateFadeIn(animateCheckNode: Bool, animateSpoilerNode: Bool) {
         if animateCheckNode {
+            self.wegramCheckButton?.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
             self.checkNode?.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
         }
         self.leftShadowNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
@@ -310,7 +400,9 @@ final class MediaPickerGridItemNode: GridItemNode {
     override func didLoad() {
         super.didLoad()
         
-        self.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.imageNodeTap(_:))))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(self.imageNodeTap(_:)))
+        tap.cancelsTouchesInView = self.interaction?.usesWegramAppearance != true
+        self.view.addGestureRecognizer(tap)
     }
     
     func updateProgress(_ value: Float?, animated: Bool) {
@@ -806,9 +898,15 @@ final class MediaPickerGridItemNode: GridItemNode {
         let backgroundSize = CGSize(width: self.bounds.width, height: floorToScreenPixels(self.bounds.height / 9.0 * 16.0))
         self.backgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: floorToScreenPixels((self.bounds.height - backgroundSize.height) / 2.0)), size: backgroundSize)
         self.imageNode.frame = self.bounds
+        self.selectionDimNode.frame = self.bounds
+        self.wegramCheckButton?.frame = CGRect(x: max(0, self.bounds.width - 44), y: 0, width: 44, height: 44)
         self.leftShadowNode.frame = CGRect(x: 0.0, y: 0.0, width: min(leftShadowImage.size.width, self.bounds.width), height: leftShadowImage.size.height)
         self.rightShadowNode.frame = CGRect(x: self.bounds.width - min(rightShadowImage.size.width, self.bounds.width), y: self.bounds.height - rightShadowImage.size.height, width: min(rightShadowImage.size.width, self.bounds.width), height: rightShadowImage.size.height)
-        self.typeIconNode.frame = CGRect(x: 0.0, y: 1.0, width: 19.0, height: 19.0)
+        if self.interaction?.usesWegramAppearance == true {
+            self.typeIconNode.frame = CGRect(x: 3, y: max(0, self.bounds.height - 22), width: 19, height: 19)
+        } else {
+            self.typeIconNode.frame = CGRect(x: 0.0, y: 1.0, width: 19.0, height: 19.0)
+        }
         self.activateAreaNode.frame = self.bounds
         
         if self.durationNode.supernode != nil {
@@ -823,6 +921,8 @@ final class MediaPickerGridItemNode: GridItemNode {
         
         let checkSize = CGSize(width: 29.0, height: 29.0)
         self.checkNode?.frame = CGRect(origin: CGPoint(x: self.bounds.width - checkSize.width - 3.0, y: 3.0), size: checkSize)
+        let indexSize = self.selectionIndexNode.updateLayout(CGSize(width: max(0, self.bounds.width - 44), height: 20))
+        self.selectionIndexNode.frame = CGRect(origin: CGPoint(x: 8, y: 8), size: indexSize)
         
         if let spoilerNode = self.spoilerNode, self.bounds.width > 0.0 {
             spoilerNode.frame = self.bounds
@@ -869,6 +969,7 @@ final class MediaPickerGridItemNode: GridItemNode {
     }
         
     @objc func imageNodeTap(_ recognizer: UITapGestureRecognizer) {
+        if let button = self.wegramCheckButton, !button.isHidden, button.frame.contains(recognizer.location(in: self.view)) { return }
         if let (draft, _) = self.currentDraftState {
             self.interaction?.openDraft(draft, self.imageNode.image)
             return

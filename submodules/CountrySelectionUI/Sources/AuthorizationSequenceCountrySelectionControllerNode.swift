@@ -187,7 +187,7 @@ public func searchCountries(items: [((String, String), String, [Int])], query: S
     return result
 }
 
-final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, UITableViewDelegate, UITableViewDataSource {
+final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, UITableViewDelegate, UITableViewDataSource, UITextFieldDelegate {
     let itemSelected: (((String, String), String, Int)) -> Void
     var deactivateSearch: () -> Void = {}
     
@@ -195,6 +195,10 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
     private let strings: PresentationStrings
     private let displayCodes: Bool
     private let glass: Bool
+    private let usesWegramAppearance: Bool
+    private let wegramSearchBackground = UIView()
+    private let wegramSearchBar = UITextField()
+    private let emptyResultsLabel = UILabel()
     private let needsSubtitle: Bool
     
     private let tableView: UITableView
@@ -213,14 +217,15 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
     
     private var validLayout: ContainerViewLayout?
     
-    init(theme: PresentationTheme, strings: PresentationStrings, displayCodes: Bool, glass: Bool, itemSelected: @escaping (((String, String), String, Int)) -> Void) {
+    init(theme: PresentationTheme, strings: PresentationStrings, displayCodes: Bool, glass: Bool, usesWegramAppearance: Bool = false, preferredCountryId: String? = nil, itemSelected: @escaping (((String, String), String, Int)) -> Void) {
         self.theme = theme
         self.strings = strings
         self.displayCodes = displayCodes
         self.glass = glass
+        self.usesWegramAppearance = usesWegramAppearance
         self.itemSelected = itemSelected
         
-        self.needsSubtitle = strings.baseLanguageCode != "en"
+        self.needsSubtitle = !usesWegramAppearance && strings.baseLanguageCode != "en"
         
         self.tableView = UITableView(frame: CGRect(), style: glass ? .insetGrouped : .plain)
         if #available(iOS 15.0, *) {
@@ -239,9 +244,9 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
         
         var sections: [(String, [((String, String), String, Int)])] = []
         for (names, id, codes) in countryNamesAndCodes.sorted(by: { lhs, rhs in
-            return lhs.0.1 < rhs.0.1
+            return usesWegramAppearance ? WegramCountryList.sortKey(lhs.0.1) < WegramCountryList.sortKey(rhs.0.1) : lhs.0.1 < rhs.0.1
         }) {
-            let title = String(names.1[names.1.startIndex ..< names.1.index(after: names.1.startIndex)]).uppercased()
+            let title = usesWegramAppearance ? WegramCountryList.sectionKey(names.1) : String(names.1[names.1.startIndex ..< names.1.index(after: names.1.startIndex)]).uppercased()
             if sections.isEmpty || sections[sections.count - 1].0 != title {
                 sections.append((title, []))
             }
@@ -249,8 +254,17 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
                 sections[sections.count - 1].1.append((names, id, code))
             }
         }
+        if usesWegramAppearance {
+            let commonIds = WegramCountryList.commonRegionIds(preferred: preferredCountryId, isChinese: strings.baseLanguageCode.hasPrefix("zh"))
+            let common = commonIds.flatMap { id in
+                countryNamesAndCodes.filter { $0.1 == id }.flatMap { names, id, codes in codes.map { (names, id, $0) } }
+            }
+            if !common.isEmpty { sections.insert((strings.baseLanguageCode.hasPrefix("zh") ? "常用地区" : "Frequently used", common), at: 0) }
+            self.sectionTitles = sections.enumerated().map { index, value in common.isEmpty || index > 0 ? value.0 : "↑" }
+        } else {
+            self.sectionTitles = sections.map { $0.0 }
+        }
         self.sections = sections
-        self.sectionTitles = sections.map { $0.0 }
         
         self.topEdgeEffectView = EdgeEffectView()
         
@@ -287,6 +301,49 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
         self.view.addSubview(self.tableView)
         self.view.addSubview(self.searchTableView)
         
+        if usesWegramAppearance {
+            let fieldColor = theme.overallDarkAppearance ? UIColor(rgb: 0x2c2c2c) : UIColor.white
+            let searchBackground = theme.overallDarkAppearance ? UIColor(rgb: 0x202020) : UIColor(rgb: 0xededed)
+            for table in [self.tableView, self.searchTableView] {
+                table.rowHeight = 44
+                table.sectionHeaderHeight = 22
+                table.sectionFooterHeight = .leastNormalMagnitude
+                table.separatorInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 0)
+                table.sectionIndexColor = theme.list.itemSecondaryTextColor
+                table.accessibilityIdentifier = table === self.tableView ? "Auth.Country.List" : "Auth.Country.Results"
+                table.keyboardDismissMode = .onDrag
+            }
+            self.wegramSearchBackground.backgroundColor = searchBackground
+            self.wegramSearchBar.delegate = self
+            self.wegramSearchBar.placeholder = strings.Common_Search
+            self.wegramSearchBar.font = Font.regular(17)
+            self.wegramSearchBar.backgroundColor = fieldColor
+            self.wegramSearchBar.textColor = theme.list.itemPrimaryTextColor
+            self.wegramSearchBar.tintColor = UIColor(rgb: 0x07c160)
+            self.wegramSearchBar.layer.cornerRadius = 5
+            self.wegramSearchBar.clipsToBounds = true
+            self.wegramSearchBar.clearButtonMode = .whileEditing
+            self.wegramSearchBar.returnKeyType = .search
+            self.wegramSearchBar.accessibilityIdentifier = "Auth.Country.SearchField"
+            self.wegramSearchBar.autocorrectionType = .no
+            self.wegramSearchBar.autocapitalizationType = .none
+            let searchIcon = UIImageView(image: UIImage(systemName: "magnifyingglass"))
+            searchIcon.tintColor = theme.list.itemSecondaryTextColor
+            searchIcon.frame = CGRect(x: 10, y: 9, width: 18, height: 18)
+            let searchIconContainer = UIView(frame: CGRect(x: 0, y: 0, width: 36, height: 36))
+            searchIconContainer.addSubview(searchIcon)
+            self.wegramSearchBar.leftView = searchIconContainer
+            self.wegramSearchBar.leftViewMode = .always
+            self.wegramSearchBar.addTarget(self, action: #selector(self.searchTextChanged), for: .editingChanged)
+            self.emptyResultsLabel.text = strings.Contacts_Search_NoResults
+            self.emptyResultsLabel.textColor = theme.list.itemSecondaryTextColor
+            self.emptyResultsLabel.font = Font.regular(15)
+            self.emptyResultsLabel.textAlignment = .center
+            self.emptyResultsLabel.isHidden = true
+            self.view.addSubview(self.wegramSearchBackground)
+            self.view.addSubview(self.wegramSearchBar)
+            self.view.addSubview(self.emptyResultsLabel)
+        }
         if glass {
             self.view.addSubview(self.topEdgeEffectView)
         }
@@ -294,6 +351,22 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
         
     func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
         self.validLayout = layout
+        if self.usesWegramAppearance {
+            let searchHeight: CGFloat = 52
+            let searchFrame = CGRect(x: layout.safeInsets.left, y: navigationBarHeight, width: layout.size.width - layout.safeInsets.left - layout.safeInsets.right, height: searchHeight)
+            transition.updateFrame(view: self.wegramSearchBackground, frame: CGRect(x: 0, y: navigationBarHeight, width: layout.size.width, height: searchHeight))
+            transition.updateFrame(view: self.wegramSearchBar, frame: searchFrame.insetBy(dx: 8, dy: 8))
+            let tableFrame = CGRect(x: 0, y: searchFrame.maxY, width: layout.size.width, height: max(0, layout.size.height - searchFrame.maxY))
+            let keyboard = layout.insets(options: .input).bottom
+            for table in [self.tableView, self.searchTableView] {
+                table.contentInset = UIEdgeInsets(top: 0, left: layout.safeInsets.left, bottom: keyboard, right: layout.safeInsets.right)
+                table.scrollIndicatorInsets = table.contentInset
+                transition.updateFrame(view: table, frame: tableFrame)
+            }
+            let emptyHeight: CGFloat = 44
+            self.emptyResultsLabel.frame = CGRect(x: 16, y: tableFrame.minY + 32, width: layout.size.width - 32, height: emptyHeight)
+            return
+        }
         self.tableView.contentInset = UIEdgeInsets(top: navigationBarHeight, left: 0.0, bottom: layout.intrinsicInsets.bottom, right: 0.0)
         self.searchTableView.contentInset = UIEdgeInsets(top: navigationBarHeight, left: 0.0, bottom: layout.intrinsicInsets.bottom, right: 0.0)
         transition.updateFrame(view: self.tableView, frame: CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: layout.size.width, height: layout.size.height)))
@@ -372,6 +445,15 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
         })
     }
     
+    @objc private func searchTextChanged() {
+        self.updateSearchQuery(self.wegramSearchBar.text ?? "")
+    }
+
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        textField.resignFirstResponder()
+        return true
+    }
+
     func updateSearchQuery(_ query: String) {
         if query.isEmpty {
             self.searchResults = []
@@ -382,6 +464,8 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
             self.searchTableView.isHidden = false
             self.searchTableView.reloadData()
         }
+        if self.usesWegramAppearance { self.tableView.isHidden = !query.isEmpty }
+        self.emptyResultsLabel.isHidden = !self.usesWegramAppearance || query.isEmpty || !self.searchResults.isEmpty
     }
     
     func numberOfSections(in tableView: UITableView) -> Int {
@@ -409,6 +493,11 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
     }
     
     func tableView(_ tableView: UITableView, willDisplayHeaderView view: UIView, forSection section: Int) {
+        if self.usesWegramAppearance {
+            let header = view as? UITableViewHeaderFooterView
+            header?.textLabel?.font = Font.regular(12)
+            if tableView === self.tableView { header?.textLabel?.text = self.sections[section].0 }
+        }
         (view as? UITableViewHeaderFooterView)?.tintColor = self.theme.chatList.sectionHeaderFillColor
         (view as? UITableViewHeaderFooterView)?.textLabel?.textColor = self.theme.chatList.sectionHeaderTextColor
     }
@@ -423,6 +512,7 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
     
     func tableView(_ tableView: UITableView, sectionForSectionIndexTitle title: String, at index: Int) -> Int {
         if tableView === self.tableView {
+            if self.usesWegramAppearance { return index }
             if index == 0 {
                 return 0
             } else {
@@ -464,7 +554,8 @@ final class AuthorizationSequenceCountrySelectionControllerNode: ASDisplayNode, 
         cell.accessibilityLabel = cleanCountryName
         cell.accessibilityValue = code
         
-        cell.textLabel?.text = countryName
+        cell.textLabel?.text = self.usesWegramAppearance ? cleanCountryName : countryName
+        if self.usesWegramAppearance { cell.textLabel?.font = Font.regular(17) }
         cell.detailTextLabel?.text = originalCountryName
         if self.displayCodes, let label = cell.accessoryView as? UILabel {
             label.text = code

@@ -1,5 +1,10 @@
 load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 
+exports_files(
+    ["Sources/WegramCallFilterTitleView.swift", "Sources/WegramCallRowLayout.swift", "Sources/WegramGroupCallRowLayout.swift", "Sources/WegramCallDetailsView.swift", "Sources/WegramCallDetailsRecordsNode.swift"],
+    visibility = ["//submodules/TelegramPresentationData:__pkg__"],
+)
+
 swift_library(
     name = "CallListUI",
     module_name = "CallListUI",
@@ -19,6 +24,7 @@ swift_library(
         "//submodules/TelegramUIPreferences:TelegramUIPreferences",
         "//submodules/AccountContext:AccountContext",
         "//submodules/ItemListUI:ItemListUI",
+        "//submodules/PeerInfoUI",
         "//submodules/AvatarNode:AvatarNode",
         "//submodules/TelegramStringFormatting:TelegramStringFormatting",
         "//submodules/AlertUI:AlertUI",

@@ -21,3 +21,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/CameraRollSaveResult.swift", "Sources/CameraRollImageData.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import AsyncDisplayKit
 import Display
 import SwiftSignalKit
 import TelegramCore
@@ -45,7 +46,7 @@ public func autodownloadDataSizeString(_ size: Int64, decimalSeparator: String =
     }
 }
 
-enum AutomaticDownloadCategory {
+public enum AutomaticDownloadCategory {
     case photo
     case video
     case file
@@ -316,7 +317,7 @@ private func autodownloadMediaCategoryControllerEntries(presentationData: Presen
     return entries
 }
 
-func autodownloadMediaCategoryController(context: AccountContext, connectionType: AutomaticDownloadConnectionType, category: AutomaticDownloadCategory) -> ViewController {
+public func autodownloadMediaCategoryController(context: AccountContext, connectionType: AutomaticDownloadConnectionType, category: AutomaticDownloadCategory, wegramStyle: Bool = false) -> ViewController {
     let arguments = AutodownloadMediaCategoryControllerArguments(togglePeer: { type in
         let _ = updateMediaDownloadSettingsInteractively(accountManager: context.sharedContext.accountManager, { settings in
             var settings = settings
@@ -442,8 +443,8 @@ func autodownloadMediaCategoryController(context: AccountContext, connectionType
     let initialValuePromise: Promise<MediaAutoDownloadSettings> = Promise()
     initialValuePromise.set(currentAutodownloadSettings())
     
-    let signal = combineLatest(context.sharedContext.presentationData, context.sharedContext.accountManager.sharedData(keys: [SharedDataKeys.autodownloadSettings, ApplicationSpecificSharedDataKeys.automaticMediaDownloadSettings])) |> deliverOnMainQueue
-        |> map { presentationData, sharedData -> (ItemListControllerState, (ItemListNodeState, Any)) in
+    let dataSignal = combineLatest(context.sharedContext.presentationData, context.sharedContext.accountManager.sharedData(keys: [SharedDataKeys.autodownloadSettings, ApplicationSpecificSharedDataKeys.automaticMediaDownloadSettings])) |> deliverOnMainQueue
+        |> map { presentationData, sharedData -> (PresentationData, MediaAutoDownloadSettings) in
             var automaticMediaDownloadSettings: MediaAutoDownloadSettings
             if let value = sharedData.entries[ApplicationSpecificSharedDataKeys.automaticMediaDownloadSettings]?.get(MediaAutoDownloadSettings.self) {
                 automaticMediaDownloadSettings = value
@@ -459,6 +460,35 @@ func autodownloadMediaCategoryController(context: AccountContext, connectionType
                 autodownloadSettings = .defaultSettings
             }
             
+            return (presentationData, automaticMediaDownloadSettings)
+        }
+
+    let reportDisappear: (Bool) -> Void = { _ in
+        let _ = (combineLatest(initialValuePromise.get() |> take(1), currentAutodownloadSettings())
+        |> mapToSignal { initialValue, currentValue -> Signal<Void, NoError> in
+            let initialConnection = initialValue.connectionSettings(for: connectionType.automaticDownloadNetworkType)
+            let currentConnection = currentValue.connectionSettings(for: connectionType.automaticDownloadNetworkType)
+            if currentConnection != initialConnection, let categories = currentConnection.custom, currentConnection.preset == .custom {
+                let preset: SavedAutodownloadPreset
+                switch connectionType {
+                    case .cellular:
+                        preset = .medium
+                    case .wifi:
+                        preset = .high
+                }
+                let settings = AutodownloadPresetSettings(disabled: false, photoSizeMax: categories.photo.sizeLimit, videoSizeMax: categories.video.sizeLimit, fileSizeMax: categories.file.sizeLimit, preloadLargeVideo: categories.video.predownload, lessDataForPhoneCalls: false, videoUploadMaxbitrate: 0)
+                return saveAutodownloadSettings(account: context.account, preset: preset, settings: settings)
+            }
+            return .complete()
+        }).start()
+    }
+
+    if wegramStyle {
+        let controller = WegramAutodownloadCategoryController(context: context, category: category, connectionType: connectionType, arguments: arguments, source: dataSignal)
+        controller.didDisappear = reportDisappear
+        return controller
+    }
+    let signal = dataSignal |> map { presentationData, automaticMediaDownloadSettings -> (ItemListControllerState, (ItemListNodeState, Any)) in
             let title: String
             switch category {
             case .photo:
@@ -478,25 +508,136 @@ func autodownloadMediaCategoryController(context: AccountContext, connectionType
     }
     
     let controller = ItemListController(context: context, state: signal)
-    controller.didDisappear = { _ in
-        let _ = (combineLatest(initialValuePromise.get() |> take(1), currentAutodownloadSettings())
-        |> mapToSignal { initialValue, currentValue -> Signal<Void, NoError> in
-            let initialConnection = initialValue.connectionSettings(for: connectionType.automaticDownloadNetworkType)
-            let currentConnection = currentValue.connectionSettings(for: connectionType.automaticDownloadNetworkType)
-            if currentConnection != initialConnection, let categories = currentConnection.custom, currentConnection.preset == .custom {
-                let preset: SavedAutodownloadPreset
-                switch connectionType {
-                    case .cellular:
-                        preset = .medium
-                    case .wifi:
-                        preset = .high
-                }
-                let settings = AutodownloadPresetSettings(disabled: false, photoSizeMax: categories.photo.sizeLimit, videoSizeMax: categories.video.sizeLimit, fileSizeMax: categories.file.sizeLimit, preloadLargeVideo: categories.video.predownload, lessDataForPhoneCalls: false, videoUploadMaxbitrate: 0)
-                return saveAutodownloadSettings(account: context.account, preset: preset, settings: settings)
-            }
-            return .complete()
-        }).start()
-    }
+    controller.didDisappear = reportDisappear
     return controller
 }
 
+
+private final class WegramAutodownloadCategoryController: ViewController {
+    private let category: AutomaticDownloadCategory
+    private let connectionType: AutomaticDownloadConnectionType
+    private let arguments: AutodownloadMediaCategoryControllerArguments
+    private var presentationData: PresentationData
+    private var settings: MediaAutoDownloadSettings?
+    private let sourceDisposable = MetaDisposable()
+    private let content = WegramDownloadCategoryContentView()
+    private let backButton = ASButtonNode()
+    private let titleButton = UIButton(type: .custom)
+    private let context: AccountContext
+    private var latestRules: [WegramDownloadToggle] = []
+    private var latestSize: WegramDownloadSize?
+    var didDisappear: ((Bool) -> Void)?
+
+    init(context: AccountContext, category: AutomaticDownloadCategory, connectionType: AutomaticDownloadConnectionType, arguments: AutodownloadMediaCategoryControllerArguments, source: Signal<(PresentationData, MediaAutoDownloadSettings), NoError>) {
+        self.context = context
+        self.category = category
+        self.connectionType = connectionType
+        self.arguments = arguments
+        self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: self.presentationData.theme), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)))
+        self.titleButton.titleLabel?.font = wegramNavigationTitleFont
+        self.titleButton.accessibilityIdentifier = "Wegram.DownloadRule.OriginalSettings"
+        self.titleButton.addAction(UIAction(handler: { [weak self] _ in
+            guard let self else { return }
+            self.push(autodownloadMediaCategoryController(context: self.context, connectionType: self.connectionType, category: self.category))
+        }), for: .touchUpInside)
+        self.navigationItem.titleView = self.titleButton
+        self.backButton.addTarget(self, action: #selector(self.backPressed), forControlEvents: .touchUpInside)
+        self.content.toggle = { [weak self] field in
+            guard let self, self.latestRules.first(where: { $0.field == field })?.enabled == true else { return }
+            switch field {
+            case .contact: self.arguments.togglePeer(.contact)
+            case .otherPrivate: self.arguments.togglePeer(.otherPrivate)
+            case .group: self.arguments.togglePeer(.group)
+            case .channel: self.arguments.togglePeer(.channel)
+            case .preload: self.arguments.toggleVideoPreload()
+            case .photo, .video: return
+            }
+        }
+        self.content.adjustSize = { [weak self] size in
+            guard let self, self.latestSize != nil else { return }
+            self.arguments.adjustSize(size)
+        }
+        self.sourceDisposable.set(source.startStrict(next: { [weak self] data, settings in
+            self?.presentationData = data
+            self?.settings = settings
+            self?.updatePresentation()
+        }))
+        self.updatePresentation()
+    }
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    deinit { self.sourceDisposable.dispose() }
+    private func updatePresentation() {
+        let data = self.presentationData
+        let chinese = data.strings.baseLanguageCode.hasPrefix("zh")
+        let color = WegramNavigationColors(isDark: data.theme.overallDarkAppearance).control
+        let title: String
+        switch self.category {
+        case .photo: title = data.strings.AutoDownloadSettings_PhotosTitle
+        case .video: title = data.strings.AutoDownloadSettings_VideosTitle
+        case .file: title = data.strings.AutoDownloadSettings_DocumentsTitle
+        case .story: title = data.strings.AutoDownloadSettings_StoriesTitle
+        }
+        self.titleButton.setTitle(title, for: .normal)
+        self.titleButton.setTitleColor(color, for: .normal)
+        self.titleButton.accessibilityHint = chinese ? "打开原版完整规则编辑器" : "Open the original full rule editor"
+        self.titleButton.sizeToFit()
+        self.titleButton.bounds.size.height = 44
+        let image = wegramNavigationBackArrowImage(color: color)
+        self.backButton.setImage(image, for: .normal)
+        let size = image?.size ?? .zero
+        self.backButton.contentEdgeInsets = UIEdgeInsets(top: (44 - size.height) / 2, left: 0, bottom: (44 - size.height) / 2, right: 44 - size.width)
+        let back = UIBarButtonItem(customDisplayNode: self.backButton)
+        back?.target = self
+        back?.action = #selector(self.backPressed)
+        back?.accessibilityLabel = data.strings.Common_Back
+        self.navigationItem.leftBarButtonItem = back
+        self.content.update(dark: data.theme.overallDarkAppearance, fontSize: data.listsFontSize.itemListBaseFontSize, chinese: chinese)
+        self.content.formatSize = { autodownloadDataSizeString($0, decimalSeparator: data.dateTimeFormat.decimalSeparator) }
+        var heading = ""
+        var sizeHeading = ""
+        var footer = ""
+        var rules: [WegramDownloadToggle] = []
+        var downloadSize: WegramDownloadSize?
+        if let settings = self.settings {
+            for entry in autodownloadMediaCategoryControllerEntries(presentationData: data, connectionType: self.connectionType, category: self.category, settings: settings) {
+                switch entry {
+                case let .peerHeader(_, text): heading = text
+                case let .peerContacts(_, title, value): rules.append(WegramDownloadToggle(field: .contact, title: title, value: value, enabled: true))
+                case let .peerOtherPrivate(_, title, value): rules.append(WegramDownloadToggle(field: .otherPrivate, title: title, value: value, enabled: true))
+                case let .peerGroups(_, title, value): rules.append(WegramDownloadToggle(field: .group, title: title, value: value, enabled: true))
+                case let .peerChannels(_, title, value): rules.append(WegramDownloadToggle(field: .channel, title: title, value: value, enabled: true))
+                case let .sizeHeader(_, text): sizeHeading = text
+                case let .sizeItem(_, _, decimal, text, bytes):
+                    downloadSize = WegramDownloadSize(heading: sizeHeading, text: text, bytes: bytes, minimum: autodownloadDataSizeString(512 * 1024, decimalSeparator: decimal), maximum: autodownloadDataSizeString(1536 * 1024 * 1024, decimalSeparator: decimal))
+                case let .sizePreload(_, title, value, enabled): rules.append(WegramDownloadToggle(field: .preload, title: title, value: value && enabled, enabled: enabled))
+                case let .sizePreloadInfo(_, text): footer = text
+                }
+            }
+        }
+        self.latestRules = rules
+        self.latestSize = downloadSize
+        self.content.load(heading: heading, rules: rules, size: downloadSize, footer: footer)
+        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: data.theme), strings: NavigationBarStrings(presentationStrings: data.strings)), transition: .immediate)
+        self.statusBar.statusBarStyle = data.theme.rootController.statusBarStyle.style
+        if self.isNodeLoaded { self.displayNode.backgroundColor = self.content.backgroundColor }
+    }
+    override func loadDisplayNode() {
+        self.displayNode = ASDisplayNode()
+        self.displayNode.view.addSubview(self.content)
+        self.updatePresentation()
+        self.displayNodeDidLoad()
+    }
+    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        super.containerLayoutUpdated(layout, transition: transition)
+        let top = self.navigationLayout(layout: layout).navigationFrame.maxY
+        self.content.contentInset.bottom = layout.intrinsicInsets.bottom
+        self.content.verticalScrollIndicatorInsets.bottom = layout.intrinsicInsets.bottom
+        transition.updateFrame(view: self.content, frame: CGRect(x: layout.safeInsets.left, y: top, width: layout.size.width - layout.safeInsets.left - layout.safeInsets.right, height: max(0, layout.size.height - top)))
+    }
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        self.didDisappear?(animated)
+    }
+    @objc private func backPressed() { self.dismiss() }
+}

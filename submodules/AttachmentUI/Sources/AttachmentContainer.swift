@@ -13,11 +13,14 @@ import EdgeEffect
 
 private let overflowInset: CGFloat = 0.0
 
-public func attachmentDefaultTopInset(layout: ContainerViewLayout?) -> CGFloat {
+public func attachmentDefaultTopInset(layout: ContainerViewLayout?, usesWegramAppearance: Bool = false) -> CGFloat {
     guard let layout = layout else {
         return 210.0
     }
     if case .compact = layout.metrics.widthClass {
+        if usesWegramAppearance {
+            return max(1, floor(max(layout.size.width, layout.size.height) * 0.25) - (layout.statusBarHeight ?? 0) - 10)
+        }
         var factor: CGFloat = 0.2488
         if layout.size.width <= 320.0 {
             factor = 0.15
@@ -30,6 +33,7 @@ public func attachmentDefaultTopInset(layout: ContainerViewLayout?) -> CGFloat {
 
 final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
     private let glass: Bool
+    private let usesWegramAppearance: Bool
     private let hasPill: Bool
     private let roundsTopCornersInRegularLayout: Bool
     
@@ -88,13 +92,14 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
     var isInnerPanGestureEnabled: (() -> Bool)?
     var onExpandAnimationCompleted: () -> Void = {}
     
-    init(presentationData: PresentationData, isFullSize: Bool, glass: Bool, hasPill: Bool, roundsTopCornersInRegularLayout: Bool = false) {
+    init(presentationData: PresentationData, isFullSize: Bool, glass: Bool, hasPill: Bool, roundsTopCornersInRegularLayout: Bool = false, usesWegramAppearance: Bool = false) {
         self.presentationData = presentationData
         self.isFullSize = isFullSize
         if isFullSize {
             self.isExpanded = true
         }
         self.glass = glass
+        self.usesWegramAppearance = usesWegramAppearance
         self.hasPill = hasPill
         self.roundsTopCornersInRegularLayout = roundsTopCornersInRegularLayout
         
@@ -250,7 +255,7 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
         }
         
         let isLandscape = layout.orientation == .landscape
-        let edgeTopInset = isLandscape ? 0.0 : attachmentDefaultTopInset(layout: layout)
+        let edgeTopInset = isLandscape ? 0.0 : attachmentDefaultTopInset(layout: layout, usesWegramAppearance: self.usesWegramAppearance)
     
         let completion = {
             self.isAnimating = false
@@ -503,7 +508,7 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
             return
         }
         
-        let containerCornerRadius = max(24.0, layout.deviceMetrics.screenCornerRadius)
+        let containerCornerRadius = self.usesWegramAppearance ? 18.0 : max(24.0, layout.deviceMetrics.screenCornerRadius)
         self.bottomClipNode.cornerRadius = containerCornerRadius - 2.0
         
         self.isUpdatingState = true
@@ -513,7 +518,7 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
                 
         self.panGestureRecognizer?.isEnabled = (layout.inputHeight == nil || layout.inputHeight == 0.0)
 
-        let defaultTopInset = attachmentDefaultTopInset(layout: layout)
+        let defaultTopInset = attachmentDefaultTopInset(layout: layout, usesWegramAppearance: self.usesWegramAppearance)
         let isLandscape = layout.orientation == .landscape
         let edgeTopInset = isLandscape ? 0.0 : defaultTopInset
         let isFullSize = self.panGestureArguments?.isFullSize ?? self.isFullSize
@@ -522,6 +527,13 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
         if case .regular = layout.metrics.widthClass {
             effectiveExpanded = true
         }
+        let expandedBackgroundColor: UIColor?
+        if self.usesWegramAppearance, effectiveExpanded, case .compact = layout.metrics.widthClass, !isLandscape {
+            expandedBackgroundColor = controllers.last?.expandedBackgroundColor
+        } else {
+            expandedBackgroundColor = nil
+        }
+        self.wrappingNode.backgroundColor = expandedBackgroundColor
         
         let topInset: CGFloat
         if !isFullSize, let (panInitialTopInset, panOffset, _, _, _) = self.panGestureArguments {
@@ -576,10 +588,10 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
                 self.clipNode.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             }
             
-            if isLandscape {
+            if isLandscape || expandedBackgroundColor != nil {
                 self.clipNode.cornerRadius = 0.0
             } else {
-                self.clipNode.cornerRadius = self.glass ? 38.0 : 10.0
+                self.clipNode.cornerRadius = self.usesWegramAppearance ? 16.0 : (self.glass ? 38.0 : 10.0)
             }
             
             if #available(iOS 11.0, *) {
@@ -603,7 +615,7 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
                 containerFrame = unscaledFrame
                 clipFrame = unscaledFrame
             } else {
-                containerTopInset = 10.0
+                containerTopInset = self.usesWegramAppearance && effectiveExpanded ? 2.0 : 10.0
                 if let statusBarHeight = layout.statusBarHeight {
                     containerTopInset += statusBarHeight
                 }
@@ -628,7 +640,7 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
                 containerFrame = unscaledFrame.offsetBy(dx: -overflowInset, dy: scaledTopInset - (unscaledFrame.midY - containerScale * unscaledFrame.height / 2.0))
                 
                 let topPortion = self.wrappingNode.frame.minY
-                let clipTopOffset: CGFloat = 2.0 * scaleProgress + UIScreenPixel
+                let clipTopOffset: CGFloat = self.usesWegramAppearance ? 0 : 2.0 * scaleProgress + UIScreenPixel
                 
                 clipFrame = CGRect(x: containerFrame.minX + overflowInset, y: containerFrame.minY + clipTopOffset, width: containerFrame.width - overflowInset * 2.0, height: containerFrame.height - topPortion)
             }
@@ -652,7 +664,7 @@ final class AttachmentContainer: ASDisplayNode, ASGestureRecognizerDelegate {
         transition.updateFrameAsPositionAndBounds(node: self.clipNode, frame: clipFrame)
         
         let clipDeltaScale: CGFloat = 1.0 - (clipFrame.width - 10.0) / clipFrame.width
-        let clipScale = 1.0 - clipDeltaScale + clipDeltaScale * (1.0 - scaleProgress)
+        let clipScale = self.usesWegramAppearance ? 1.0 : 1.0 - clipDeltaScale + clipDeltaScale * (1.0 - scaleProgress)
         transition.updateTransformScale(node: self.clipNode, scale: CGPoint(x: clipScale, y: clipScale))
         
         transition.updateFrameAsPositionAndBounds(node: self.bottomClipNode, frame: CGRect(origin: CGPoint(x: 0.0, y: -100.0), size: CGSize(width: clipFrame.size.width, height: self.clipNode.bounds.height + 100.0)))

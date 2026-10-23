@@ -31,6 +31,7 @@ public class ContactListActionItem: ListViewItem, ListViewItemWithHeader {
     let title: String
     let subtitle: String?
     let height: Height
+    let usesWegramLayout: Bool
     let icon: ContactListActionItemIcon
     let actionStyle: Style
     let highlight: ContactListActionItemHighlight
@@ -43,7 +44,7 @@ public class ContactListActionItem: ListViewItem, ListViewItemWithHeader {
         return AnyEquatable(HeaderNeighborDescriptor(headerId: self.header?.id, headerFamily: .contactList))
     }
     
-    public init(presentationData: ItemListPresentationData, style: ItemListStyle = .plain, systemStyle: ItemListSystemStyle = .legacy, title: String, subtitle: String? = nil, icon: ContactListActionItemIcon, actionStyle: Style = .accent, height: Height = .generic, highlight: ContactListActionItemHighlight = .cell, clearHighlightAutomatically: Bool = true, accessible: Bool = true, header: ListViewItemHeader?, action: @escaping () -> Void) {
+    public init(presentationData: ItemListPresentationData, style: ItemListStyle = .plain, systemStyle: ItemListSystemStyle = .legacy, title: String, subtitle: String? = nil, icon: ContactListActionItemIcon, actionStyle: Style = .accent, height: Height = .generic, usesWegramLayout: Bool = false, highlight: ContactListActionItemHighlight = .cell, clearHighlightAutomatically: Bool = true, accessible: Bool = true, header: ListViewItemHeader?, action: @escaping () -> Void) {
         self.presentationData = presentationData
         self.style = style
         self.systemStyle = systemStyle
@@ -52,6 +53,7 @@ public class ContactListActionItem: ListViewItem, ListViewItemWithHeader {
         self.icon = icon
         self.actionStyle = actionStyle
         self.height = height
+        self.usesWegramLayout = usesWegramLayout
         self.highlight = highlight
         self.header = header
         self.clearHighlightAutomatically = clearHighlightAutomatically
@@ -208,7 +210,7 @@ class ContactListActionItemNode: ListViewItemNode {
             
             var leftInset: CGFloat = 16.0 + params.leftInset
             if case .generic = item.icon {
-                leftInset += 49.0
+                leftInset += item.usesWegramLayout ? 52.0 : 49.0
             }
             
             let titleColor: UIColor
@@ -219,7 +221,7 @@ class ContactListActionItemNode: ListViewItemNode {
                 titleFont = Font.regular(item.presentationData.fontSize.itemListBaseFontSize)
             case .generic:
                 titleColor = item.presentationData.theme.list.itemPrimaryTextColor
-                titleFont = Font.medium(item.presentationData.fontSize.itemListBaseFontSize)
+                titleFont = item.usesWegramLayout ? Font.regular(item.presentationData.fontSize.itemListBaseFontSize) : Font.medium(item.presentationData.fontSize.itemListBaseFontSize)
             }
             let subtitleFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 13.0 / 17.0))
             
@@ -241,7 +243,9 @@ class ContactListActionItemNode: ListViewItemNode {
             if case .glass = item.systemStyle {
                 verticalInset += 4.0
             }
-            if case .tall = item.height {
+            if item.usesWegramLayout {
+                contentHeight = max(56.0, titleLayout.size.height + 24.0)
+            } else if case .tall = item.height {
                 contentHeight = 50.0
             } else if case .alpha = item.highlight {
                 contentHeight = 50.0
@@ -287,7 +291,7 @@ class ContactListActionItemNode: ListViewItemNode {
                     let _ = subtitleApply()
 
                     var titleOffset = leftInset
-                    var hideBottomStripe: Bool = last
+                    var hideBottomStripe: Bool = item.usesWegramLayout ? false : last
                     if let image = item.icon.image {
                         var iconFrame: CGRect
                         switch item.icon {
@@ -304,7 +308,7 @@ class ContactListActionItemNode: ListViewItemNode {
                                     titleOffset = iconFrame.maxX - totalWidth
                                 }
                             default:
-                                iconFrame = CGRect(origin: CGPoint(x: params.leftInset + floor((leftInset - params.leftInset - image.size.width) / 2.0) + 3.0, y: floor((contentSize.height - image.size.height) / 2.0)), size: image.size)
+                                iconFrame = CGRect(origin: CGPoint(x: item.usesWegramLayout ? params.leftInset + 16.0 : params.leftInset + floor((leftInset - params.leftInset - image.size.width) / 2.0) + 3.0, y: floor((contentSize.height - image.size.height) / 2.0)), size: image.size)
                         }
                         strongSelf.iconNode.frame = iconFrame
                     }
@@ -333,7 +337,7 @@ class ContactListActionItemNode: ListViewItemNode {
                     strongSelf.topStripeNode.isHidden = true
                     strongSelf.bottomStripeNode.isHidden = hideBottomStripe
                     
-                    strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: leftInset, y: contentSize.height - separatorHeight), size: CGSize(width: params.width - leftInset, height: separatorHeight))
+                    strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: (item.usesWegramLayout && last) ? params.leftInset + 16.0 : leftInset, y: contentSize.height - separatorHeight), size: CGSize(width: params.width - ((item.usesWegramLayout && last) ? params.leftInset + 16.0 : leftInset), height: separatorHeight))
                     
                     let titleFrame: CGRect
                     if subtitleAttributedString != nil {

@@ -201,10 +201,12 @@ public class ItemListCallListItemNode: ListViewItemNode {
                 for _ in item.messages {
                     let timeNode = TextNode()
                     timeNode.isUserInteractionEnabled = false
+                    timeNode.isAccessibilityElement = false
                     strongSelf.addSubnode(timeNode)
                     
                     let typeNode = TextNode()
                     typeNode.isUserInteractionEnabled = false
+                    typeNode.isAccessibilityElement = false
                     strongSelf.addSubnode(typeNode)
                     
                     strongSelf.callNodes.append((timeNode, typeNode))
@@ -226,9 +228,9 @@ public class ItemListCallListItemNode: ListViewItemNode {
                 updatedTheme = item.presentationData.theme
             }
             
-            let titleFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 15.0 / 17.0))
+            let titleFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 14.0 / 17.0))
             let font = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 14.0 / 17.0))
-            let typeFont = Font.medium(floor(item.presentationData.fontSize.itemListBaseFontSize * 14.0 / 17.0))
+            let typeFont = Font.regular(item.presentationData.fontSize.itemListBaseFontSize)
             
             let contentSize: CGSize
             var contentHeight: CGFloat = 0.0
@@ -238,6 +240,9 @@ public class ItemListCallListItemNode: ListViewItemNode {
             let itemSeparatorColor: UIColor
             
             let leftInset = 16.0 + params.leftInset
+            let availableWidth = max(0.0, params.width - leftInset - params.rightInset - 16.0)
+            let timeColumnWidth = min(90.0 * item.presentationData.fontSize.itemListBaseFontSize / 17.0, availableWidth * 0.45)
+            let columnSpacing = min(12.0, max(0.0, availableWidth - timeColumnWidth))
             
             switch item.style {
             case .plain:
@@ -256,13 +261,15 @@ public class ItemListCallListItemNode: ListViewItemNode {
             
             var accessibilityText = ""
             
-            let earliestMessage = item.messages.sorted(by: {$0.timestamp < $1.timestamp}).first!
-            let titleText = stringForDate(timestamp: earliestMessage.timestamp, strings: item.presentationData.strings)
-            let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: titleText, font: titleFont, textColor: item.presentationData.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: params.width - params.rightInset - 20.0 - leftInset, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
-            accessibilityText.append(titleText)
-            accessibilityText.append(". ")
+            let titleText = item.messages.min(by: { $0.timestamp < $1.timestamp }).map {
+                stringForDate(timestamp: $0.timestamp, strings: item.presentationData.strings)
+            } ?? ""
+            let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: titleText, font: titleFont, textColor: item.presentationData.theme.list.itemSecondaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: availableWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+            if !titleText.isEmpty {
+                accessibilityText.append(titleText + ". ")
+            }
             
-            contentHeight += titleLayout.size.height + 18.0
+            contentHeight += titleText.isEmpty ? 0.0 : titleLayout.size.height + 16.0
             
             var index = 0
             var nodesLayout: [(TextNodeLayout, TextNodeLayout)] = []
@@ -271,18 +278,18 @@ public class ItemListCallListItemNode: ListViewItemNode {
             for message in item.messages {
                 let makeTimeLayout = makeNodesLayout[index].0
                 let time = stringForMessageTimestamp(timestamp: message.timestamp, dateTimeFormat: item.dateTimeFormat)
-                let (timeLayout, timeApply) = makeTimeLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: time, font: font, textColor: item.presentationData.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: params.width - params.rightInset - 20.0 - leftInset, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+                let (timeLayout, timeApply) = makeTimeLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: time, font: font, textColor: item.presentationData.theme.list.itemSecondaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: timeColumnWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 
                 let makeTypeLayout = makeNodesLayout[index].1
                 let type = stringForCallType(message: message, strings: item.presentationData.strings)
-                let (typeLayout, typeApply) = makeTypeLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: type, font: typeFont, textColor: item.presentationData.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: params.width - params.rightInset - 20.0 - leftInset, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+                let (typeLayout, typeApply) = makeTypeLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: type, font: typeFont, textColor: item.presentationData.theme.list.itemPrimaryTextColor), backgroundColor: nil, maximumNumberOfLines: 2, truncationType: .end, constrainedSize: CGSize(width: max(0.0, availableWidth - timeColumnWidth - columnSpacing), height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 
                 accessibilityText.append("\(time) - \(type).\n")
                 
                 nodesLayout.append((timeLayout, typeLayout))
                 nodesApply.append((timeApply, typeApply))
              
-                contentHeight += timeLayout.size.height + 12.0
+                contentHeight += max(44.0, max(timeLayout.size.height, typeLayout.size.height) + 16.0)
                 
                 index += 1
             }
@@ -320,7 +327,7 @@ public class ItemListCallListItemNode: ListViewItemNode {
                             strongSelf.insertSubnode(strongSelf.bottomStripeNode, at: 0)
                         }
                         
-                        strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: leftInset, y: contentSize.height - separatorHeight), size: CGSize(width: params.width - leftInset, height: separatorHeight))
+                        strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: leftInset, y: contentSize.height - separatorHeight), size: CGSize(width: max(0.0, params.width - leftInset - params.rightInset), height: separatorHeight))
                     case .blocks:
                         if strongSelf.backgroundNode.supernode == nil {
                             strongSelf.insertSubnode(strongSelf.backgroundNode, at: 0)
@@ -349,19 +356,20 @@ public class ItemListCallListItemNode: ListViewItemNode {
                         
                         strongSelf.backgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -min(insets.top, separatorHeight)), size: CGSize(width: params.width, height: contentSize.height + min(insets.top, separatorHeight) + min(insets.bottom, separatorHeight)))
                         strongSelf.topStripeNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -min(insets.top, separatorHeight)), size: CGSize(width: params.width, height: separatorHeight))
-                        strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: bottomStripeInset, y: contentSize.height - separatorHeight), size: CGSize(width: params.width - bottomStripeInset, height: separatorHeight))
+                        strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: bottomStripeInset, y: contentSize.height - separatorHeight), size: CGSize(width: max(0.0, params.width - bottomStripeInset - params.rightInset), height: separatorHeight))
                     }
                     
                     strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: leftInset, y: 8.0), size: titleLayout.size)
                     
                     var index = 0
-                    var yOffset = strongSelf.titleNode.frame.maxY + 10.0
+                    var yOffset = titleText.isEmpty ? 0.0 : strongSelf.titleNode.frame.maxY + 8.0
                     for nodes in strongSelf.callNodes {
                         let layout = nodesLayout[index]
-                        nodes.0.frame = CGRect(origin: CGPoint(x: leftInset, y: yOffset), size: layout.0.size)
-                        nodes.1.frame = CGRect(origin: CGPoint(x: leftInset + 75.0, y: yOffset), size: layout.1.size)
+                        let rowHeight = max(44.0, max(layout.0.size.height, layout.1.size.height) + 16.0)
+                        nodes.0.frame = CGRect(origin: CGPoint(x: leftInset, y: yOffset + floor((rowHeight - layout.0.size.height) / 2.0)), size: layout.0.size)
+                        nodes.1.frame = CGRect(origin: CGPoint(x: leftInset + timeColumnWidth + columnSpacing, y: yOffset + floor((rowHeight - layout.1.size.height) / 2.0)), size: layout.1.size)
                         
-                        yOffset += layout.0.size.height + 12.0
+                        yOffset += rowHeight
                         index += 1
                     }
                     

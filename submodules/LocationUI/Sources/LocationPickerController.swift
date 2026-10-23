@@ -19,6 +19,8 @@ public enum LocationPickerMode {
 }
 
 class LocationPickerInteraction {
+    let usesWegramSelection: Bool
+    let openMore: () -> Void
     let sendLocation: (CLLocationCoordinate2D, String?, MapGeoAddress?) -> Void
     let sendLiveLocation: (CLLocationCoordinate2D) -> Void
     let sendVenue: (TelegramMediaMap, Int64?, String?) -> Void
@@ -33,7 +35,9 @@ class LocationPickerInteraction {
     let openHomeWorkInfo: () -> Void
     let showPlacesInThisArea: () -> Void
     
-    init(sendLocation: @escaping (CLLocationCoordinate2D, String?, MapGeoAddress?) -> Void, sendLiveLocation: @escaping (CLLocationCoordinate2D) -> Void, sendVenue: @escaping (TelegramMediaMap, Int64?, String?) -> Void, toggleMapModeSelection: @escaping () -> Void, updateMapMode: @escaping (LocationMapMode) -> Void, goToUserLocation: @escaping () -> Void, goToCoordinate: @escaping (CLLocationCoordinate2D, Bool) -> Void, openSearch: @escaping () -> Void, updateSearchQuery: @escaping (String) -> Void, dismissSearch: @escaping () -> Void, dismissInput: @escaping () -> Void, openHomeWorkInfo: @escaping () -> Void, showPlacesInThisArea: @escaping ()-> Void) {
+    init(sendLocation: @escaping (CLLocationCoordinate2D, String?, MapGeoAddress?) -> Void, sendLiveLocation: @escaping (CLLocationCoordinate2D) -> Void, sendVenue: @escaping (TelegramMediaMap, Int64?, String?) -> Void, toggleMapModeSelection: @escaping () -> Void, updateMapMode: @escaping (LocationMapMode) -> Void, goToUserLocation: @escaping () -> Void, goToCoordinate: @escaping (CLLocationCoordinate2D, Bool) -> Void, openSearch: @escaping () -> Void, updateSearchQuery: @escaping (String) -> Void, dismissSearch: @escaping () -> Void, dismissInput: @escaping () -> Void, openHomeWorkInfo: @escaping () -> Void, showPlacesInThisArea: @escaping ()-> Void, usesWegramSelection: Bool = false, openMore: @escaping () -> Void = {}) {
+        self.usesWegramSelection = usesWegramSelection
+        self.openMore = openMore
         self.sendLocation = sendLocation
         self.sendLiveLocation = sendLiveLocation
         self.sendVenue = sendVenue
@@ -97,6 +101,50 @@ public final class LocationPickerController: ViewController, AttachmentContainab
     public var isContainerExpanded: () -> Bool = { return false }
     public var isMinimized: Bool = false
     
+    var usesWegramSelection: Bool {
+        if self.source == .generic, case .share = self.mode { return true }
+        return false
+    }
+    private var wegramSelection = WegramLocationPickerSelection()
+    var canConfirmWegramSelection: Bool { return self.usesWegramSelection && self.wegramSelection.canConfirm }
+    var canOpenWegramOptions: Bool { return self.usesWegramSelection && !self.wegramSelection.isFinished && !self.isBeingDismissed }
+
+    func updateWegramSelection(_ payload: WegramLocationPickerSelection.Payload?) {
+        self.wegramSelection.update(payload)
+        if self.isNodeLoaded, let node = self.displayNode as? LocationPickerControllerNode { node.requestLayout(transition: .immediate) }
+    }
+
+    func cancelWegramSelection() {
+        self.wegramSelection.finish()
+        self.dismiss()
+    }
+
+    func confirmWegramSelection() {
+        guard self.canConfirmWegramSelection, let payload = self.wegramSelection.confirm() else { return }
+        if self.isNodeLoaded { self.controllerNode.requestLayout(transition: .immediate) }
+        switch payload {
+        case let .coordinate(coordinate, name, address):
+            self.completeLocation(coordinate, name: name, geoAddress: address)
+        case let .venue(venue, queryId, resultId):
+            self.completeVenue(venue, queryId: queryId, resultId: resultId)
+        }
+    }
+
+    private func completeLocation(_ coordinate: CLLocationCoordinate2D, name: String?, geoAddress: MapGeoAddress?) {
+        self.completion(TelegramMediaMap(latitude: coordinate.latitude, longitude: coordinate.longitude, heading: nil, accuracyRadius: nil, venue: nil, address: geoAddress, liveBroadcastingTimeout: nil, liveProximityNotificationRadius: nil), nil, nil, name, geoAddress?.country)
+        self.dismiss()
+    }
+
+    private func completeVenue(_ venue: TelegramMediaMap, queryId: Int64?, resultId: String?) {
+        let venueType = venue.venue?.type ?? ""
+        if ["home", "work"].contains(venueType) {
+            self.completion(TelegramMediaMap(latitude: venue.latitude, longitude: venue.longitude, heading: nil, accuracyRadius: nil, venue: nil, liveBroadcastingTimeout: nil, liveProximityNotificationRadius: nil), nil, nil, nil, nil)
+        } else {
+            self.completion(venue, queryId, resultId, venue.venue?.address, nil)
+        }
+        self.dismiss()
+    }
+
     private let style: Style
     public enum Style {
         case glass
@@ -158,23 +206,11 @@ public final class LocationPickerController: ViewController, AttachmentContainab
             guard let strongSelf = self else {
                 return
             }
-            strongSelf.completion(
-                TelegramMediaMap(
-                    latitude: coordinate.latitude,
-                    longitude: coordinate.longitude,
-                    heading: nil,
-                    accuracyRadius: nil,
-                    venue: nil,
-                    address: geoAddress,
-                    liveBroadcastingTimeout: nil,
-                    liveProximityNotificationRadius: nil
-                ),
-                nil,
-                nil,
-                name,
-                geoAddress?.country
-            )
-            strongSelf.dismiss()
+            if strongSelf.usesWegramSelection {
+                strongSelf.controllerNode.selectWegramLocation(coordinate, name: name, address: geoAddress)
+                return
+            }
+            strongSelf.completeLocation(coordinate, name: name, geoAddress: geoAddress)
         }, sendLiveLocation: { [weak self] coordinate in
             guard let strongSelf = self else {
                 return
@@ -201,6 +237,7 @@ public final class LocationPickerController: ViewController, AttachmentContainab
                         guard let self else {
                             return
                         }
+                        if self.usesWegramSelection && !self.wegramSelection.finish() { return }
                         self.completion(TelegramMediaMap(coordinate: coordinate, liveBroadcastingTimeout: period), nil, nil, nil, nil)
                         self.dismiss()
                     }
@@ -211,13 +248,11 @@ public final class LocationPickerController: ViewController, AttachmentContainab
             guard let strongSelf = self else {
                 return
             }
-            let venueType = venue.venue?.type ?? ""
-            if ["home", "work"].contains(venueType) {
-                completion(TelegramMediaMap(latitude: venue.latitude, longitude: venue.longitude, heading: nil, accuracyRadius: nil, venue: nil, liveBroadcastingTimeout: nil, liveProximityNotificationRadius: nil), nil, nil, nil, nil)
-            } else {
-                completion(venue, queryId, resultId, venue.venue?.address, nil)
+            if strongSelf.usesWegramSelection {
+                strongSelf.controllerNode.selectWegramVenue(venue, queryId: queryId, resultId: resultId)
+                return
             }
-            strongSelf.dismiss()
+            strongSelf.completeVenue(venue, queryId: queryId, resultId: resultId)
         }, toggleMapModeSelection: { [weak self] in
             guard let strongSelf = self else {
                 return
@@ -263,6 +298,14 @@ public final class LocationPickerController: ViewController, AttachmentContainab
                 return state
             }
             
+            if self.usesWegramSelection {
+                let isSearching = self.controllerNode.activateSearch(navigationBar: navigationBar)
+                self.isSearchingDisposable.set((isSearching |> deliverOnMainQueue).start(next: { [weak self] value in
+                    self?.controllerNode.updateWegramSearchActivity(value)
+                }))
+                self.updateTabBarVisibility(false, .animated(duration: 0.4, curve: .spring))
+                return
+            }
             switch style {
             case .glass:
                 let _ = self.controllerNode.activateSearch(navigationBar: navigationBar)
@@ -316,7 +359,10 @@ public final class LocationPickerController: ViewController, AttachmentContainab
                 return
             }
             strongSelf.controllerNode.requestPlacesAtSelectedLocation()
+        }, usesWegramSelection: self.usesWegramSelection, openMore: { [weak self] in
+            self?.controllerNode.presentWegramMore()
         })
+
         
         self.scrollToTop = { [weak self] in
             if let strongSelf = self {
@@ -337,7 +383,7 @@ public final class LocationPickerController: ViewController, AttachmentContainab
     
     private var locationAccessDenied = false
     private func updateBarButtons() {
-        if self.locationAccessDenied {
+        if self.locationAccessDenied || self.usesWegramSelection {
             self.navigationItem.rightBarButtonItem = nil
         } else {
             if case .glass = self.style {
@@ -416,6 +462,8 @@ public final class LocationPickerController: ViewController, AttachmentContainab
     }
     
     public func resetForReuse() {
+        self.wegramSelection.reset()
+        if self.usesWegramSelection && self.isNodeLoaded { self.controllerNode.goToUserLocation() }
         self.interaction?.updateMapMode(.map)
         self.interaction?.dismissSearch()
         self.scrollToTop?()

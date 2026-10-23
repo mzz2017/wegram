@@ -135,9 +135,9 @@ private func mappedInsertEntries(context: AccountContext, presentationData: Item
                 })
                 return ListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, item: item, directionHint: entry.directionHint)
             case let .groupCall(peer, _, isActive):
-                return ListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListGroupCallItem(presentationData: presentationData, systemStyle: .glass, context: context, style: showSettings ? .blocks : .plain, peer: peer, isActive: isActive, editing: false, interaction: nodeInteraction), directionHint: entry.directionHint)
+                return ListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListGroupCallItem(presentationData: presentationData, context: context, style: showSettings ? .blocks : .plain, peer: peer, isActive: isActive, editing: false, interaction: nodeInteraction), directionHint: entry.directionHint)
             case let .messageEntry(topMessage, messages, _, _, dateTimeFormat, editing, hasActiveRevealControls, displayHeader, _):
-                return ListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListCallItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: dateTimeFormat, context: context, style: showSettings ? .blocks : .plain, topMessage: topMessage, messages: messages, editing: editing, revealed: hasActiveRevealControls, displayHeader: displayHeader, interaction: nodeInteraction), directionHint: entry.directionHint)
+                return ListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListCallItem(presentationData: presentationData, dateTimeFormat: dateTimeFormat, context: context, style: showSettings ? .blocks : .plain, topMessage: topMessage, messages: messages, editing: editing, revealed: hasActiveRevealControls, displayHeader: displayHeader, interaction: nodeInteraction), directionHint: entry.directionHint)
             case let .holeEntry(_, theme):
                 return ListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListHoleItem(theme: theme), directionHint: entry.directionHint)
         }
@@ -159,9 +159,9 @@ private func mappedUpdateEntries(context: AccountContext, presentationData: Item
                 })
                 return ListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, item: item, directionHint: entry.directionHint)
             case let .groupCall(peer, _, isActive):
-                return ListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListGroupCallItem(presentationData: presentationData, systemStyle: .glass, context: context, style: showSettings ? .blocks : .plain, peer: peer, isActive: isActive, editing: false, interaction: nodeInteraction), directionHint: entry.directionHint)
+                return ListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListGroupCallItem(presentationData: presentationData, context: context, style: showSettings ? .blocks : .plain, peer: peer, isActive: isActive, editing: false, interaction: nodeInteraction), directionHint: entry.directionHint)
             case let .messageEntry(topMessage, messages, _, _, dateTimeFormat, editing, hasActiveRevealControls, displayHeader, _):
-                return ListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListCallItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: dateTimeFormat, context: context, style: showSettings ? .blocks : .plain, topMessage: topMessage, messages: messages, editing: editing, revealed: hasActiveRevealControls, displayHeader: displayHeader, interaction: nodeInteraction), directionHint: entry.directionHint)
+                return ListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListCallItem(presentationData: presentationData, dateTimeFormat: dateTimeFormat, context: context, style: showSettings ? .blocks : .plain, topMessage: topMessage, messages: messages, editing: editing, revealed: hasActiveRevealControls, displayHeader: displayHeader, interaction: nodeInteraction), directionHint: entry.directionHint)
             case let .holeEntry(_, theme):
                 return ListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, item: CallListHoleItem(theme: theme), directionHint: entry.directionHint)
         }
@@ -195,7 +195,6 @@ final class CallListControllerNode: ASDisplayNode {
         return _ready.get()
     }
     
-    weak var navigationBar: NavigationBar?
     
     var peerSelected: ((EnginePeer.Id) -> Void)?
     var activateSearch: (() -> Void)?
@@ -236,12 +235,6 @@ final class CallListControllerNode: ASDisplayNode {
     private let emptyStateDisposable = MetaDisposable()
     
     private let openGroupCallDisposable = MetaDisposable()
-    
-    var navigationEdgeEffectExtension: CGFloat {
-        return max(0.0, self.listNode.edgeEffectExtension)
-    }
-    
-    private var previousContentOffset: ListViewVisibleContentOffset?
     
     init(controller: CallListController, context: AccountContext, mode: CallListControllerMode, presentationData: PresentationData, call: @escaping (EngineMessage) -> Void, joinGroupCall: @escaping (EnginePeer.Id, EngineGroupCallDescription) -> Void, openInfo: @escaping (EnginePeer.Id, [EngineMessage]) -> Void, emptyStateUpdated: @escaping (Bool) -> Void, openNewCall: @escaping () -> Void, focusOnItemTag: CallListEntryTag?) {
         self.controller = controller
@@ -481,13 +474,8 @@ final class CallListControllerNode: ASDisplayNode {
         let previousView = Atomic<CallListNodeView?>(value: nil)
         let previousType = Atomic<EngineCallList.Scope?>(value: nil)
         
-        let showSettings: Bool
-        switch mode {
-            case .tab:
-                showSettings = false
-            case .navigation:
-                showSettings = true
-        }
+        // Calls live behind WeGram shortcuts; the main four tabs are fixed.
+        let showSettings = false
         
         let showCallsTab = context.sharedContext.accountManager.sharedData(keys: [ApplicationSpecificSharedDataKeys.callListSettings])
         |> map { sharedData -> Bool in
@@ -666,28 +654,6 @@ final class CallListControllerNode: ASDisplayNode {
                 }
             }
             
-            self.listNode.visibleContentOffsetChanged = { [weak self] offset, _ in
-                if let strongSelf = self {
-                    var previousContentOffsetValue: CGFloat?
-                    if let previousContentOffset = strongSelf.previousContentOffset, case let .known(value) = previousContentOffset {
-                        previousContentOffsetValue = value
-                    }
-                    switch offset {
-                        case let .known(value):
-                            let transition: ContainedViewLayoutTransition
-                            if let previousContentOffsetValue = previousContentOffsetValue, value <= 0.0, previousContentOffsetValue > 30.0 {
-                                transition = .animated(duration: 0.2, curve: .easeInOut)
-                            } else {
-                                transition = .immediate
-                            }
-                            strongSelf.navigationBar?.updateBackgroundAlpha(min(30.0, value) / 30.0, transition: transition)
-                        case .unknown, .none:
-                            strongSelf.navigationBar?.updateBackgroundAlpha(1.0, transition: .immediate)
-                    }
-                    
-                    strongSelf.previousContentOffset = offset
-                }
-            }
         }
         
         self.listNode.onEdgeEffectExtensionUpdated = { [weak self] transition in
@@ -942,13 +908,13 @@ final class CallListControllerNode: ASDisplayNode {
         
         let inset: CGFloat
         if layout.size.width >= 320.0 {
-            inset = max(16.0, floor((layout.size.width - 674.0) / 2.0))
+            inset = max(0.0, floor((layout.size.width - 674.0) / 2.0))
         } else {
             inset = 0.0
         }
         if case .navigation = self.mode {
-            insets.left += inset
-            insets.right += inset
+            insets.left += max(layout.safeInsets.left, inset)
+            insets.right += max(layout.safeInsets.right, inset)
             
             self.leftOverlayNode.frame = CGRect(x: 0.0, y: 0.0, width: insets.left, height: layout.size.height)
             self.rightOverlayNode.frame = CGRect(x: layout.size.width - insets.right, y: 0.0, width: insets.right, height: layout.size.height)

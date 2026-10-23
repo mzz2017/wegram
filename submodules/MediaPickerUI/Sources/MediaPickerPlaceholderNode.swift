@@ -8,6 +8,7 @@ import AnimatedStickerNode
 import TelegramAnimatedStickerNode
 import SolidRoundedButtonNode
 import PresentationDataUtils
+import AttachmentUI
 
 final class MediaPickerPlaceholderNode: ASDisplayNode {
     enum Content {
@@ -17,7 +18,8 @@ final class MediaPickerPlaceholderNode: ASDisplayNode {
     
     private let content: Content
     
-    private var animationNode: AnimatedStickerNode
+    private var animationNode: AnimatedStickerNode?
+    private let photoAccessView: WegramPhotoAccessView?
     private let titleNode: ImmediateTextNode
     private let textNode: ImmediateTextNode
     private let buttonNode: SolidRoundedButtonNode
@@ -31,7 +33,7 @@ final class MediaPickerPlaceholderNode: ASDisplayNode {
     var settingsPressed: () -> Void = {}
     var cameraPressed: () -> Void = {}
     
-    init(content: Content, lottieSettings: LottieRenderingSettings) {
+    init(content: Content, lottieSettings: LottieRenderingSettings, usesWegramAppearance: Bool = false) {
         self.content = content
         
         let name: String
@@ -45,9 +47,15 @@ final class MediaPickerPlaceholderNode: ASDisplayNode {
                 playbackMode = .once
         }
         
-        self.animationNode = DefaultAnimatedStickerNodeImpl(lottieSettings: lottieSettings)
-        self.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: name), width: 320, height: 320, playbackMode: playbackMode, mode: .direct(cachePathPrefix: nil))
-        self.animationNode.visibility = true
+        if usesWegramAppearance, case .intro = content {
+            self.photoAccessView = WegramPhotoAccessView()
+        } else {
+            self.photoAccessView = nil
+            let animationNode = DefaultAnimatedStickerNodeImpl(lottieSettings: lottieSettings)
+            animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: name), width: 320, height: 320, playbackMode: playbackMode, mode: .direct(cachePathPrefix: nil))
+            animationNode.visibility = true
+            self.animationNode = animationNode
+        }
         
         self.titleNode = ImmediateTextNode()
         self.titleNode.isUserInteractionEnabled = false
@@ -75,7 +83,15 @@ final class MediaPickerPlaceholderNode: ASDisplayNode {
          
         super.init()
                 
-        self.addSubnode(self.animationNode)
+        if let photoAccessView = self.photoAccessView {
+            self.view.addSubview(photoAccessView)
+            photoAccessView.openSettings = { [weak self] in
+                guard let self, self.view.window != nil else { return }
+                self.settingsPressed()
+            }
+            return
+        }
+        if let animationNode = self.animationNode { self.addSubnode(animationNode) }
         self.addSubnode(self.textNode)
         
         switch self.content {
@@ -122,8 +138,16 @@ final class MediaPickerPlaceholderNode: ASDisplayNode {
     }
     
     private var theme: PresentationTheme?
-    func update(layout: ContainerViewLayout, theme: PresentationTheme, strings: PresentationStrings, hasCamera: Bool, transition: ContainedViewLayoutTransition) {
+    func update(layout: ContainerViewLayout, theme: PresentationTheme, strings: PresentationStrings, hasCamera: Bool, transition: ContainedViewLayoutTransition, fontSize: CGFloat = 17, topInset: CGFloat = 0) {
         self.validLayout = layout
+        if let photoAccessView = self.photoAccessView {
+            let chinese = strings.baseLanguageCode.hasPrefix("zh")
+            photoAccessView.update(dark: theme.overallDarkAppearance, fontSize: fontSize, title: chinese ? "无法访问相册中照片" : "Photo Access Required", text: chinese ? "请在系统设置中允许访问照片，之后可在这里选择要发送的内容。" : "Allow photo access in system settings to choose photos and videos to send.", settingsTitle: chinese ? "前往系统设置" : strings.Attachment_OpenSettings)
+            photoAccessView.frame = CGRect(origin: .zero, size: layout.size)
+            let insets = layout.insets(options: [])
+            photoAccessView.updateLayout(size: layout.size, insets: UIEdgeInsets(top: max(topInset, insets.top), left: layout.safeInsets.left, bottom: insets.bottom, right: layout.safeInsets.right))
+            return
+        }
         let themeUpdated = self.theme != theme
         self.theme = theme
         
@@ -179,9 +203,11 @@ final class MediaPickerPlaceholderNode: ASDisplayNode {
         let totalHeight = imageHeight + titleSize.height + textSpacing + textSize.height + buttonSpacing + buttonHeight + cameraSpacing + cameraSize.height
         let topOffset = insets.top + floor((layout.size.height - insets.top - insets.bottom - totalHeight) / 2.0)
         
-        transition.updateAlpha(node: self.animationNode, alpha: imageHeight > 0.0 ? 1.0 : 0.0)
-        transition.updateFrame(node: self.animationNode, frame: CGRect(origin: CGPoint(x: floor((layout.size.width - imageSize.width) / 2.0), y: topOffset), size: imageSize))
-        self.animationNode.updateLayout(size: imageSize)
+        if let animationNode = self.animationNode {
+            transition.updateAlpha(node: animationNode, alpha: imageHeight > 0.0 ? 1.0 : 0.0)
+            transition.updateFrame(node: animationNode, frame: CGRect(origin: CGPoint(x: floor((layout.size.width - imageSize.width) / 2.0), y: topOffset), size: imageSize))
+            animationNode.updateLayout(size: imageSize)
+        }
         
         transition.updateFrame(node: self.titleNode, frame: CGRect(origin: CGPoint(x: layout.safeInsets.left + floor((layout.size.width - titleSize.width - layout.safeInsets.left - layout.safeInsets.right) / 2.0), y: topOffset + imageHeight), size: titleSize))
         transition.updateFrame(node: self.textNode, frame: CGRect(origin: CGPoint(x: layout.safeInsets.left + floor((layout.size.width - textSize.width - layout.safeInsets.left - layout.safeInsets.right) / 2.0), y: self.titleNode.frame.maxY + textSpacing), size: textSize))

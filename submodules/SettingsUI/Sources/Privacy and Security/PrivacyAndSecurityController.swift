@@ -581,7 +581,7 @@ private func countForSelectivePeers(_ peers: [PeerId: SelectivePrivacyPeer]) -> 
     return result
 }
 
-private func stringForSelectiveSettings(strings: PresentationStrings, settings: SelectivePrivacySettings) -> String {
+public func stringForSelectiveSettings(strings: PresentationStrings, settings: SelectivePrivacySettings) -> String {
     switch settings {
         case let .disableEveryone(enableFor, enableForCloseFriends, enableForPremium, enableForBots):
             if enableFor.isEmpty && !enableForCloseFriends && !enableForPremium && !enableForBots {

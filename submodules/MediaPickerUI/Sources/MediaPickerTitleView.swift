@@ -15,14 +15,18 @@ final class MediaPickerTitleView: UIView {
     private let segmentedControlNode: SegmentedControlNode
     
     private let glass: Bool
+    private let usesWegramAppearance: Bool
+    private var titleFont: UIFont { self.usesWegramAppearance ? Font.semibold(17) : Font.with(size: 17.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers]) }
     
     public var theme: PresentationTheme {
         didSet {
-            self.titleNode.attributedText = NSAttributedString(string: self.title, font: Font.with(size: 17.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers]), textColor: self.isDark ? .white : self.theme.rootController.navigationBar.primaryTextColor)
+            self.titleNode.attributedText = NSAttributedString(string: self.title, font: self.titleFont, textColor: self.isDark ? .white : self.theme.rootController.navigationBar.primaryTextColor)
             self.subtitleNode.attributedText = NSAttributedString(string: self.subtitle, font: Font.regular(12.0), textColor: self.isDark ? .white.withAlphaComponent(0.5) : self.theme.rootController.navigationBar.secondaryTextColor)
             self.segmentedControlNode.updateTheme(SegmentedControlTheme(theme: self.theme))
             if self.glass {
                 self.arrowNode.image = generateTintedImage(image: UIImage(bundleImageName: "Navigation/TitleExpand"), color: self.isDark ? UIColor.white.withAlphaComponent(0.5) : self.theme.rootController.navigationBar.primaryTextColor.withAlphaComponent(0.4))
+            } else if self.usesWegramAppearance {
+                self.updateWegramArrow()
             }
             self.setNeedsLayout()
         }
@@ -31,10 +35,12 @@ final class MediaPickerTitleView: UIView {
     public var isDark: Bool = false {
         didSet {
             if self.isDark != oldValue {
-                self.titleNode.attributedText = NSAttributedString(string: self.title, font: Font.with(size: 17.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers]), textColor: self.isDark ? .white : self.theme.rootController.navigationBar.primaryTextColor)
+                self.titleNode.attributedText = NSAttributedString(string: self.title, font: self.titleFont, textColor: self.isDark ? .white : self.theme.rootController.navigationBar.primaryTextColor)
                 self.subtitleNode.attributedText = NSAttributedString(string: self.subtitle, font: Font.regular(12.0), textColor: self.isDark ? .white.withAlphaComponent(0.5) : self.theme.rootController.navigationBar.secondaryTextColor)
                 if self.glass {
                     self.arrowNode.image = generateTintedImage(image: UIImage(bundleImageName: "Navigation/TitleExpand"), color: self.isDark ? UIColor.white.withAlphaComponent(0.5) : self.theme.rootController.navigationBar.primaryTextColor.withAlphaComponent(0.4))
+                } else if self.usesWegramAppearance {
+                    self.updateWegramArrow()
                 }
                 self.setNeedsLayout()
             }
@@ -44,7 +50,8 @@ final class MediaPickerTitleView: UIView {
     public var title: String = "" {
         didSet {
             if self.title != oldValue {
-                self.titleNode.attributedText = NSAttributedString(string: self.title, font: Font.with(size: 17.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers]), textColor: self.isDark ? .white : self.theme.rootController.navigationBar.primaryTextColor)
+                self.titleNode.attributedText = NSAttributedString(string: self.title, font: self.titleFont, textColor: self.isDark ? .white : self.theme.rootController.navigationBar.primaryTextColor)
+                self.updateWegramAccessibility()
                 self.setNeedsLayout()
             }
         }
@@ -54,16 +61,24 @@ final class MediaPickerTitleView: UIView {
         didSet {
             if self.subtitle != oldValue {
                 self.subtitleNode.attributedText = NSAttributedString(string: self.subtitle, font: Font.regular(12.0), textColor: self.isDark ? .white.withAlphaComponent(0.5) : self.theme.rootController.navigationBar.secondaryTextColor)
+                self.updateWegramAccessibility()
                 self.setNeedsLayout()
             }
         }
     }
     
+    public var showsDisclosureIndicator: Bool = true {
+        didSet {
+            self.arrowNode.isHidden = !self.isEnabled || !self.showsDisclosureIndicator
+            self.setNeedsLayout()
+        }
+    }
+
     public var isEnabled: Bool = false {
         didSet {
-            self.buttonNode.isUserInteractionEnabled = self.isEnabled
-            self.arrowNode.isHidden = !self.isEnabled
-            
+            self.buttonNode.isUserInteractionEnabled = self.isEnabled && (!self.usesWegramAppearance || self.segmentsHidden)
+            self.arrowNode.isHidden = !self.isEnabled || !self.showsDisclosureIndicator
+            self.updateWegramAccessibility()
             self.setNeedsLayout()
         }
     }
@@ -160,6 +175,7 @@ final class MediaPickerTitleView: UIView {
                 transition.updateAlpha(node: self.segmentedControlNode, alpha: self.segmentsHidden ? 0.0 : 1.0)
                 self.segmentedControlNode.isUserInteractionEnabled = !self.segmentsHidden
                 self.buttonNode.isUserInteractionEnabled = self.isEnabled && self.segmentsHidden
+                self.updateWegramAccessibility()
             }
         }
     }
@@ -185,9 +201,10 @@ final class MediaPickerTitleView: UIView {
     public var indexUpdated: ((Int) -> Void)?
     public var action: () -> Void = {}
     
-    public init(theme: PresentationTheme, glass: Bool, segments: [String], selectedIndex: Int) {
+    public init(theme: PresentationTheme, glass: Bool, usesWegramAppearance: Bool = false, segments: [String], selectedIndex: Int) {
         self.theme = theme
         self.glass = glass
+        self.usesWegramAppearance = usesWegramAppearance
         self.segments = segments
         
         self.contextSourceNode = ContextReferenceContentNode()
@@ -239,6 +256,13 @@ final class MediaPickerTitleView: UIView {
         self.addSubnode(self.segmentedControlNode)
         
         self.buttonNode.addTarget(self, action: #selector(self.buttonPressed), forControlEvents: .touchUpInside)
+        if self.usesWegramAppearance {
+            self.titleNode.isAccessibilityElement = false
+            self.subtitleNode.isAccessibilityElement = false
+            self.arrowNode.isAccessibilityElement = false
+            self.updateWegramArrow()
+            self.updateWegramAccessibility()
+        }
     }
     
     required public init?(coder aDecoder: NSCoder) {
@@ -251,11 +275,14 @@ final class MediaPickerTitleView: UIView {
         let size = self.bounds.size
         self.contextSourceNode.frame = self.bounds.insetBy(dx: 0.0, dy: 14.0)
         
-        let controlSize = self.segmentedControlNode.updateLayout(.stretchToFill(width: min(300.0, size.width - 36.0)), transition: .immediate)
+        let controlWidth = self.usesWegramAppearance ? max(0, min(300, size.width - 36)) : min(300, size.width - 36)
+        let controlSize = self.segmentedControlNode.updateLayout(.stretchToFill(width: controlWidth), transition: .immediate)
         self.segmentedControlNode.frame = CGRect(origin: CGPoint(x: floorToScreenPixels((size.width - controlSize.width) / 2.0), y: floorToScreenPixels((size.height - controlSize.height) / 2.0)), size: controlSize)
         
-        let titleSize = self.titleNode.updateLayout(CGSize(width: 210.0, height: 44.0))
-        let subtitleSize = self.subtitleNode.updateLayout(CGSize(width: 210.0, height: 44.0))
+        let arrowWidth = self.isEnabled && self.showsDisclosureIndicator ? (self.arrowNode.image?.size.width ?? 0) + 5 : 0
+        let textWidth = self.usesWegramAppearance ? max(0, min(210, size.width - arrowWidth)) : 210
+        let titleSize = self.titleNode.updateLayout(CGSize(width: textWidth, height: 44.0))
+        let subtitleSize = self.subtitleNode.updateLayout(CGSize(width: textWidth, height: 44.0))
         
         var totalHeight: CGFloat = titleSize.height
         if subtitleSize.height > 0.0 {
@@ -279,7 +306,29 @@ final class MediaPickerTitleView: UIView {
         self.buttonNode.frame = CGRect(origin: .zero, size: size)
     }
     
+    private func updateWegramArrow() {
+        self.arrowNode.image = generateTintedImage(image: UIImage(bundleImageName: "Media Editor/DownArrow"), color: self.isDark ? .white : self.theme.rootController.navigationBar.primaryTextColor)
+    }
+
+    private func updateWegramAccessibility() {
+        guard self.usesWegramAppearance else { return }
+        self.buttonNode.isAccessibilityElement = self.segmentsHidden
+        self.buttonNode.accessibilityLabel = [self.title, self.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
+        self.buttonNode.accessibilityTraits = self.isEnabled ? .button : .header
+    }
+
     @objc private func buttonPressed() {
         self.action()
+    }
+}
+
+
+final class WegramPhotoAlbumNavigationNode: ASDisplayNode {
+    init(button: UIButton) {
+        super.init()
+        self.setViewBlock { button }
+    }
+    override func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
+        return CGSize(width: 44, height: 44)
     }
 }

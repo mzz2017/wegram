@@ -132,6 +132,7 @@ private enum ChatListRecentEntry: Comparable, Identifiable {
         presentationData: ChatListPresentationData,
         filter: ChatListNodePeersFilter,
         key: ChatListSearchPaneKey,
+        usesWegramAppearance: Bool = false,
         peerSelected: @escaping (EnginePeer, Int64?, Bool, OpenPeerAction) -> Void,
         disabledPeerSelected: @escaping (EnginePeer, Int64?, ChatListDisabledPeerReason) -> Void,
         peerContextAction: ((EnginePeer, ChatListSearchContextActionSource, ASDisplayNode, ContextGesture?, CGPoint?) -> Void)?,
@@ -279,32 +280,32 @@ private enum ChatListRecentEntry: Comparable, Identifiable {
                 let header: ChatListSearchItemHeader?
                 if case .channels = key {
                     if case .recommendedChannels = section {
-                        header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionRecommendedChannels, 1), theme: theme, strings: strings)
+                        header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionRecommendedChannels, 1), theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats)
                     } else {
                         if let isChannelsTabExpanded {
-                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionLocalChannels, 0), theme: theme, strings: strings, actionTitle: isChannelsTabExpanded ? presentationData.strings.ChatList_Search_SectionActionShowLess : presentationData.strings.ChatList_Search_SectionActionShowMore, action: { _ in
+                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionLocalChannels, 0), theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: isChannelsTabExpanded ? presentationData.strings.ChatList_Search_SectionActionShowLess : presentationData.strings.ChatList_Search_SectionActionShowMore, action: { _ in
                                 toggleChannelsTabExpanded()
                             })
                         } else {
-                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionLocalChannels, 0), theme: theme, strings: strings, actionTitle: nil, action: nil)
+                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionLocalChannels, 0), theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: nil, action: nil)
                         }
                     }
                 } else if case .apps = key {
                     if case .popularApps = section {
-                        header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionPopularApps, 1), theme: theme, strings: strings)
+                        header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionPopularApps, 1), theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats)
                     } else {
                         if let isChannelsTabExpanded {
-                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionRecentApps, 0), theme: theme, strings: strings, actionTitle: isChannelsTabExpanded ? presentationData.strings.ChatList_Search_SectionActionShowLess : presentationData.strings.ChatList_Search_SectionActionShowMore, action: { _ in
+                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionRecentApps, 0), theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: isChannelsTabExpanded ? presentationData.strings.ChatList_Search_SectionActionShowLess : presentationData.strings.ChatList_Search_SectionActionShowMore, action: { _ in
                                 toggleChannelsTabExpanded()
                             })
                         } else {
-                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionRecentApps, 0), theme: theme, strings: strings, actionTitle: nil, action: nil)
+                            header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_Search_SectionRecentApps, 0), theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: nil, action: nil)
                         }
                     }
                 } else if case .globalPosts = key {
-                    header = ChatListSearchItemHeader(type: .text(strings.ChatList_HeaderPublicPosts, 0), theme: theme, strings: strings, actionTitle: nil, action: nil)
+                    header = ChatListSearchItemHeader(type: .text(strings.ChatList_HeaderPublicPosts, 0), theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: nil, action: nil)
                 } else {
-                    header = ChatListSearchItemHeader(type: .recentPeers, theme: theme, strings: strings, actionTitle: strings.WebSearch_RecentSectionClear, action: { sourceNode in
+                    header = ChatListSearchItemHeader(type: .recentPeers, theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: strings.WebSearch_RecentSectionClear, action: { sourceNode in
                         clearRecentlySearchedPeers(sourceNode)
                     })
                 }
@@ -354,6 +355,7 @@ private enum ChatListRecentEntry: Comparable, Identifiable {
                         }
                     },
                     deletePeer: deletePeer,
+                    isWegramSearchResult: usesWegramAppearance && key == .chats,
                     contextAction: (key == .channels || section == .popularApps) ? nil : peerContextAction.flatMap { peerContextAction in
                         return { node, gesture, location in
                             if let chatPeer = peer.peer.peers[peer.peer.peerId] {
@@ -397,13 +399,76 @@ private enum ChatListRecentEntry: Comparable, Identifiable {
     }
 }
 
+public enum WegramSearchPeerSection: Int, CaseIterable {
+    case contacts, groups, chats, channels, bots, global
+
+    static func localSection(peer: EnginePeer, contactIds: Set<EnginePeer.Id>) -> Self {
+        switch peer {
+        case let .user(user):
+            if user.botInfo != nil { return .bots }
+            return contactIds.contains(peer.id) ? .contacts : .chats
+        case .legacyGroup:
+            return .groups
+        case let .channel(channel):
+            if case .group = channel.info { return .groups }
+            return .channels
+        case .secretChat, .community:
+            return .chats
+        }
+    }
+
+    private var names: (chinese: String, english: String) {
+        switch self {
+        case .contacts: return ("联系人", "Contacts")
+        case .groups: return ("群聊", "Groups")
+        case .chats: return ("聊天", "Chats")
+        case .channels: return ("频道", "Channels")
+        case .bots: return ("机器人", "Bots")
+        case .global: return ("全局搜索", "Global Search")
+        }
+    }
+
+    func headerType(strings: PresentationStrings) -> ChatListSearchItemHeaderType {
+        let code = strings.primaryComponent.languageCode
+        if code.hasPrefix("zh") {
+            return .text(self.names.chinese, self)
+        } else if code.hasPrefix("en") {
+            return .text(self.names.english, self)
+        }
+        switch self {
+        case .contacts: return .contacts
+        case .groups: return .text(strings.ChatListFolder_CategoryGroups, self)
+        case .chats: return .chats
+        case .channels: return .channels
+        case .bots: return .bots
+        case .global: return .globalPeers
+        }
+    }
+
+    func actionTitle(expanded: Bool, strings: PresentationStrings) -> String {
+        if self != .global {
+            let code = strings.primaryComponent.languageCode
+            if code.hasPrefix("zh") {
+                return (expanded ? "收起" : "更多") + self.names.chinese
+            } else if code.hasPrefix("en") {
+                return (expanded ? "Fewer " : "More ") + self.names.english
+            }
+        }
+        return expanded ? strings.ChatList_Search_ShowLess : strings.ChatList_Search_ShowMore
+    }
+
+}
+
 public enum ChatListSearchEntryStableId: Hashable {
     case threadId(Int64)
     case localPeerId(EnginePeer.Id)
     case globalPeerId(EnginePeer.Id)
     case messageId(EngineMessage.Id, ChatListSearchEntry.MessageSection)
+    case messageGroup(EnginePeer.Id)
+    case messageOverviewFooter
     case messagePlaceholder(Int32)
     case emptyMessagesFooter
+    case peerSectionFooter(WegramSearchPeerSection)
     case addContact
 }
 
@@ -466,8 +531,12 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
     case localPeer(EnginePeer, EnginePeer?, (Int32, Bool)?, Int, PresentationTheme, PresentationStrings, PresentationPersonNameOrder, PresentationPersonNameOrder, ChatListSearchSectionExpandType, PeerStoryStats?, Bool, Bool)
     case globalPeer(FoundPeer, (Int32, Bool)?, Int, PresentationTheme, PresentationStrings, PresentationPersonNameOrder, PresentationPersonNameOrder, ChatListSearchSectionExpandType, PeerStoryStats?, Bool, String?)
     case message(EngineMessage, EngineRenderedPeer, EnginePeerReadCounters?, EngineMessageHistoryThread.Info?, ChatListPresentationData, Int32, Bool?, Bool, MessageOrderingKey, (id: String, size: Int64, isFirstInList: Bool)?, MessageSection, Bool, PeerStoryStats?, Bool, TelegramSearchPeersScope)
+    indirect case wegramMessageGroup(EnginePeer.Id, ChatListSearchEntry)
+    case messageOverviewFooter(PresentationTheme, PresentationStrings, PresentationFontSize)
     case messagePlaceholder(Int32, ChatListPresentationData, TelegramSearchPeersScope)
     case emptyMessagesFooter(ChatListPresentationData, TelegramSearchPeersScope, String?)
+    indirect case wegramPeer(WegramSearchPeerSection, ChatListSearchEntry)
+    case peerSectionFooter(WegramSearchPeerSection, expanded: Bool, PresentationTheme, PresentationStrings, PresentationFontSize)
     case addContact(String, PresentationTheme, PresentationStrings)
 
     public var stableId: ChatListSearchEntryStableId {
@@ -484,10 +553,18 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             return .globalPeerId(peer.peer.id)
         case let .message(message, _, _, _, _, _, _, _, _, _, section, _, _, _, _):
             return .messageId(message.id, section)
+        case let .wegramMessageGroup(peerId, _):
+            return .messageGroup(peerId)
+        case .messageOverviewFooter:
+            return .messageOverviewFooter
         case let .messagePlaceholder(index, _, _):
             return .messagePlaceholder(index)
         case .emptyMessagesFooter:
             return .emptyMessagesFooter
+        case let .wegramPeer(_, entry):
+            return entry.stableId
+        case let .peerSectionFooter(section, _, _, _, _):
+            return .peerSectionFooter(section)
         case .addContact:
             return .addContact
         }
@@ -582,6 +659,16 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             } else {
                 return false
             }
+        case let .wegramMessageGroup(lhsPeer, lhsEntry):
+            if case let .wegramMessageGroup(rhsPeer, rhsEntry) = rhs {
+                return lhsPeer == rhsPeer && lhsEntry == rhsEntry
+            }
+            return false
+        case let .messageOverviewFooter(lhsTheme, lhsStrings, lhsFont):
+            if case let .messageOverviewFooter(rhsTheme, rhsStrings, rhsFont) = rhs {
+                return lhsTheme === rhsTheme && lhsStrings === rhsStrings && lhsFont == rhsFont
+            }
+            return false
         case let .messagePlaceholder(lhsIndex, lhsPresentationData, lhsSearchScope):
             if case let .messagePlaceholder(rhsIndex, rhsPresentationData, rhsSearchScope) = rhs {
                 if lhsIndex != rhsIndex {
@@ -612,6 +699,16 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
             } else {
                 return false
             }
+        case let .wegramPeer(lhsSection, lhsEntry):
+            if case let .wegramPeer(rhsSection, rhsEntry) = rhs {
+                return lhsSection == rhsSection && lhsEntry == rhsEntry
+            }
+            return false
+        case let .peerSectionFooter(lhsGlobal, lhsExpanded, lhsTheme, lhsStrings, lhsFontSize):
+            if case let .peerSectionFooter(rhsGlobal, rhsExpanded, rhsTheme, rhsStrings, rhsFontSize) = rhs {
+                return lhsGlobal == rhsGlobal && lhsExpanded == rhsExpanded && lhsTheme === rhsTheme && lhsStrings === rhsStrings && lhsFontSize == rhsFontSize
+            }
+            return false
         case let .addContact(lhsPhoneNumber, lhsTheme, lhsStrings):
             if case let .addContact(rhsPhoneNumber, rhsTheme, rhsStrings) = rhs {
                 if lhsPhoneNumber != rhsPhoneNumber {
@@ -630,78 +727,69 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
         }
     }
 
+    private var sectionOrder: Int {
+        switch self {
+        case .topic: return 0
+        case .recentlySearchedPeer: return 1
+        case .localPeer, .wegramPeer: return 2
+        case let .peerSectionFooter(section, _, _, _, _): return section == .global ? 6 : 2
+        case .adPeer: return 4
+        case .globalPeer: return 5
+        case .message, .wegramMessageGroup: return 7
+        case .messageOverviewFooter: return 8
+        case .messagePlaceholder: return 9
+        case .emptyMessagesFooter: return 10
+        case .addContact: return 11
+        }
+    }
+
+    private var peerSectionOrder: Int {
+        switch self {
+        case let .wegramPeer(section, _): return section.rawValue * 2
+        case let .peerSectionFooter(section, _, _, _, _): return section.rawValue * 2 + 1
+        case .localPeer: return WegramSearchPeerSection.chats.rawValue * 2
+        default: return 0
+        }
+    }
+
+    var representativeMessageEntry: ChatListSearchEntry {
+        if case let .wegramMessageGroup(_, entry) = self { return entry }
+        return self
+    }
+
+    private var messageOrderingKey: MessageOrderingKey? {
+        if case let .message(_, _, _, _, _, _, _, _, key, _, _, _, _, _, _) = self.representativeMessageEntry { return key }
+        return nil
+    }
+
     public static func <(lhs: ChatListSearchEntry, rhs: ChatListSearchEntry) -> Bool {
-        switch lhs {
-        case let .topic(_, _, lhsIndex, _, _, _):
-            if case let .topic(_, _, rhsIndex, _, _, _) = rhs {
-                return lhsIndex <= rhsIndex
-            } else {
-                return true
-            }
-        case let .recentlySearchedPeer(_, _, _, lhsIndex, _, _, _, _, _, _):
-            if case .topic = rhs {
-                return false
-            } else if case let .recentlySearchedPeer(_, _, _, rhsIndex, _, _, _, _, _, _) = rhs {
-                return lhsIndex <= rhsIndex
-            } else {
-                return true
-            }
-        case let .localPeer(_, _, _, lhsIndex, _, _, _, _, _, _, _, _):
-            switch rhs {
-            case .topic, .recentlySearchedPeer:
-                return false
-            case let .localPeer(_, _, _, rhsIndex, _, _, _, _, _, _, _, _):
-                return lhsIndex <= rhsIndex
-            case .adPeer, .globalPeer, .message, .messagePlaceholder, .emptyMessagesFooter, .addContact:
-                return true
-            }
-        case let .adPeer(_, lhsIndex, _, _, _, _, _, _):
-            switch rhs {
-            case .topic, .recentlySearchedPeer, .localPeer:
-                return false
-            case let .adPeer(_, rhsIndex, _, _, _, _, _, _):
-                return lhsIndex <= rhsIndex
-            case .globalPeer, .message, .messagePlaceholder, .emptyMessagesFooter, .addContact:
-                return true
-            }
-        case let .globalPeer(_, _, lhsIndex, _, _, _, _, _, _, _, _):
-            switch rhs {
-            case .topic, .recentlySearchedPeer, .localPeer, .adPeer:
-                return false
-            case let .globalPeer(_, _, rhsIndex, _, _, _, _, _, _, _, _):
-                return lhsIndex <= rhsIndex
-            case .message, .messagePlaceholder, .emptyMessagesFooter, .addContact:
-                return true
-            }
-        case let .message(_, _, _, _, _, _, _, _, lhsKey, _, _, _, _, _, _):
-            if case let .message(_, _, _, _, _, _, _, _, rhsKey, _, _, _, _, _, _) = rhs {
-                return lhsKey < rhsKey
-            } else if case .messagePlaceholder = rhs {
-                return true
-            } else if case .emptyMessagesFooter = rhs {
-                return true
-            } else if case .addContact = rhs {
-                return true
-            } else {
-                return false
-            }
-        case let .messagePlaceholder(lhsIndex, _, _):
-            if case let .messagePlaceholder(rhsIndex, _, _) = rhs {
-                return lhsIndex < rhsIndex
-            } else if case .emptyMessagesFooter = rhs {
-                return true
-            } else if case .addContact = rhs {
-                return true
-            } else {
-                return false
-            }
-        case .emptyMessagesFooter:
-            if case .addContact = rhs {
-                return true
-            } else {
-                return false
-            }
-        case .addContact:
+        if lhs.sectionOrder != rhs.sectionOrder {
+            return lhs.sectionOrder < rhs.sectionOrder
+        }
+        if lhs.peerSectionOrder != rhs.peerSectionOrder {
+            return lhs.peerSectionOrder < rhs.peerSectionOrder
+        }
+        if let lhsKey = lhs.messageOrderingKey, let rhsKey = rhs.messageOrderingKey {
+            return lhsKey < rhsKey
+        }
+        switch (lhs, rhs) {
+        case let (.wegramPeer(_, lhsEntry), .wegramPeer(_, rhsEntry)):
+            return lhsEntry < rhsEntry
+        case let (.topic(_, _, lhsIndex, _, _, _), .topic(_, _, rhsIndex, _, _, _)):
+            return lhsIndex <= rhsIndex
+        case let (.recentlySearchedPeer(_, _, _, lhsIndex, _, _, _, _, _, _), .recentlySearchedPeer(_, _, _, rhsIndex, _, _, _, _, _, _)):
+            return lhsIndex <= rhsIndex
+        case let (.localPeer(_, _, _, lhsIndex, _, _, _, _, _, _, _, _), .localPeer(_, _, _, rhsIndex, _, _, _, _, _, _, _, _)):
+            return lhsIndex <= rhsIndex
+        case let (.adPeer(_, lhsIndex, _, _, _, _, _, _), .adPeer(_, rhsIndex, _, _, _, _, _, _)):
+            return lhsIndex <= rhsIndex
+        case let (.globalPeer(_, _, lhsIndex, _, _, _, _, _, _, _, _), .globalPeer(_, _, rhsIndex, _, _, _, _, _, _, _, _)):
+            return lhsIndex <= rhsIndex
+        case let (.message(_, _, _, _, _, _, _, _, lhsKey, _, _, _, _, _, _), .message(_, _, _, _, _, _, _, _, rhsKey, _, _, _, _, _, _)):
+            return lhsKey < rhsKey
+        case let (.messagePlaceholder(lhsIndex, _, _), .messagePlaceholder(rhsIndex, _, _)):
+            return lhsIndex < rhsIndex
+        default:
             return false
         }
     }
@@ -715,6 +803,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
         location: ChatListControllerLocation,
         communityId: EnginePeer.Id?,
         key: ChatListSearchPaneKey,
+    usesWegramAppearance: Bool = false,
         tagMask: EngineMessage.Tags?,
         interaction: ChatListNodeInteraction,
         listInteraction: ListMessageItemInteraction,
@@ -730,9 +819,28 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
         openStories: @escaping (EnginePeer.Id, AvatarNode) -> Void,
         openPublicPosts: @escaping () -> Void,
         openMessagesFilter: @escaping (ASDisplayNode) -> Void,
-        switchMessagesFilter: @escaping (TelegramSearchPeersScope) -> Void
+        switchMessagesFilter: @escaping (TelegramSearchPeersScope) -> Void,
+        toggleExpandPeerSection: ((WegramSearchPeerSection) -> Void)? = nil,
+        wegramSection: WegramSearchPeerSection? = nil,
+        openHistoryResults: (() -> Void)? = nil,
+        wegramSearchGroupAction: (() -> Void)? = nil
     ) -> ListViewItem {
         switch self {
+            case let .wegramPeer(section, entry):
+                return entry.item(context: context, presentationData: presentationData, enableHeaders: enableHeaders, filter: filter, requestPeerType: requestPeerType, location: location, communityId: communityId, key: key, usesWegramAppearance: usesWegramAppearance, tagMask: tagMask, interaction: interaction, listInteraction: listInteraction, peerContextAction: peerContextAction, toggleExpandLocalResults: toggleExpandLocalResults, toggleExpandGlobalResults: toggleExpandGlobalResults, searchPeer: searchPeer, searchQuery: searchQuery, searchOptions: searchOptions, messageContextAction: messageContextAction, openClearRecentlyDownloaded: openClearRecentlyDownloaded, toggleAllPaused: toggleAllPaused, openStories: openStories, openPublicPosts: openPublicPosts, openMessagesFilter: openMessagesFilter, switchMessagesFilter: switchMessagesFilter, toggleExpandPeerSection: toggleExpandPeerSection, wegramSection: usesWegramAppearance && key == .chats ? section : nil, openHistoryResults: openHistoryResults)
+            case let .wegramMessageGroup(_, entry):
+                let groupAction: (() -> Void)?
+                if case let .message(_, renderedPeer, _, _, _, _, _, _, _, _, _, _, _, _, _) = entry, let peer = renderedPeer.peer {
+                    groupAction = { searchPeer(peer) }
+                } else {
+                    groupAction = nil
+                }
+                return entry.item(context: context, presentationData: presentationData, enableHeaders: enableHeaders, filter: filter, requestPeerType: requestPeerType, location: location, communityId: communityId, key: key, usesWegramAppearance: usesWegramAppearance, tagMask: tagMask, interaction: interaction, listInteraction: listInteraction, peerContextAction: peerContextAction, toggleExpandLocalResults: toggleExpandLocalResults, toggleExpandGlobalResults: toggleExpandGlobalResults, searchPeer: searchPeer, searchQuery: searchQuery, searchOptions: searchOptions, messageContextAction: messageContextAction, openClearRecentlyDownloaded: openClearRecentlyDownloaded, toggleAllPaused: toggleAllPaused, openStories: openStories, openPublicPosts: openPublicPosts, openMessagesFilter: openMessagesFilter, switchMessagesFilter: switchMessagesFilter, toggleExpandPeerSection: toggleExpandPeerSection, openHistoryResults: openHistoryResults, wegramSearchGroupAction: groupAction)
+            case let .messageOverviewFooter(theme, strings, _):
+                let color = UIColor(rgb: theme.overallDarkAppearance ? 0x7d90a9 : 0x576b95)
+                let code = strings.primaryComponent.languageCode
+                let title = code.hasPrefix("zh") ? "更多聊天记录" : (code.hasPrefix("en") ? "More Chat History" : strings.ChatList_Search_ShowMore)
+                return ItemListDisclosureItem(presentationData: ItemListPresentationData(presentationData), icon: UIImage(systemName: "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20))?.withTintColor(color, renderingMode: .alwaysOriginal), title: title, attributedTitle: NSAttributedString(string: title, font: Font.regular(presentationData.listsFontSize.itemListBaseFontSize), textColor: color), label: "", sectionId: 0, style: .plain, noInsets: true, usesWegramSearchFooterLayout: true, action: openHistoryResults)
             case let .topic(peer, threadInfo, _, theme, strings, expandType):
                 let actionTitle: String?
                 switch expandType {
@@ -743,13 +851,13 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                 case .collapse:
                     actionTitle = strings.ChatList_Search_ShowLess
                 }
-                let header = ChatListSearchItemHeader(type: .topics, theme: theme, strings: strings, actionTitle: actionTitle, action: actionTitle == nil ? nil : { _ in
+                let header = ChatListSearchItemHeader(type: .topics, theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: actionTitle, action: actionTitle == nil ? nil : { _ in
                     toggleExpandGlobalResults()
                 })
 
-                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), sortOrder: .firstLast, displayOrder: .firstLast, context: context, peerMode: .generalSearch(isSavedMessages: false), peer: .thread(peer: peer, title: threadInfo.info.title, icon: threadInfo.info.icon, color: threadInfo.info.iconColor), status: .none, badge: nil, enabled: true, selection: .none, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), index: nil, header: header, action: { _ in
+                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), sortOrder: .firstLast, displayOrder: .firstLast, context: context, peerMode: .generalSearch(isSavedMessages: false), peer: .thread(peer: peer, title: threadInfo.info.title, icon: threadInfo.info.icon, color: threadInfo.info.iconColor), status: .none, badge: nil, enabled: true, selection: .none, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), index: nil, header: header, searchQuery: usesWegramAppearance && key == .chats ? searchQuery : nil, action: { _ in
                     interaction.peerSelected(peer, nil, threadInfo.id, nil, false)
-                }, contextAction: nil, animationCache: interaction.animationCache, animationRenderer: interaction.animationRenderer)
+                }, isWegramSearchResult: usesWegramAppearance && key == .chats, contextAction: nil, animationCache: interaction.animationCache, animationRenderer: interaction.animationRenderer)
             case let .recentlySearchedPeer(peer, associatedPeer, unreadBadge, _, theme, strings, nameSortOrder, nameDisplayOrder, storyStats, requiresPremiumForMessaging):
                 let primaryPeer: EnginePeer
                 var chatPeer: EnginePeer?
@@ -822,10 +930,10 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                             )
                         }
                     }
-                    header = ChatListSearchItemHeader(type: headerType, theme: theme, strings: strings, actionTitle: nil, action: nil)
+                    header = ChatListSearchItemHeader(type: wegramSection?.headerType(strings: strings) ?? headerType, theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: nil, action: nil)
                 }
 
-                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), sortOrder: nameSortOrder, displayOrder: nameDisplayOrder, context: context, peerMode: .generalSearch(isSavedMessages: false), peer: .peer(peer: primaryPeer, chatPeer: chatPeer), status: .none, badge: badge, requiresPremiumForMessaging: requiresPremiumForMessaging, enabled: enabled, selection: .none, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), buttonAction: buttonAction, index: nil, header: header, action: { contactPeer in
+                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), sortOrder: nameSortOrder, displayOrder: nameDisplayOrder, context: context, peerMode: .generalSearch(isSavedMessages: false), peer: .peer(peer: primaryPeer, chatPeer: chatPeer), status: .none, badge: badge, requiresPremiumForMessaging: requiresPremiumForMessaging, enabled: enabled, selection: .none, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), buttonAction: buttonAction, index: nil, header: header, searchQuery: usesWegramAppearance && key == .chats ? searchQuery : nil, action: { contactPeer in
                     if case let .peer(maybePeer, maybeChatPeer) = contactPeer, let peer = maybePeer, let chatPeer = maybeChatPeer {
                         interaction.peerSelected(chatPeer, peer, nil, nil, false)
                     } else {
@@ -833,7 +941,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                     }
                 }, disabledAction: { _ in
                     interaction.disabledPeerSelected(peer, nil, requiresPremiumForMessaging ? .premiumRequired : .generic)
-                }, contextAction: peerContextAction.flatMap { peerContextAction in
+                }, isWegramSearchResult: usesWegramAppearance && key == .chats, contextAction: peerContextAction.flatMap { peerContextAction in
                     return { node, gesture, location in
                         if let chatPeer = chatPeer, chatPeer.id.namespace != Namespaces.Peer.SecretChat {
                             peerContextAction(chatPeer, .search(nil), node, gesture, location)
@@ -874,7 +982,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                 case .collapse:
                     actionTitle = strings.ChatList_Search_ShowLess
                 }
-                header = ChatListSearchItemHeader(type: .globalPeers, theme: theme, strings: strings, actionTitle: actionTitle, action: actionTitle == nil ? nil : { _ in
+                header = ChatListSearchItemHeader(type: .globalPeers, theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: usesWegramAppearance && key == .chats ? nil : actionTitle, action: actionTitle == nil || (usesWegramAppearance && key == .chats) ? nil : { _ in
                     toggleExpandGlobalResults()
                 })
 
@@ -971,7 +1079,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                             }
                         }
                     }
-                    header = ChatListSearchItemHeader(type: headerType, theme: theme, strings: strings, actionTitle: actionTitle, action: actionTitle == nil ? nil : { _ in
+                    header = ChatListSearchItemHeader(type: wegramSection?.headerType(strings: strings) ?? headerType, theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: usesWegramAppearance && key == .chats ? nil : actionTitle, action: actionTitle == nil || (usesWegramAppearance && key == .chats) ? nil : { _ in
                         toggleExpandLocalResults()
                     })
                 }
@@ -999,7 +1107,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                     )
                 }
 
-                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), sortOrder: nameSortOrder, displayOrder: nameDisplayOrder, context: context, peerMode: .generalSearch(isSavedMessages: isSavedMessages), aliasHandling: isSelf ? .standard : .treatSelfAsSaved, peer: .peer(peer: primaryPeer, chatPeer: chatPeer), status: status, badge: badge, requiresPremiumForMessaging: requiresPremiumForMessaging, enabled: enabled, selection: .none, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), buttonAction: buttonAction, index: nil, header: header, action: { contactPeer in
+                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), sortOrder: nameSortOrder, displayOrder: nameDisplayOrder, context: context, peerMode: .generalSearch(isSavedMessages: isSavedMessages), aliasHandling: isSelf ? .standard : .treatSelfAsSaved, peer: .peer(peer: primaryPeer, chatPeer: chatPeer), status: status, badge: badge, requiresPremiumForMessaging: requiresPremiumForMessaging, enabled: enabled, selection: .none, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), buttonAction: buttonAction, index: nil, header: header, searchQuery: usesWegramAppearance && key == .chats ? searchQuery : nil, action: { contactPeer in
                     if case let .peer(maybePeer, maybeChatPeer) = contactPeer, let peer = maybePeer, let chatPeer = maybeChatPeer {
                         interaction.peerSelected(chatPeer, peer, nil, nil, false)
                     } else {
@@ -1007,7 +1115,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                     }
                 }, disabledAction: { _ in
                     interaction.disabledPeerSelected(peer, nil, requiresPremiumForMessaging ? .premiumRequired : .generic)
-                }, contextAction: peerContextAction.flatMap { peerContextAction in
+                }, isWegramSearchResult: usesWegramAppearance && key == .chats, contextAction: peerContextAction.flatMap { peerContextAction in
                     return { node, gesture, location in
                         if let chatPeer = chatPeer, chatPeer.id.namespace != Namespaces.Peer.SecretChat {
                             peerContextAction(chatPeer, .search(nil), node, gesture, location)
@@ -1079,7 +1187,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                     case .collapse:
                         actionTitle = strings.ChatList_Search_ShowLess
                     }
-                    header = ChatListSearchItemHeader(type: .globalPeers, theme: theme, strings: strings, actionTitle: actionTitle, action: actionTitle == nil ? nil : { _ in
+                    header = ChatListSearchItemHeader(type: .globalPeers, theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: usesWegramAppearance && key == .chats ? nil : actionTitle, action: actionTitle == nil || (usesWegramAppearance && key == .chats) ? nil : { _ in
                         toggleExpandGlobalResults()
                     })
                 }
@@ -1093,7 +1201,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                     interaction.peerSelected(peer.peer, nil, nil, nil, false)
                 }, disabledAction: { _ in
                     interaction.disabledPeerSelected(peer.peer, nil, requiresPremiumForMessaging ? .premiumRequired : .generic)
-                }, contextAction: peerContextAction.flatMap { peerContextAction in
+                }, isWegramSearchResult: usesWegramAppearance && key == .chats, contextAction: peerContextAction.flatMap { peerContextAction in
                     return { node, gesture, location in
                         peerContextAction(peer.peer, .search(nil), node, gesture, location)
                     }
@@ -1113,29 +1221,29 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                 switch orderingKey {
                 case .downloading:
                     if allPaused {
-                        header = ChatListSearchItemHeader(type: .downloading, theme: presentationData.theme, strings: presentationData.strings, actionTitle: presentationData.strings.DownloadList_ResumeAll, action: { _ in
+                        header = ChatListSearchItemHeader(type: .downloading, theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: presentationData.strings.DownloadList_ResumeAll, action: { _ in
                             toggleAllPaused()
                         })
                     } else {
-                        header = ChatListSearchItemHeader(type: .downloading, theme: presentationData.theme, strings: presentationData.strings, actionTitle: presentationData.strings.DownloadList_PauseAll, action: { _ in
+                        header = ChatListSearchItemHeader(type: .downloading, theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: presentationData.strings.DownloadList_PauseAll, action: { _ in
                             toggleAllPaused()
                         })
                     }
                 case .downloaded:
-                    header = ChatListSearchItemHeader(type: .recentDownloads, theme: presentationData.theme, strings: presentationData.strings, actionTitle: presentationData.strings.DownloadList_Clear, action: { _ in
+                    header = ChatListSearchItemHeader(type: .recentDownloads, theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: presentationData.strings.DownloadList_Clear, action: { _ in
                         openClearRecentlyDownloaded()
                     })
                 case .index:
                     if case .publicPosts = section {
                         if case .publicPosts = key {
-                            header = ChatListSearchItemHeader(type: .publicPosts, theme: presentationData.theme, strings: presentationData.strings, actionTitle: nil, action: nil)
+                            header = ChatListSearchItemHeader(type: .publicPosts, theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: nil, action: nil)
                         } else {
-                            header = ChatListSearchItemHeader(type: .publicPosts, theme: presentationData.theme, strings: presentationData.strings, actionTitle: "\(presentationData.strings.ChatList_Search_ShowMore) >", action: { _ in
+                            header = ChatListSearchItemHeader(type: .publicPosts, theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: "\(presentationData.strings.ChatList_Search_ShowMore) >", action: { _ in
                                 openPublicPosts()
                             })
                         }
                     } else {
-                        var headerType: ChatListSearchItemHeaderType = .messages(location: nil)
+                        var headerType: ChatListSearchItemHeaderType = usesWegramAppearance && key == .chats ? .text(wegramSearchHistoryTitle(presentationData.strings), "wegram-history") : .messages(location: nil)
                         var actionTitle: String?
                         if key == .globalPosts {
                             headerType = .text(presentationData.strings.ChatList_HeaderPublicPosts, 0)
@@ -1160,7 +1268,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                                 actionTitle = "\(filterTitle)  <"
                             }
                         }
-                        header = ChatListSearchItemHeader(type: headerType, theme: presentationData.theme, strings: presentationData.strings, actionTitle: actionTitle, action: actionTitle == nil ? nil : { sourceNode in
+                        header = ChatListSearchItemHeader(type: headerType, theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: actionTitle, action: actionTitle == nil ? nil : { sourceNode in
                             openMessagesFilter(sourceNode)
                         })
                     }
@@ -1233,7 +1341,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                         requiresPremiumForMessaging: requiresPremiumForMessaging,
                         displayAsTopicList: false,
                         tags: []
-                    )), editing: false, hasActiveRevealControls: false, selected: false, header: tagMask == nil ? header : nil, enabledContextActions: nil, hiddenOffset: false, interaction: interaction, hideCommunityAvatarBadge: communityId != nil)
+                    )), editing: false, hasActiveRevealControls: false, selected: false, header: tagMask == nil ? header : nil, enabledContextActions: nil, hiddenOffset: false, interaction: interaction, hideCommunityAvatarBadge: communityId != nil, isWegramSearchResult: usesWegramAppearance && key == .chats, isWegramMessageGroup: wegramSearchGroupAction != nil, customSelectionAction: wegramSearchGroupAction)
                 }
             case let .messagePlaceholder(_, presentationData, searchScope):
                 var actionTitle: String?
@@ -1256,9 +1364,9 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
 
                 let header: ChatListSearchItemHeader
                 if key == .globalPosts {
-                    header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_HeaderPublicPosts, 0), theme: presentationData.theme, strings: presentationData.strings, actionTitle: nil, action: nil)
+                    header = ChatListSearchItemHeader(type: .text(presentationData.strings.ChatList_HeaderPublicPosts, 0), theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: nil, action: nil)
                 } else {
-                    header = ChatListSearchItemHeader(type: .messages(location: nil), theme: presentationData.theme, strings: presentationData.strings, actionTitle: actionTitle, action: actionTitle == nil ? nil : { sourceNode in
+                    header = ChatListSearchItemHeader(type: .messages(location: nil), theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: actionTitle, action: actionTitle == nil ? nil : { sourceNode in
                         openMessagesFilter(sourceNode)
                     })
                 }
@@ -1282,7 +1390,7 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                     actionTitle = "\(filterTitle)  <"
                 }
 
-                let header = ChatListSearchItemHeader(type: .messages(location: nil), theme: presentationData.theme, strings: presentationData.strings, actionTitle: actionTitle, action: actionTitle == nil ? nil : { sourceNode in
+                let header = ChatListSearchItemHeader(type: .messages(location: nil), theme: presentationData.theme, strings: presentationData.strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: actionTitle, action: actionTitle == nil ? nil : { sourceNode in
                     openMessagesFilter(sourceNode)
                 })
                 return ChatListSearchEmptyFooterItem(
@@ -1294,12 +1402,117 @@ public enum ChatListSearchEntry: Comparable, Identifiable {
                         switchMessagesFilter(.everywhere)
                     }
                 )
+            case let .peerSectionFooter(section, expanded, theme, strings, _):
+                let color = UIColor(rgb: theme.overallDarkAppearance ? 0x7d90a9 : 0x576b95)
+                let title = section.actionTitle(expanded: expanded, strings: strings)
+                let icon = UIImage(systemName: expanded ? "chevron.up" : "magnifyingglass", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .regular))?.withTintColor(color, renderingMode: .alwaysOriginal)
+                return ItemListDisclosureItem(
+                    presentationData: ItemListPresentationData(presentationData),
+                    icon: icon,
+                    title: title,
+                    attributedTitle: NSAttributedString(string: title, font: Font.regular(presentationData.listsFontSize.itemListBaseFontSize), textColor: color),
+                    label: "",
+                    sectionId: 0,
+                    style: .plain,
+                    noInsets: true,
+                    usesWegramSearchFooterLayout: true,
+                    action: section == .global ? toggleExpandGlobalResults : {
+                        if let toggleExpandPeerSection {
+                            toggleExpandPeerSection(section)
+                        } else {
+                            toggleExpandLocalResults()
+                        }
+                    }
+                )
             case let .addContact(phoneNumber, theme, strings):
-                return ContactsAddItem(context: context, theme: theme, strings: strings, phoneNumber: phoneNumber, header: ChatListSearchItemHeader(type: .phoneNumber, theme: theme, strings: strings, actionTitle: nil, action: nil), action: {
+                return ContactsAddItem(context: context, theme: theme, strings: strings, phoneNumber: phoneNumber, header: ChatListSearchItemHeader(type: .phoneNumber, theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance && key == .chats, actionTitle: nil, action: nil), action: {
                     interaction.addContact(phoneNumber)
                 })
         }
     }
+}
+
+func wegramSearchHistoryTitle(_ strings: PresentationStrings) -> String {
+    let code = strings.primaryComponent.languageCode
+    return code.hasPrefix("zh") ? "聊天记录" : (code.hasPrefix("en") ? "Chat History" : strings.DialogList_SearchSectionMessages)
+}
+
+func wegramSearchMessageResultsOnly(_ entries: [ChatListSearchEntry]) -> [ChatListSearchEntry] {
+    return entries.filter { entry in
+        switch entry {
+        case let .message(_, _, _, _, _, _, _, _, _, _, section, _, _, _, _): return section == .generic
+        case .messagePlaceholder, .emptyMessagesFooter: return true
+        default: return false
+        }
+    }
+}
+
+func wegramSearchMessageOverview(_ entries: [ChatListSearchEntry], presentationData: PresentationData) -> [ChatListSearchEntry] {
+    var peers = Set<EnginePeer.Id>()
+    var result: [ChatListSearchEntry] = []
+    for entry in entries {
+        if case let .message(message, peer, _, _, _, _, selected, customHeader, key, _, section, _, _, _, _) = entry,
+           selected == nil, !customHeader, section == .generic, case .index = key, let actualPeer = peer.peer {
+            if case .community = actualPeer {
+                result.append(entry)
+                continue
+            }
+            if peers.insert(message.id.peerId).inserted, peers.count <= 3 {
+                result.append(.wegramMessageGroup(message.id.peerId, entry))
+            }
+        } else {
+            result.append(entry)
+        }
+    }
+    if !peers.isEmpty {
+        result.append(.messageOverviewFooter(presentationData.theme, presentationData.strings, presentationData.listsFontSize))
+    }
+    return result.sorted()
+}
+
+func wegramSearchEntriesWithPeerSections(_ entries: [ChatListSearchEntry], presentationData: PresentationData, contactIds: Set<EnginePeer.Id>, expandedSections: Set<WegramSearchPeerSection>) -> [ChatListSearchEntry] {
+    var sections: [WegramSearchPeerSection: [ChatListSearchEntry]] = [:]
+    var others: [ChatListSearchEntry] = []
+    for entry in entries {
+        let peer: EnginePeer
+        switch entry {
+        case let .localPeer(value, _, _, _, _, _, _, _, _, _, _, _), let .recentlySearchedPeer(value, _, _, _, _, _, _, _, _, _):
+            peer = value
+        default:
+            others.append(entry)
+            continue
+        }
+        let section = WegramSearchPeerSection.localSection(peer: peer, contactIds: contactIds)
+        sections[section, default: []].append(.wegramPeer(section, entry))
+    }
+    var result: [ChatListSearchEntry] = []
+    for section in WegramSearchPeerSection.allCases where section != .global {
+        guard let peers = sections[section] else { continue }
+        let expanded = expandedSections.contains(section)
+        result.append(contentsOf: expanded ? peers : Array(peers.prefix(3)))
+        if peers.count > 3 {
+            result.append(.peerSectionFooter(section, expanded: expanded, presentationData.theme, presentationData.strings, presentationData.listsFontSize))
+        }
+    }
+    var globalFooterIndex: Int?
+    var globalExpanded = false
+    for (index, entry) in others.enumerated() {
+        switch entry {
+        case let .adPeer(_, _, _, _, _, _, expandType, _), let .globalPeer(_, _, _, _, _, _, _, expandType, _, _, _):
+            if expandType != .none {
+                globalFooterIndex = index
+                globalExpanded = expandType == .collapse
+            }
+        default: break
+        }
+    }
+    for (index, entry) in others.enumerated() {
+        result.append(entry)
+        if index == globalFooterIndex {
+            result.append(.peerSectionFooter(.global, expanded: globalExpanded, presentationData.theme, presentationData.strings, presentationData.listsFontSize))
+        }
+    }
+    return result.sorted()
 }
 
 private struct ChatListSearchContainerRecentTransition {
@@ -1349,6 +1562,7 @@ private func chatListSearchContainerPreparedRecentTransition(
     presentationData: ChatListPresentationData,
     filter: ChatListNodePeersFilter,
     key: ChatListSearchPaneKey,
+    usesWegramAppearance: Bool = false,
     peerSelected: @escaping (EnginePeer, Int64?, Bool, OpenPeerAction) -> Void,
     disabledPeerSelected: @escaping (EnginePeer, Int64?, ChatListDisabledPeerReason) -> Void,
     peerContextAction: ((EnginePeer, ChatListSearchContextActionSource, ASDisplayNode, ContextGesture?, CGPoint?) -> Void)?,
@@ -1365,8 +1579,8 @@ private func chatListSearchContainerPreparedRecentTransition(
     let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: fromEntries, rightList: toEntries, allUpdated: forceUpdateAll)
 
     let deletions = deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) }
-    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, filter: filter, key: key, peerSelected: peerSelected, disabledPeerSelected: disabledPeerSelected, peerContextAction: peerContextAction, clearRecentlySearchedPeers: clearRecentlySearchedPeers, deletePeer: deletePeer, animationCache: animationCache, animationRenderer: animationRenderer, openStories: openStories, isChannelsTabExpanded: isChannelsTabExpanded, toggleChannelsTabExpanded: toggleChannelsTabExpanded, openTopAppsInfo: openTopAppsInfo), directionHint: nil) }
-    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, filter: filter, key: key, peerSelected: peerSelected, disabledPeerSelected: disabledPeerSelected, peerContextAction: peerContextAction, clearRecentlySearchedPeers: clearRecentlySearchedPeers, deletePeer: deletePeer, animationCache: animationCache, animationRenderer: animationRenderer, openStories: openStories, isChannelsTabExpanded: isChannelsTabExpanded, toggleChannelsTabExpanded: toggleChannelsTabExpanded, openTopAppsInfo: openTopAppsInfo), directionHint: nil) }
+    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, filter: filter, key: key, usesWegramAppearance: usesWegramAppearance, peerSelected: peerSelected, disabledPeerSelected: disabledPeerSelected, peerContextAction: peerContextAction, clearRecentlySearchedPeers: clearRecentlySearchedPeers, deletePeer: deletePeer, animationCache: animationCache, animationRenderer: animationRenderer, openStories: openStories, isChannelsTabExpanded: isChannelsTabExpanded, toggleChannelsTabExpanded: toggleChannelsTabExpanded, openTopAppsInfo: openTopAppsInfo), directionHint: nil) }
+    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, filter: filter, key: key, usesWegramAppearance: usesWegramAppearance, peerSelected: peerSelected, disabledPeerSelected: disabledPeerSelected, peerContextAction: peerContextAction, clearRecentlySearchedPeers: clearRecentlySearchedPeers, deletePeer: deletePeer, animationCache: animationCache, animationRenderer: animationRenderer, openStories: openStories, isChannelsTabExpanded: isChannelsTabExpanded, toggleChannelsTabExpanded: toggleChannelsTabExpanded, openTopAppsInfo: openTopAppsInfo), directionHint: nil) }
 
     return ChatListSearchContainerRecentTransition(deletions: deletions, insertions: insertions, updates: updates, isEmpty: isEmpty)
 }
@@ -1386,6 +1600,8 @@ public func chatListSearchContainerPreparedTransition(
     location: ChatListControllerLocation,
     communityId: EnginePeer.Id?,
     key: ChatListSearchPaneKey,
+    usesWegramAppearance: Bool = false,
+    forceUpdateAll: Bool = false,
     tagMask: EngineMessage.Tags?,
     interaction: ChatListNodeInteraction,
     listInteraction: ListMessageItemInteraction,
@@ -1403,18 +1619,21 @@ public func chatListSearchContainerPreparedTransition(
     openStories: @escaping (EnginePeer.Id, AvatarNode) -> Void,
     openPublicPosts: @escaping () -> Void,
     openMessagesFilter: @escaping (ASDisplayNode) -> Void,
-    switchMessagesFilter: @escaping (TelegramSearchPeersScope) -> Void
+    switchMessagesFilter: @escaping (TelegramSearchPeersScope) -> Void,
+    toggleExpandPeerSection: ((WegramSearchPeerSection) -> Void)? = nil,
+    openHistoryResults: (() -> Void)? = nil
 ) -> ChatListSearchContainerTransition {
-    let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: fromEntries, rightList: toEntries)
+    let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: fromEntries, rightList: toEntries, allUpdated: forceUpdateAll)
 
     let deletions = deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) }
-    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, enableHeaders: enableHeaders, filter: filter, requestPeerType: requestPeerType, location: location, communityId: communityId, key: key, tagMask: tagMask, interaction: interaction, listInteraction: listInteraction, peerContextAction: peerContextAction, toggleExpandLocalResults: toggleExpandLocalResults, toggleExpandGlobalResults: toggleExpandGlobalResults, searchPeer: searchPeer, searchQuery: searchQuery, searchOptions: searchOptions, messageContextAction: messageContextAction, openClearRecentlyDownloaded: openClearRecentlyDownloaded, toggleAllPaused: toggleAllPaused, openStories: openStories, openPublicPosts: openPublicPosts, openMessagesFilter: openMessagesFilter, switchMessagesFilter: switchMessagesFilter), directionHint: nil) }
-    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, enableHeaders: enableHeaders, filter: filter, requestPeerType: requestPeerType, location: location, communityId: communityId, key: key, tagMask: tagMask, interaction: interaction, listInteraction: listInteraction, peerContextAction: peerContextAction, toggleExpandLocalResults: toggleExpandLocalResults, toggleExpandGlobalResults: toggleExpandGlobalResults, searchPeer: searchPeer, searchQuery: searchQuery, searchOptions: searchOptions, messageContextAction: messageContextAction, openClearRecentlyDownloaded: openClearRecentlyDownloaded, toggleAllPaused: toggleAllPaused, openStories: openStories, openPublicPosts: openPublicPosts, openMessagesFilter: openMessagesFilter, switchMessagesFilter: switchMessagesFilter), directionHint: nil) }
+    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, enableHeaders: enableHeaders, filter: filter, requestPeerType: requestPeerType, location: location, communityId: communityId, key: key, usesWegramAppearance: usesWegramAppearance, tagMask: tagMask, interaction: interaction, listInteraction: listInteraction, peerContextAction: peerContextAction, toggleExpandLocalResults: toggleExpandLocalResults, toggleExpandGlobalResults: toggleExpandGlobalResults, searchPeer: searchPeer, searchQuery: searchQuery, searchOptions: searchOptions, messageContextAction: messageContextAction, openClearRecentlyDownloaded: openClearRecentlyDownloaded, toggleAllPaused: toggleAllPaused, openStories: openStories, openPublicPosts: openPublicPosts, openMessagesFilter: openMessagesFilter, switchMessagesFilter: switchMessagesFilter, toggleExpandPeerSection: toggleExpandPeerSection, openHistoryResults: openHistoryResults), directionHint: nil) }
+    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, enableHeaders: enableHeaders, filter: filter, requestPeerType: requestPeerType, location: location, communityId: communityId, key: key, usesWegramAppearance: usesWegramAppearance, tagMask: tagMask, interaction: interaction, listInteraction: listInteraction, peerContextAction: peerContextAction, toggleExpandLocalResults: toggleExpandLocalResults, toggleExpandGlobalResults: toggleExpandGlobalResults, searchPeer: searchPeer, searchQuery: searchQuery, searchOptions: searchOptions, messageContextAction: messageContextAction, openClearRecentlyDownloaded: openClearRecentlyDownloaded, toggleAllPaused: toggleAllPaused, openStories: openStories, openPublicPosts: openPublicPosts, openMessagesFilter: openMessagesFilter, switchMessagesFilter: switchMessagesFilter, toggleExpandPeerSection: toggleExpandPeerSection, openHistoryResults: openHistoryResults), directionHint: nil) }
 
     return ChatListSearchContainerTransition(deletions: deletions, insertions: insertions, updates: updates, displayingResults: displayingResults, isEmpty: isEmpty, isLoading: isLoading, query: searchQuery, approvedGlobalPostQueryState: approvedGlobalPostQueryState, globalSearchStateValue: globalSearchStateValue, animated: animated)
 }
 
 private struct ChatListSearchListPaneNodeState: Equatable {
+    var expandedWegramSections: Set<WegramSearchPeerSection> = []
     var expandLocalSearch: Bool = false
     var expandGlobalSearch: Bool = false
     var deletedMessageIds = Set<EngineMessage.Id>()
@@ -1472,21 +1691,33 @@ public struct ChatListSearchOptions {
     let peer: (EnginePeer.Id, Bool, String)?
     let date: (Int32?, Int32, String)?
     let folder: (Int32, String)?
+    let wegramMessagesOnly: Bool
+
+    init(peer: (EnginePeer.Id, Bool, String)?, date: (Int32?, Int32, String)?, folder: (Int32, String)?, wegramMessagesOnly: Bool = false) {
+        self.peer = peer
+        self.date = date
+        self.folder = folder
+        self.wegramMessagesOnly = wegramMessagesOnly
+    }
+
+    func withUpdatedWegramMessagesOnly(_ value: Bool) -> ChatListSearchOptions {
+        return ChatListSearchOptions(peer: self.peer, date: self.date, folder: self.folder, wegramMessagesOnly: value)
+    }
 
     var isEmpty: Bool {
-        return self.peer == nil && self.date == nil && self.folder == nil
+        return self.peer == nil && self.date == nil && self.folder == nil && !self.wegramMessagesOnly
     }
 
     func withUpdatedPeer(_ peerIdIsGroupAndName: (EnginePeer.Id, Bool, String)?) -> ChatListSearchOptions {
-        return ChatListSearchOptions(peer: peerIdIsGroupAndName, date: self.date, folder: self.folder)
+        return ChatListSearchOptions(peer: peerIdIsGroupAndName, date: self.date, folder: self.folder, wegramMessagesOnly: self.wegramMessagesOnly)
     }
 
     func withUpdatedDate(_ minDateMaxDateAndTitle: (Int32?, Int32, String)?) -> ChatListSearchOptions {
-        return ChatListSearchOptions(peer: self.peer, date: minDateMaxDateAndTitle, folder: self.folder)
+        return ChatListSearchOptions(peer: self.peer, date: minDateMaxDateAndTitle, folder: self.folder, wegramMessagesOnly: self.wegramMessagesOnly)
     }
 
     func withUpdatedFolder(_ folder: (Int32, String)?) -> ChatListSearchOptions {
-        return ChatListSearchOptions(peer: self.peer, date: self.date, folder: folder)
+        return ChatListSearchOptions(peer: self.peer, date: self.date, folder: folder, wegramMessagesOnly: self.wegramMessagesOnly)
     }
 }
 
@@ -1687,6 +1918,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
     private let searchContextsValue = Atomic<[Int: ChatListSearchMessagesContext]>(value: [:])
     var searchCurrentMessages: [EngineMessage]?
     var currentEntries: [ChatListSearchEntry]?
+    private var isWegramMessageOverview = false
 
     private var deletedMessagesDisposable: Disposable?
 
@@ -1765,7 +1997,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
 
     private var refreshGlobalPostSearchStateDisposable: Disposable?
 
-    init(context: AccountContext, animationCache: AnimationCache, animationRenderer: MultiAnimationRenderer, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, interaction: ChatListSearchInteraction, key: ChatListSearchPaneKey, peersFilter: ChatListNodePeersFilter, requestPeerType: [ReplyMarkupButtonRequestPeerType]?, excludedPeerIds: Set<EnginePeer.Id>, location: ChatListControllerLocation, communityId: EnginePeer.Id? = nil, searchQuery: Signal<String?, NoError>, searchOptions: Signal<ChatListSearchOptions?, NoError>, navigationController: NavigationController?, parentController: ViewController?, globalPeerSearchContext: GlobalPeerSearchContext?) {
+    init(context: AccountContext, animationCache: AnimationCache, animationRenderer: MultiAnimationRenderer, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, interaction: ChatListSearchInteraction, key: ChatListSearchPaneKey, usesWegramAppearance: Bool = false, peersFilter: ChatListNodePeersFilter, requestPeerType: [ReplyMarkupButtonRequestPeerType]?, excludedPeerIds: Set<EnginePeer.Id>, location: ChatListControllerLocation, communityId: EnginePeer.Id? = nil, searchQuery: Signal<String?, NoError>, searchOptions: Signal<ChatListSearchOptions?, NoError>, navigationController: NavigationController?, parentController: ViewController?, globalPeerSearchContext: GlobalPeerSearchContext?) {
         self.context = context
         self.animationCache = animationCache
         self.animationRenderer = animationRenderer
@@ -3741,7 +3973,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
 
             var fetchResourceId: (id: String, size: Int64, isFirstInList: Bool)?
             for entry in currentEntries {
-                switch entry {
+                switch entry.representativeMessageEntry {
                 case let .message(m, _, _, _, _, _, _, _, _, resource, _, _, _, _, _):
                     if m.id == message.id {
                         fetchResourceId = resource
@@ -3772,8 +4004,10 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
         listInteraction.preferredStoryHighQuality = context.sharedContext.currentAutomaticMediaDownloadSettings.highQualityStories
 
         let previousSearchItems = Atomic<[ChatListSearchEntry]?>(value: nil)
+        var previousSearchFontSize: PresentationFontSize?
         let previousSearchQuery = Atomic<String?>(value: nil)
         let previousSelectedMessages = Atomic<Set<EngineMessage.Id>?>(value: nil)
+        let previousExpandedWegramSections = Atomic<Set<WegramSearchPeerSection>>(value: [])
         let previousExpandGlobalSearch = Atomic<Bool>(value: false)
         let previousAdsHidden = Atomic<Bool>(value: false)
 
@@ -3840,7 +4074,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
         })
 
 
-        self.searchDisposable.set((foundItems |> mapToSignal { items -> Signal<([ChatListSearchEntry], Bool, String?)?, NoError> in
+        let enrichedFoundItems = foundItems |> mapToSignal { items -> Signal<([ChatListSearchEntry], Bool, String?)?, NoError> in
             guard let (items, isSearching, query) = items else {
                 return .single(nil)
             }
@@ -3910,9 +4144,19 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                 return (mappedItems, isSearching, query)
             }
         }
-        |> deliverOnMainQueue).startStrict(next: { [weak self] foundItems in
+        let contactIds: Signal<Set<EnginePeer.Id>, NoError>
+        if usesWegramAppearance && key == .chats {
+            contactIds = context.engine.data.subscribe(TelegramEngine.EngineData.Item.Contacts.List(includePresences: false))
+            |> map { Set($0.peers.map(\.id)) }
+            |> distinctUntilChanged
+        } else {
+            contactIds = .single([])
+        }
+        self.searchDisposable.set((combineLatest(enrichedFoundItems, contactIds)
+        |> deliverOnMainQueue).startStrict(next: { [weak self] foundItems, contactIds in
             if let strongSelf = self {
                 let previousSelectedMessageIds = previousSelectedMessages.swap(strongSelf.selectedMessages)
+                let previousExpandedWegramSections = previousExpandedWegramSections.swap(strongSelf.searchStateValue.expandedWegramSections)
                 let previousExpandGlobalSearch = previousExpandGlobalSearch.swap(strongSelf.searchStateValue.expandGlobalSearch)
                 let previousAdsHidden = previousAdsHidden.swap(strongSelf.adsHidden)
 
@@ -3949,6 +4193,26 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                     }
                 }
 
+                if usesWegramAppearance && strongSelf.key == .chats && strongSelf.searchOptionsValue?.wegramMessagesOnly == true {
+                    entriesAndFlags = entriesAndFlags.map(wegramSearchMessageResultsOnly)
+                }
+                let allMessageEntries = entriesAndFlags ?? []
+
+                if usesWegramAppearance && strongSelf.key == .chats, let entries = entriesAndFlags {
+                    entriesAndFlags = wegramSearchEntriesWithPeerSections(entries, presentationData: strongSelf.presentationData, contactIds: contactIds, expandedSections: strongSelf.searchStateValue.expandedWegramSections)
+                }
+
+                strongSelf.isWegramMessageOverview = usesWegramAppearance && strongSelf.key == .chats && tagMask == nil && strongSelf.communityId == nil && strongSelf.selectedMessages == nil && strongSelf.searchOptionsValue?.peer == nil && strongSelf.searchOptionsValue?.date == nil && strongSelf.searchOptionsValue?.wegramMessagesOnly != true
+                if case .chatList(.root) = location {} else { strongSelf.isWegramMessageOverview = false }
+                if strongSelf.isWegramMessageOverview, let entries = entriesAndFlags {
+                    let overview = wegramSearchMessageOverview(entries, presentationData: strongSelf.presentationData)
+                    entriesAndFlags = overview
+                    strongSelf.isWegramMessageOverview = overview.contains { if case .wegramMessageGroup = $0 { return true }; return false }
+                }
+
+                // Peer entries omit font size from equality, so a font-only change needs a row update.
+                let fontSizeChanged = previousSearchFontSize != strongSelf.presentationData.listsFontSize
+                previousSearchFontSize = strongSelf.presentationData.listsFontSize
                 let previousEntries = previousSearchItems.swap(entriesAndFlags)
                 let previousQuery = previousSearchQuery.swap(currentQuery)
                 let newEntries = entriesAndFlags ?? []
@@ -3957,9 +4221,10 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                 let expandGlobalSearchChanged = previousExpandGlobalSearch != strongSelf.searchStateValue.expandGlobalSearch
                 let adsHiddenChanged = previousAdsHidden != strongSelf.adsHidden
 
-                let animated = selectionChanged || expandGlobalSearchChanged || adsHiddenChanged
+                let expandLocalSearchChanged = usesWegramAppearance && strongSelf.key == .chats && previousExpandedWegramSections != strongSelf.searchStateValue.expandedWegramSections
+                let animated = selectionChanged || expandLocalSearchChanged || expandGlobalSearchChanged || adsHiddenChanged
                 let firstTime = previousEntries == nil || previousQuery != currentQuery
-                var transition = chatListSearchContainerPreparedTransition(from: previousEntries ?? [], to: newEntries, displayingResults: entriesAndFlags != nil, isEmpty: !isSearching && (entriesAndFlags?.isEmpty ?? false), isLoading: isSearching, animated: animated, context: context, presentationData: strongSelf.presentationData, enableHeaders: true, filter: peersFilter, requestPeerType: requestPeerType, location: location, communityId: strongSelf.communityId, key: strongSelf.key, tagMask: tagMask, interaction: chatListInteraction, listInteraction: listInteraction, peerContextAction: { message, node, rect, gesture, location in
+                var transition = chatListSearchContainerPreparedTransition(from: previousEntries ?? [], to: newEntries, displayingResults: entriesAndFlags != nil, isEmpty: !isSearching && (entriesAndFlags?.isEmpty ?? false), isLoading: isSearching, animated: animated, context: context, presentationData: strongSelf.presentationData, enableHeaders: true, filter: peersFilter, requestPeerType: requestPeerType, location: location, communityId: strongSelf.communityId, key: strongSelf.key, usesWegramAppearance: usesWegramAppearance, forceUpdateAll: fontSizeChanged || (usesWegramAppearance && strongSelf.key == .chats && previousQuery != currentQuery), tagMask: tagMask, interaction: chatListInteraction, listInteraction: listInteraction, peerContextAction: { message, node, rect, gesture, location in
                     interaction.peerContextAction?(message, node, rect, gesture, location)
                 }, toggleExpandLocalResults: {
                     guard let strongSelf = self else {
@@ -3980,6 +4245,8 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                         return state
                     }
                 }, searchPeer: { peer in
+                    interaction.dismissInput()
+                    interaction.searchInPeer(peer)
                 },
                 searchQuery: strongSelf.searchQueryValue,
                 approvedGlobalPostQueryState: strongSelf.approvedGlobalPostQueryStateValue,
@@ -4064,6 +4331,16 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                         return
                     }
                     strongSelf.searchScopePromise.set(.everywhere)
+                }, toggleExpandPeerSection: { [weak self] section in
+                    self?.updateState { state in
+                        var state = state
+                        if !state.expandedWegramSections.insert(section).inserted {
+                            state.expandedWegramSections.remove(section)
+                        }
+                        return state
+                    }
+                }, openHistoryResults: {
+                    interaction.openHistoryResults()
                 })
                 strongSelf.currentEntries = newEntries
                 if strongSelf.key == .downloads {
@@ -4074,7 +4351,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                 strongSelf.enqueueTransition(transition, firstTime: firstTime)
 
                 var messages: [EngineMessage] = []
-                for entry in newEntries {
+                for entry in allMessageEntries {
                     if case let .message(message, _, _, _, _, _, _, _, _, _, _, _, _, _, _) = entry {
                         messages.append(message)
                     }
@@ -4084,6 +4361,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
         }))
 
         let previousRecentItemsValue = Atomic<RecentItems?>(value: nil)
+        var previousRecentFontSize: PresentationFontSize?
         let hasRecentPeers: Signal<Bool, NoError>
         if case .channels = key {
             hasRecentPeers = .single(false)
@@ -4552,7 +4830,8 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                 let previousRecentItems = previousRecentItemsValue.swap(recentItems)
 
                 var firstTime = previousRecentItems == nil
-                var forceUpdateAll = false
+                var forceUpdateAll = previousRecentFontSize != presentationData.fontSize
+                previousRecentFontSize = presentationData.fontSize
                 if let previousRecentItems {
                     if previousRecentItems.entries.count < recentItems.entries.count {
                         firstTime = true
@@ -4566,7 +4845,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
                     }
                 }
 
-                let transition = chatListSearchContainerPreparedRecentTransition(from: previousRecentItems?.entries ?? [], to: recentItems.entries, forceUpdateAll: forceUpdateAll, context: context, presentationData: presentationData, filter: peersFilter, key: key, peerSelected: { peer, threadId, isRecommended, action in
+                let transition = chatListSearchContainerPreparedRecentTransition(from: previousRecentItems?.entries ?? [], to: recentItems.entries, forceUpdateAll: forceUpdateAll, context: context, presentationData: presentationData, filter: peersFilter, key: key, usesWegramAppearance: usesWegramAppearance, peerSelected: { peer, threadId, isRecommended, action in
                     guard let self else {
                         return
                     }
@@ -4755,7 +5034,8 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
             interaction.dismissInput()
         }
 
-        self.listNode?.visibleBottomContentOffsetChanged = { offset in
+        self.listNode?.visibleBottomContentOffsetChanged = { [weak self] offset in
+            guard self?.isWegramMessageOverview != true else { return }
             guard case let .known(value) = offset, value < 160.0 else {
                 return
             }
@@ -6031,7 +6311,7 @@ public final class ChatListSearchShimmerNode: ASDisplayNode {
                         return nil
                     case .links:
                         var media: [EngineMedia] = []
-                        media.append(.webpage(TelegramMediaWebpage(webpageId: EngineMedia.Id(namespace: 0, id: 0), content: .Loaded(TelegramMediaWebpageLoadedContent(url: "https://telegram.org", displayUrl: "https://telegram.org", hash: 0, type: nil, websiteName: "Telegram", title: "Telegram Telegram", text: "Telegram", embedUrl: nil, embedType: nil, embedSize: nil, duration: nil, author: nil, isMediaLargeByDefault: nil, imageIsVideoCover: false, image: nil, file: nil, story: nil, attributes: [], instantPage: nil)))))
+                        media.append(.webpage(TelegramMediaWebpage(webpageId: EngineMedia.Id(namespace: 0, id: 0), content: .Loaded(TelegramMediaWebpageLoadedContent(url: "https://telegram.org", displayUrl: "https://telegram.org", hash: 0, type: nil, websiteName: "WeGram", title: "WeGram WeGram", text: "WeGram", embedUrl: nil, embedType: nil, embedSize: nil, duration: nil, author: nil, isMediaLargeByDefault: nil, imageIsVideoCover: false, image: nil, file: nil, story: nil, attributes: [], instantPage: nil)))))
                         let message = EngineMessage(
                             stableId: 0,
                             stableVersion: 0,

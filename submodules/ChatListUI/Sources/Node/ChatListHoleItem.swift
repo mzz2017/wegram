@@ -272,7 +272,8 @@ class ChatListSearchEmptyFooterItemNode: ListViewItemNode {
             
             contentHeight += bottomInset
             
-            let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: contentHeight), insets: UIEdgeInsets())
+            let headerHeight = item.header?.height ?? 0
+            let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: contentHeight), insets: UIEdgeInsets(top: headerHeight > 28 ? headerHeight : 0, left: 0, bottom: 0, right: 0))
             
             return (layout, { [weak self] in
                 guard let self else {

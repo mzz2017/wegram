@@ -80,6 +80,7 @@ public final class ChatPanelInterfaceInteraction {
     public let blockMessageAuthor: (EngineRawMessage, ContextControllerProtocol?) -> Void
     public let deleteMessages: ([EngineRawMessage], ContextControllerProtocol?, @escaping (ContextMenuActionResult) -> Void) -> Void
     public let forwardSelectedMessages: () -> Void
+    public let saveSelectedMessages: (() -> Void)?
     public let forwardCurrentForwardMessages: () -> Void
     public let forwardMessages: ([EngineRawMessage]) -> Void
     public let updateForwardOptionsState: ((ChatInterfaceForwardOptionsState) -> ChatInterfaceForwardOptionsState) -> Void
@@ -335,7 +336,8 @@ public final class ChatPanelInterfaceInteraction {
         updateDisplayHistoryFilterAsList: @escaping (Bool) -> Void,
         requestLayout: @escaping (ContainedViewLayoutTransition) -> Void,
         chatController: @escaping () -> ViewController?,
-        statuses: ChatPanelInterfaceInteractionStatuses?
+        statuses: ChatPanelInterfaceInteractionStatuses?,
+        saveSelectedMessages: (() -> Void)? = nil
     ) {
         self.setupReplyMessage = setupReplyMessage
         self.setupEditMessage = setupEditMessage
@@ -347,6 +349,7 @@ public final class ChatPanelInterfaceInteraction {
         self.blockMessageAuthor = blockMessageAuthor
         self.deleteMessages = deleteMessages
         self.forwardSelectedMessages = forwardSelectedMessages
+        self.saveSelectedMessages = saveSelectedMessages
         self.forwardCurrentForwardMessages = forwardCurrentForwardMessages
         self.forwardMessages = forwardMessages
         self.updateForwardOptionsState = updateForwardOptionsState

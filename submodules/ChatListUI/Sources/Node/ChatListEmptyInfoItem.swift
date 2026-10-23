@@ -5,6 +5,7 @@ import AsyncDisplayKit
 import Display
 import SwiftSignalKit
 import TelegramPresentationData
+import TelegramUIPreferences
 import ListSectionHeaderNode
 import AppBundle
 import AnimatedStickerNode
@@ -18,13 +19,17 @@ class ChatListEmptyInfoItem: ListViewItem {
 
     let theme: PresentationTheme
     let strings: PresentationStrings
+    let fontSize: PresentationFontSize
+    let usesWegramLayout: Bool
     
     let selectable: Bool = false
     
-    init(theme: PresentationTheme, strings: PresentationStrings, lottieSettings: LottieRenderingSettings) {
+    init(theme: PresentationTheme, strings: PresentationStrings, lottieSettings: LottieRenderingSettings, fontSize: PresentationFontSize = .regular, usesWegramLayout: Bool = false) {
         self.lottieSettings = lottieSettings
         self.theme = theme
         self.strings = strings
+        self.fontSize = fontSize
+        self.usesWegramLayout = usesWegramLayout
     }
     
     func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
@@ -90,7 +95,7 @@ class ChatListEmptyInfoItemNode: ListViewItemNode {
     private var visibilityStatus: Bool = false {
         didSet {
             if self.visibilityStatus != oldValue {
-                self.animationNode.visibility = self.visibilityStatus
+                self.animationNode.visibility = self.visibilityStatus && self.item?.usesWegramLayout != true
             }
         }
     }
@@ -121,12 +126,12 @@ class ChatListEmptyInfoItemNode: ListViewItemNode {
         return { [weak self] item, params, last in
             let baseWidth = params.width - params.leftInset - params.rightInset
             
-            let topInset: CGFloat = 8.0
-            let textSpacing: CGFloat = 27.0
-            let bottomInset: CGFloat = 24.0
-            let animationHeight: CGFloat = 140.0
+            let topInset: CGFloat = item.usesWegramLayout ? 32 : 8
+            let textSpacing: CGFloat = item.usesWegramLayout ? 0 : 27
+            let bottomInset: CGFloat = item.usesWegramLayout ? 32 : 24
+            let animationHeight: CGFloat = item.usesWegramLayout ? 0 : 140
             
-            let string = NSMutableAttributedString(string: item.strings.ChatList_EmptyChatList, font: Font.semibold(17.0), textColor: item.theme.list.itemPrimaryTextColor)
+            let string = NSMutableAttributedString(string: item.strings.ChatList_EmptyChatList, font: item.usesWegramLayout ? Font.regular(item.fontSize.itemListBaseFontSize) : Font.semibold(17), textColor: item.usesWegramLayout ? item.theme.list.itemSecondaryTextColor : item.theme.list.itemPrimaryTextColor)
             
             let textLayout = makeTextLayout(TextNodeLayoutArguments(attributedString: string, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: baseWidth, height: .greatestFiniteMagnitude), alignment: .center))
             
@@ -141,14 +146,17 @@ class ChatListEmptyInfoItemNode: ListViewItemNode {
                 var topOffset: CGFloat = topInset
                 
                 let animationFrame = CGRect(origin: CGPoint(x: floor((params.width - animationHeight) * 0.5), y: topOffset), size: CGSize(width: animationHeight, height: animationHeight))
-                if strongSelf.animationNode.bounds.isEmpty {
+                strongSelf.animationNode.isHidden = item.usesWegramLayout
+                strongSelf.animationNode.visibility = !item.usesWegramLayout && strongSelf.visibilityStatus
+                if !item.usesWegramLayout && strongSelf.animationNode.bounds.isEmpty {
                     strongSelf.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: "ChatListEmpty"), width: 248, height: 248, playbackMode: .once, mode: .direct(cachePathPrefix: nil))
                 }
                 strongSelf.animationNode.frame = animationFrame
                 topOffset += animationHeight + textSpacing
                 
                 let _ = textLayout.1()
-                strongSelf.textNode.frame = CGRect(origin: CGPoint(x: floor((params.width - textLayout.0.size.width) * 0.5), y: topOffset), size: textLayout.0.size)
+                let originX = item.usesWegramLayout ? params.leftInset + floor((baseWidth - textLayout.0.size.width) * 0.5) : floor((params.width - textLayout.0.size.width) * 0.5)
+                strongSelf.textNode.frame = CGRect(origin: CGPoint(x: originX, y: topOffset), size: textLayout.0.size)
                 
                 strongSelf.contentSize = layout.contentSize
                 strongSelf.insets = layout.insets

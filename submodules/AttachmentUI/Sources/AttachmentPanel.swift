@@ -1093,6 +1093,18 @@ final class AttachmentPanel: ASDisplayNode, ASScrollViewDelegate, ASGestureRecog
     private var selectionOverrideIndex: Int?
     private(set) var isSelecting: Bool = false
     private var selectionCount: Int = 0
+    private var restoreNativeInputPanel = false
+    var customBottomPanel: AttachmentCustomBottomPanel? {
+        didSet {
+            if oldValue === self.customBottomPanel { return }
+            oldValue?.removeFromSuperview()
+            if oldValue != nil && self.customBottomPanel == nil { self.restoreNativeInputPanel = true }
+            if let panel = self.customBottomPanel {
+                self.view.addSubview(panel)
+                panel.updateLoadingProgress(self.loadingProgress)
+            }
+        }
+    }
 
     private var _isButtonVisible: Bool = false
     var isButtonVisible: Bool {
@@ -1916,6 +1928,7 @@ final class AttachmentPanel: ASDisplayNode, ASScrollViewDelegate, ASGestureRecog
     }
 
     func updateBackgroundAlpha(_ alpha: CGFloat, transition: ContainedViewLayoutTransition) {
+        if let panel = self.customBottomPanel { transition.updateAlpha(layer: panel.layer, alpha: alpha) }
         transition.updateAlpha(node: self.separatorNode, alpha: alpha)
         transition.updateAlpha(node: self.backgroundNode, alpha: alpha)
     }
@@ -2373,6 +2386,7 @@ final class AttachmentPanel: ASDisplayNode, ASScrollViewDelegate, ASGestureRecog
 
     func updateLoadingProgress(_ progress: CGFloat?) {
         self.loadingProgress = progress
+        self.customBottomPanel?.updateLoadingProgress(progress)
     }
 
     func updateMainButtonState(_ mainButtonState: AttachmentMainButtonState?) {
@@ -2553,6 +2567,17 @@ final class AttachmentPanel: ASDisplayNode, ASScrollViewDelegate, ASGestureRecog
         self.isSelecting = isSelecting
 
         self.scrollNode.isUserInteractionEnabled = !isSelecting
+        self.containerNode.isHidden = self.customBottomPanel != nil
+        self.mainButtonNode.isHidden = self.customBottomPanel != nil
+        self.secondaryButtonNode.isHidden = self.customBottomPanel != nil
+        self.textInputPanelNode?.isHidden = self.customBottomPanel != nil
+        self.progressNode?.isHidden = self.customBottomPanel != nil
+        if let panel = self.customBottomPanel {
+            self.textInputPanelNode?.ensureUnfocused()
+            let height = panel.updateLayout(width: layout.size.width, leftInset: layout.safeInsets.left, rightInset: layout.safeInsets.right, bottomInset: max(layout.safeInsets.bottom, layout.intrinsicInsets.bottom, layout.inputHeight ?? 0))
+            panel.frame = CGRect(x: 0, y: 0, width: layout.size.width, height: height)
+            return (height, 0)
+        }
 
         // A main button that keeps the tab row (AttachmentMainButtonState.keepsTabRow) is laid out above the
         // tabs rather than replacing them, so for the rest of the layout it does not count as a visible button.
@@ -2597,6 +2622,10 @@ final class AttachmentPanel: ASDisplayNode, ASScrollViewDelegate, ASGestureRecog
 
         if isSelecting {
             self.loadTextNodeIfNeeded()
+            if self.restoreNativeInputPanel {
+                self.textInputPanelNode?.alpha = 1
+                self.restoreNativeInputPanel = false
+            }
         } else {
             self.textInputPanelNode?.ensureUnfocused()
         }

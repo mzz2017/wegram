@@ -1,5 +1,7 @@
 load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 
+exports_files(["Sources/WegramPhotoToolbarView.swift"], visibility = ["//visibility:public"])
+
 swift_library(
     name = "AttachmentUI",
     module_name = "AttachmentUI",

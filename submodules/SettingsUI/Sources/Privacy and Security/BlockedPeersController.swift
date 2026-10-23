@@ -231,25 +231,7 @@ public func blockedPeersController(context: AccountContext, blockedPeersContext:
             }
         }
     }, addPeer: {
-        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-        let controller = context.sharedContext.makePeerSelectionController(PeerSelectionControllerParams(context: context, filter: [.onlyPrivateChats, .excludeSavedMessages, .removeSearchHeader, .excludeRecent, .doNotSearchMessages], title: presentationData.strings.BlockedUsers_SelectUserTitle))
-        controller.peerSelected = { [weak controller] peer, _ in
-            let peerId = peer.id
-            
-            guard let strongController = controller else {
-                return
-            }
-            strongController.inProgress = true
-            removePeerDisposable.set((blockedPeersContext.add(peerId: peerId)
-            |> deliverOnMainQueue).start(completed: {
-                guard let strongController = controller else {
-                    return
-                }
-                strongController.inProgress = false
-                strongController.dismiss()
-            }))
-        }
-        pushControllerImpl?(controller)
+        pushControllerImpl?(blockedPeerSelectionController(context: context, blockedPeersContext: blockedPeersContext, actionDisposable: removePeerDisposable))
     }, removePeer: { memberId in
         updateState {
             return $0.withUpdatedRemovingPeerId(memberId)

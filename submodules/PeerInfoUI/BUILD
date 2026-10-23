@@ -17,6 +17,8 @@ swift_library(
         "//submodules/TelegramCore:TelegramCore",
         "//submodules/TelegramPresentationData:TelegramPresentationData",
         "//submodules/AccountContext:AccountContext",
+        "//submodules/AvatarNode",
+        "//submodules/TelegramUI/Components/EmojiStatusComponent",
         "//submodules/ItemListUI:ItemListUI",
         "//submodules/AlertUI:AlertUI",
         "//submodules/PresentationDataUtils:PresentationDataUtils",
@@ -92,3 +94,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramAdminGridView.swift"])

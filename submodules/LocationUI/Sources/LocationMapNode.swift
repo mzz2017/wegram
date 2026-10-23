@@ -80,7 +80,13 @@ private class LocationMapView: MKMapView, UIGestureRecognizerDelegate {
             guard let view = self.view(for: annotation as! MKAnnotation) else {
                 continue
             }
-            if view.frame.insetBy(dx: -16.0, dy: -16.0).contains(point) {
+            let frame: CGRect
+            if let pin = view as? LocationPinAnnotationView, pin.usesWegramAppearance {
+                frame = pin.interactionFrame(in: self)
+            } else {
+                frame = view.frame.insetBy(dx: -16.0, dy: -16.0)
+            }
+            if frame.contains(point) {
                 self.allowSelectionChanges = true
                 return true
             }
@@ -230,6 +236,8 @@ public final class LocationMapNode: ASDisplayNode, MKMapViewDelegateTarget {
     private let locationPromise = Promise<CLLocation?>(nil)
     
     private let pickerAnnotationContainerView: PickerAnnotationContainerView
+    private let usesWegramPicker: Bool
+    private let usesWegramDetailPin: Bool
     private weak var userLocationAnnotationView: MKAnnotationView?
     private var headingArrowView: UIImageView?
     private var compassView: MKCompassButton?
@@ -331,7 +339,13 @@ public final class LocationMapNode: ASDisplayNode, MKMapViewDelegateTarget {
         }
     }
         
-    override public init() {
+    override public convenience init() {
+        self.init(usesWegramPicker: false)
+    }
+
+    public init(usesWegramPicker: Bool, usesWegramDetailPin: Bool = false) {
+        self.usesWegramPicker = usesWegramPicker
+        self.usesWegramDetailPin = usesWegramDetailPin
         self.pickerAnnotationContainerView = PickerAnnotationContainerView()
         self.pickerAnnotationContainerView.isHidden = true
         
@@ -379,12 +393,12 @@ public final class LocationMapNode: ASDisplayNode, MKMapViewDelegateTarget {
         mapView.showsUserLocation = true
         mapView.pointOfInterestFilter = .excludingAll
         mapView.showsCompass = false
-        mapView.customHitTest = { [weak self] point in
-            guard let strongSelf = self else {
+        mapView.customHitTest = { [weak self, weak mapView] point in
+            guard let strongSelf = self, let mapView else {
                 return false
             }
             
-            if let annotationView = strongSelf.customUserLocationAnnotationView, let annotationRect = annotationView.superview?.convert(annotationView.frame.insetBy(dx: -16.0, dy: -16.0), to: strongSelf.mapView), annotationRect.contains(point) {
+            if let annotationView = strongSelf.customUserLocationAnnotationView, annotationView.interactionFrame(in: mapView).contains(point) {
                 strongSelf.userLocationAnnotationSelected?()
                 return true
             }
@@ -560,10 +574,12 @@ public final class LocationMapNode: ASDisplayNode, MKMapViewDelegateTarget {
         }
         
         if let annotation = annotation as? LocationPinAnnotation {
-            var view = mapView.dequeueReusableAnnotationView(withIdentifier: locationPinReuseIdentifier)
+            let wegramPin = self.usesWegramPicker || (self.usesWegramDetailPin && annotation.forcedSelection && annotation.peer == nil)
+            var view = mapView.dequeueReusableAnnotationView(withIdentifier: wegramPin ? wegramLocationPinReuseIdentifier : locationPinReuseIdentifier)
             if view == nil {
-                view = LocationPinAnnotationView(annotation: annotation)
+                view = LocationPinAnnotationView(annotation: annotation, usesWegramAppearance: wegramPin)
             }
+            if wegramPin { view?.annotation = annotation }
             return view
         }
         
@@ -704,7 +720,7 @@ public final class LocationMapNode: ASDisplayNode, MKMapViewDelegateTarget {
     public var hasPickerAnnotation: Bool = false {
         didSet {
             if self.hasPickerAnnotation, let annotation = self.userLocationAnnotation {
-                let pickerAnnotationView = LocationPinAnnotationView(annotation: annotation)
+                let pickerAnnotationView = LocationPinAnnotationView(annotation: annotation, usesWegramAppearance: self.usesWegramPicker)
                 pickerAnnotationView.center = CGPoint(x: self.pickerAnnotationContainerView.frame.width / 2.0, y: self.pickerAnnotationContainerView.frame.height / 2.0 + 16.0)
                 self.pickerAnnotationContainerView.addSubview(pickerAnnotationView)
                 self.pickerAnnotationView = pickerAnnotationView
@@ -739,7 +755,7 @@ public final class LocationMapNode: ASDisplayNode, MKMapViewDelegateTarget {
             if let annotation = self.userLocationAnnotation {
                 self.customUserLocationAnnotationView?.removeFromSuperview()
                 
-                let annotationView = LocationPinAnnotationView(annotation: annotation)
+                let annotationView = LocationPinAnnotationView(annotation: annotation, usesWegramAppearance: self.usesWegramPicker)
                 annotationView.frame = annotationView.frame.offsetBy(dx: 21.0, dy: 22.0)
                 if let parentView = self.userLocationAnnotationView {
                     parentView.addSubview(annotationView)
@@ -911,7 +927,7 @@ public final class LocationMapNode: ASDisplayNode, MKMapViewDelegateTarget {
         self.proximityDimView.frame = CGRect(origin: CGPoint(x: 0.0, y: self.topPadding + self.mapOffset), size: size)
         self.pickerAnnotationContainerView.frame = CGRect(x: 0.0, y: floorToScreenPixels((size.height - size.width) / 2.0), width: size.width, height: size.width)
         if let pickerAnnotationView = self.pickerAnnotationView {
-            pickerAnnotationView.center = CGPoint(x: self.pickerAnnotationContainerView.frame.width / 2.0, y: self.pickerAnnotationContainerView.frame.height / 2.0)
+            pickerAnnotationView.center = self.usesWegramPicker ? WegramLocationPinVisual.pickerCenter(size: self.pickerAnnotationContainerView.bounds.size, coordinateOffset: pinOffset) : CGPoint(x: self.pickerAnnotationContainerView.frame.width / 2.0, y: self.pickerAnnotationContainerView.frame.height / 2.0)
         }
         
         if let compassView = self.compassView {

@@ -24,6 +24,7 @@ final class AuthorizationSequenceSignUpController: ViewController {
     
     private let moreButtonNode: MoreButtonNode
     
+    private let usesWegramAppearance: Bool
     private let sharedContext: SharedAccountContext
     private let presentationData: PresentationData
     private let back: () -> Void
@@ -48,7 +49,8 @@ final class AuthorizationSequenceSignUpController: ViewController {
         }
     }
     
-    init(sharedContext: SharedAccountContext, presentationData: PresentationData, back: @escaping () -> Void, displayCancel: Bool) {
+    init(sharedContext: SharedAccountContext, presentationData: PresentationData, back: @escaping () -> Void, displayCancel: Bool, usesWegramAppearance: Bool = false) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.sharedContext = sharedContext
         self.presentationData = presentationData
         self.back = back
@@ -56,7 +58,7 @@ final class AuthorizationSequenceSignUpController: ViewController {
         self.moreButtonNode = MoreButtonNode(theme: self.presentationData.theme, encircled: false, navigation: true)
         self.moreButtonNode.iconNode.enqueueState(.more, animated: false)
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: AuthorizationSequenceController.navigationBarTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: usesWegramAppearance ? NavigationBarTheme(wegramTheme: presentationData.theme) : AuthorizationSequenceController.navigationBarTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
         
         self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
         
@@ -71,10 +73,7 @@ final class AuthorizationSequenceSignUpController: ViewController {
             guard let strongSelf = self else {
                 return
             }
-            strongSelf.present(textAlertController(sharedContext: strongSelf.sharedContext, title: nil, text: presentationData.strings.Login_CancelSignUpConfirmation, actions: [TextAlertAction(type: .genericAction, title: presentationData.strings.Login_CancelPhoneVerificationContinue, action: {
-            }), TextAlertAction(type: .defaultAction, title: presentationData.strings.Login_CancelPhoneVerificationStop, action: {
-                back()
-            })]), in: .window(.root))
+            strongSelf.cancelPressed()
         }
         
         if displayCancel {
@@ -95,10 +94,17 @@ final class AuthorizationSequenceSignUpController: ViewController {
     }
     
     @objc private func cancelPressed() {
-        self.present(textAlertController(sharedContext: self.sharedContext, title: nil, text: self.presentationData.strings.Login_CancelSignUpConfirmation, actions: [TextAlertAction(type: .genericAction, title: self.presentationData.strings.Login_CancelPhoneVerificationContinue, action: {
+        let actions = [TextAlertAction(type: .genericAction, title: self.presentationData.strings.Login_CancelPhoneVerificationContinue, action: {
         }), TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Login_CancelPhoneVerificationStop, action: { [weak self] in
             self?.back()
-        })]), in: .window(.root))
+        })]
+        let controller: ViewController
+        if self.usesWegramAppearance {
+            controller = wegramAuthorizationConfirmationController(updatedPresentationData: (initial: self.presentationData, signal: self.sharedContext.presentationData), text: self.presentationData.strings.Login_CancelSignUpConfirmation, actions: actions)
+        } else {
+            controller = textAlertController(sharedContext: self.sharedContext, title: nil, text: self.presentationData.strings.Login_CancelSignUpConfirmation, actions: actions)
+        }
+        self.present(controller, in: .window(.root))
     }
     
     @objc private func moreButtonPressed() {
@@ -142,6 +148,10 @@ final class AuthorizationSequenceSignUpController: ViewController {
     }
     
     func updateNavigationItems() {
+        if self.usesWegramAppearance {
+            self.navigationItem.rightBarButtonItem = UIBarButtonItem(customDisplayNode: self.moreButtonNode)
+            return
+        }
         guard let layout = self.validLayout, layout.size.width < 360.0 else {
             return
         }
@@ -158,7 +168,7 @@ final class AuthorizationSequenceSignUpController: ViewController {
         let currentAvatarMixin = Atomic<NSObject?>(value: nil)
         
         let theme = self.presentationData.theme
-        self.displayNode = AuthorizationSequenceSignUpControllerNode(theme: theme, strings: self.presentationData.strings, addPhoto: { [weak self] in
+        self.displayNode = AuthorizationSequenceSignUpControllerNode(theme: theme, strings: self.presentationData.strings, usesWegramAppearance: self.usesWegramAppearance, addPhoto: { [weak self] in
             presentLegacyAvatarPicker(holder: currentAvatarMixin, signup: true, theme: theme, present: { c, a in
                 self?.view.endEditing(true)
                 self?.present(c, in: .window(.root), with: a)

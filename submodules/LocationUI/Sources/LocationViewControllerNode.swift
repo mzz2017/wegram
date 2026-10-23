@@ -287,6 +287,16 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
     private let topEdgeEffectView = EdgeEffectView()
     private let buttons = ComponentView<Empty>()
     private let title = ComponentView<Empty>()
+    private let wegramNavigation = WegramLocationNavigation()
+    private weak var wegramMoreSheet: ActionSheetController?
+    private let wegramDetailPanel = WegramLocationDetailPanel()
+    private let wegramDetailControls = WegramLocationControls()
+    private var wegramDetailsExpanded = false
+    private var wegramInfo: (TelegramMediaMap, String?, Double?, ExpectedTravelTime, ExpectedTravelTime)?
+    private var usesWegramDetail: Bool { return self.usesWegramNavigation && !self.wegramDetailsExpanded }
+    private var usesWegramNavigation: Bool {
+        return !self.isPreview && getLocation(from: self.subject)?.liveBroadcastingTimeout == nil && getLocation(from: self.subject) != nil
+    }
     
     private let listNode: ListView
     let backgroundView = GlassBackgroundView()
@@ -351,11 +361,37 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
             },
             weatherPressed: {
                 weatherPressedImpl?()
-            }
+            },
+            usesWegramDetailPin: !isPreview && getLocation(from: subject)?.liveBroadcastingTimeout == nil && getLocation(from: subject) != nil
         )
     
         super.init()
         
+        self.wegramNavigation.back = { [weak self] in
+            guard let self, self.controller?.canOpenWegramOptions == true else { return }
+            if self.wegramDetailsExpanded {
+                self.setWegramDetailsExpanded(false)
+            } else {
+                self.controller?.dismiss()
+            }
+        }
+        self.wegramDetailControls.locate = { [weak self] in
+            guard let self, self.controller?.canOpenWegramOptions == true, self.usesWegramDetail else { return }
+            self.interaction.toggleTrackingMode()
+        }
+        self.wegramDetailControls.more = { [weak self] in self?.presentWegramMore() }
+        self.wegramDetailPanel.action = { [weak self] action in
+            guard let self, self.usesWegramDetail, self.view.window != nil, self.controller?.canOpenWegramOptions == true, let location = getLocation(from: self.subject) else { return }
+            switch action {
+            case .navigate, .driving: self.interaction.requestDirections(location, nil, .driving)
+            case .walking: self.interaction.requestDirections(location, nil, .walking)
+            case .taxi: self.controller?.openWegramTaxi()
+            case .save: self.controller?.saveWegramLocation()
+            case .more: self.controller?.presentWegramLocationShare()
+            case .details: self.setWegramDetailsExpanded(true)
+            }
+        }
+        self.wegramNavigation.more = { [weak self] in self?.presentWegramMore() }
         self.backgroundColor = self.presentationData.theme.list.plainBackgroundColor
         
         self.addSubnode(self.headerNode)
@@ -489,6 +525,7 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
                     let subjectLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
                     let distance = userLocation.flatMap { subjectLocation.distance(from: $0) }
                     
+                    strongSelf.wegramInfo = (location, address, distance, eta.0, eta.1)
                     entries.append(.info(presentationData.theme, location, address, distance, eta.0, eta.1, true))
                     
                     annotations.append(LocationPinAnnotation(context: context, theme: presentationData.theme, location: location, queryId: nil, resultId: nil, forcedSelection: true))
@@ -691,7 +728,7 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
                 
                 strongSelf.headerNode.updateState(mapMode: state.mapMode, trackingMode: state.trackingMode, displayingMapModeOptions: state.displayingMapModeOptions, displayingPlacesButton: false, proximityNotification: proximityNotification, animated: true)
                 
-                if let proximityNotification = proximityNotification, !proximityNotification && !strongSelf.displayedProximityAlertTooltip {
+                if let proximityNotification = proximityNotification, !proximityNotification && !strongSelf.displayedProximityAlertTooltip && !strongSelf.usesWegramDetail {
                     strongSelf.displayedProximityAlertTooltip = true
                     
                     let _ = (ApplicationSpecificNotice.getLocationProximityAlertTip(accountManager: context.sharedContext.accountManager)
@@ -722,6 +759,10 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
                 }
                 strongSelf.headerNode.mapNode.trackingMode = state.trackingMode
                 
+                if strongSelf.usesWegramDetail {
+                    annotations.removeAll { !$0.forcedSelection }
+                    userAnnotation = nil
+                }
                 let previousAnnotations = previousAnnotations.swap(annotations)
                 let previousUserAnnotation = previousUserAnnotation.swap(userAnnotation)
                 if (userAnnotation == nil) != (previousUserAnnotation == nil) {
@@ -754,6 +795,9 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
                     rightBarButtonAction = .share
                 }
                 strongSelf.rightBarButtonAction = rightBarButtonAction
+                if strongSelf.usesWegramNavigation, let (layout, navigationBarHeight) = strongSelf.validLayout {
+                    strongSelf.containerLayoutUpdated(layout, navigationHeight: navigationBarHeight, transition: .immediate)
+                }
                 
                 if let (layout, navigationBarHeight) = strongSelf.validLayout {
                     var updateLayout = false
@@ -771,7 +815,7 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
         
         if !isPreview {
             self.listNode.updateFloatingHeaderOffset = { [weak self] offset, listTransition in
-                guard let self, self.listNode.scrollEnabled else {
+                guard let self, self.listNode.scrollEnabled, !self.usesWegramDetail else {
                     return
                 }
                 self.listOffset = max(0.0, offset)
@@ -888,8 +932,33 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
         let headerFrame = CGRect(origin: CGPoint(), size: CGSize(width: layout.size.width, height: layout.size.height))
         transition.updateFrame(node: self.headerNode, frame: headerFrame)
         
+        self.listNode.isHidden = self.usesWegramDetail
+        self.listNode.isUserInteractionEnabled = !self.usesWegramDetail
+        self.backgroundView.isHidden = self.usesWegramDetail
+        self.wegramDetailPanel.isHidden = !self.usesWegramDetail
+        self.wegramDetailControls.isHidden = !self.usesWegramDetail
+        self.wegramDetailControls.isUserInteractionEnabled = self.usesWegramDetail
         let headerHeight: CGFloat
-        if self.isPreview {
+        if self.usesWegramDetail {
+            if self.wegramDetailPanel.superview == nil { self.view.addSubview(self.wegramDetailPanel) }
+            if self.wegramDetailControls.superview == nil { self.view.addSubview(self.wegramDetailControls) }
+            let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+            let info = self.wegramInfo
+            let location = info?.0 ?? getLocation(from: self.subject)
+            let distance: String
+            if let value = info?.2 {
+                let formatted = stringForDistance(strings: self.presentationData.strings, distance: value)
+                distance = chinese ? "距你" + formatted : self.presentationData.strings.Map_DistanceAway(formatted).string
+            } else { distance = "" }
+            func eta(_ time: ExpectedTravelTime?, fallback: String) -> String {
+                if case let .ready(value)? = time { return stringForEstimatedDuration(strings: self.presentationData.strings, time: value, format: { $0 }) ?? fallback }
+                return fallback
+            }
+            let panelHeight = self.wegramDetailPanel.update(width: layout.size.width, maxHeight: max(0, layout.size.height - navigationBarHeight - 44), bottomInset: layout.intrinsicInsets.bottom, safeInsets: layout.safeInsets, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.itemListBaseFontSize, chinese: chinese, title: location?.venue?.title ?? self.presentationData.strings.Map_Location, address: info?.1 ?? self.presentationData.strings.Map_Locating, distance: distance, driving: eta(info?.3, fallback: chinese ? "驾车" : "Drive"), walking: eta(info?.4, fallback: chinese ? "步行" : "Walk"), canSave: self.controller?.canSaveWegramLocation == true)
+            headerHeight = max(0, layout.size.height - panelHeight)
+            transition.updateFrame(view: self.wegramDetailPanel, frame: CGRect(x: 0, y: headerHeight, width: layout.size.width, height: panelHeight))
+            self.wegramDetailControls.update(mapSize: CGSize(width: layout.size.width, height: headerHeight), safeInsets: layout.safeInsets, navigationHeight: navigationBarHeight, dark: self.presentationData.theme.overallDarkAppearance, locateTitle: chinese ? "回到我的位置" : "Show My Location", moreTitle: self.presentationData.strings.Common_More, round: true)
+        } else if self.isPreview {
             headerHeight = layout.size.height
         } else if let listOffset = self.listOffset {
             headerHeight = max(0.0, listOffset)
@@ -897,8 +966,14 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
             headerHeight = headerFrame.height
         }
         let headerSize = CGSize(width: headerFrame.width, height: headerHeight)
+        self.headerNode.hidesWegramDetailControls = self.usesWegramDetail
         self.headerNode.updateLayout(layout: layout, navigationBarHeight: navigationBarHeight, topPadding: 0.0, controlsTopPadding: 0.0, controlsBottomPadding: 6.0, offset: 0.0, size: headerSize, transition: transition)
 
+        if self.usesWegramDetail {
+            self.view.bringSubviewToFront(self.wegramDetailPanel)
+            self.view.bringSubviewToFront(self.wegramDetailControls)
+            return
+        }
         let backgroundHeight = layout.size.height - headerHeight
 
         let glassInset: CGFloat = 6.0
@@ -1096,7 +1171,14 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
         let listFrame: CGRect = CGRect(origin: CGPoint(), size: layout.size)
         transition.updateFrame(node: self.listNode, frame: listFrame)
                 
-        if !self.isPreview {
+        if self.usesWegramNavigation {
+            self.topEdgeEffectView.isHidden = true
+            self.buttons.view?.isHidden = true
+            self.title.view?.isHidden = true
+            if self.wegramNavigation.superview == nil { self.view.addSubview(self.wegramNavigation) }
+            self.view.bringSubviewToFront(self.wegramNavigation)
+            self.wegramNavigation.update(size: layout.size, navigationHeight: navigationHeight, safeInsets: layout.safeInsets, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.itemListBaseFontSize, title: self.presentationData.strings.Map_LocationTitle, backTitle: self.presentationData.strings.Common_Back, moreTitle: self.presentationData.strings.Common_More, mapOverlay: self.usesWegramDetail)
+        } else if !self.isPreview {
             let topEdgeEffectFrame = CGRect(origin: .zero, size: CGSize(width: layout.size.width, height: 80.0))
             transition.updateFrame(view: self.topEdgeEffectView, frame: topEdgeEffectFrame)
             self.topEdgeEffectView.update(content: !self.presentationData.theme.overallDarkAppearance ? self.presentationData.theme.list.plainBackgroundColor : .clear, blur: true, alpha: 0.65, rect: topEdgeEffectFrame, edge: .top, edgeSize: topEdgeEffectFrame.height, transition: ComponentTransition(transition))
@@ -1209,6 +1291,41 @@ final class LocationViewControllerNode: ViewControllerTracingNode, CLLocationMan
         }
     }
     
+    private func setWegramDetailsExpanded(_ value: Bool) {
+        guard self.usesWegramNavigation, self.controller?.canOpenWegramOptions == true else { return }
+        self.wegramDetailsExpanded = value
+        self.updateState { $0 }
+    }
+
+    private func presentWegramMore() {
+        guard self.usesWegramNavigation, self.controller?.canOpenWegramOptions == true, self.view.window != nil, self.wegramMoreSheet == nil else { return }
+        let data = self.presentationData
+        let selected: WegramLocationMenuAction
+        switch self.state.mapMode {
+        case .map: selected = .map
+        case .satellite: selected = .satellite
+        case .hybrid: selected = .hybrid
+        }
+        let menu = WegramLocationMenu(theme: ActionSheetControllerTheme(wegramTheme: data.theme, fontSize: data.listsFontSize), options: [(.share, data.strings.Conversation_ContextMenuShare), (.map, data.strings.Map_Map), (.satellite, data.strings.Map_Satellite), (.hybrid, data.strings.Map_Hybrid)], selected: selected, cancelTitle: data.strings.Common_Cancel, available: { [weak self] action in
+            guard let self, self.usesWegramNavigation, self.controller?.canOpenWegramOptions == true, self.view.window != nil else { return false }
+            switch action {
+            case .share, .map, .satellite, .hybrid: return true
+            case .places, .live: return false
+            }
+        }, perform: { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .share: self.interaction.share()
+            case .map: self.interaction.updateMapMode(.map)
+            case .satellite: self.interaction.updateMapMode(.satellite)
+            case .hybrid: self.interaction.updateMapMode(.hybrid)
+            case .places, .live: break
+            }
+        })
+        self.wegramMoreSheet = menu.controller
+        self.controller?.present(menu.controller, in: .window(.root))
+    }
+
     var coordinate: Signal<CLLocationCoordinate2D, NoError> {
         return self.headerNode.mapNode.userLocation
         |> filter { location in

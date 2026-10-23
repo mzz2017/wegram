@@ -20,6 +20,10 @@ import Markdown
 private final class PhoneAndCountryNode: ASDisplayNode {
     let strings: PresentationStrings
     let theme: PresentationTheme
+    private let usesWegramLayout: Bool
+    private let countryLabel = ImmediateTextNode()
+    private let phoneLabel = ImmediateTextNode()
+    private let rowSeparators = [ASDisplayNode(), ASDisplayNode(), ASDisplayNode()]
     
     let countryButton: ASButtonNode
     let countryButtonArrow: ASImageNode
@@ -35,9 +39,10 @@ private final class PhoneAndCountryNode: ASDisplayNode {
     
     var hasCountry = false
     
-    init(strings: PresentationStrings, theme: PresentationTheme) {
+    init(strings: PresentationStrings, theme: PresentationTheme, usesWegramLayout: Bool = false) {
         self.strings = strings
         self.theme = theme
+        self.usesWegramLayout = usesWegramLayout
         
         let inset: CGFloat = 24.0
         
@@ -101,7 +106,7 @@ private final class PhoneAndCountryNode: ASDisplayNode {
         self.phoneBackground.displayWithoutProcessing = true
         self.phoneBackground.isLayerBacked = true
         
-        self.phoneInputNode = PhoneInputNode()
+        self.phoneInputNode = PhoneInputNode(fontSize: usesWegramLayout ? 17 : 20)
         
         super.init()
         
@@ -130,6 +135,34 @@ private final class PhoneAndCountryNode: ASDisplayNode {
         self.countryButton.contentEdgeInsets = UIEdgeInsets(top: 0.0, left: 24.0 + 16.0, bottom: 10.0, right: 0.0)
         self.countryButton.contentHorizontalAlignment = .left
         
+        if usesWegramLayout {
+            self.countryButton.setBackgroundImage(nil, for: .normal)
+            self.countryButton.setBackgroundImage(nil, for: .highlighted)
+            self.countryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 124, bottom: 0, right: 48)
+            self.phoneBackground.isHidden = true
+            let chinese = strings.baseLanguageCode.hasPrefix("zh")
+            self.countryLabel.attributedText = NSAttributedString(string: chinese ? "国家/地区" : "Region", font: Font.regular(17), textColor: theme.list.itemPrimaryTextColor)
+            self.phoneLabel.attributedText = NSAttributedString(string: chinese ? "手机号" : "Phone", font: Font.regular(17), textColor: theme.list.itemPrimaryTextColor)
+            self.countryLabel.isUserInteractionEnabled = false
+            self.phoneLabel.isUserInteractionEnabled = false
+            self.countryLabel.isAccessibilityElement = false
+            self.phoneLabel.isAccessibilityElement = false
+            self.addSubnode(self.countryLabel)
+            self.addSubnode(self.phoneLabel)
+            for separator in self.rowSeparators {
+                separator.isUserInteractionEnabled = false
+                separator.backgroundColor = theme.overallDarkAppearance ? UIColor(rgb: 0x323232) : UIColor(rgb: 0xededed)
+                self.addSubnode(separator)
+            }
+            self.phoneInputNode.countryCodeField.textField.textAlignment = .left
+            self.phoneInputNode.countryCodeTextUpdated = { [weak self] _ in
+                self?.setNeedsLayout()
+            }
+            self.phoneInputNode.numberField.textField.defaultTextAttributes = [.font: Font.regular(17)]
+            self.phoneInputNode.countryCodeField.textField.tintColor = UIColor(rgb: 0x07c160)
+            self.phoneInputNode.numberField.textField.tintColor = UIColor(rgb: 0x07c160)
+            self.countryButtonArrow.image = generateTintedImage(image: UIImage(bundleImageName: "Item List/DisclosureArrow"), color: theme.overallDarkAppearance ? UIColor(rgb: 0x707070) : UIColor(rgb: 0xc7c7c7))
+        }
         self.countryButton.addTarget(self, action: #selector(self.countryPressed), forControlEvents: .touchUpInside)
                 
         self.phoneInputNode.numberTextUpdated = { [weak self] number in
@@ -147,6 +180,7 @@ private final class PhoneAndCountryNode: ASDisplayNode {
         
         self.phoneInputNode.countryCodeUpdated = { [weak self] code, name in
             if let strongSelf = self {
+                defer { strongSelf.updateWegramPlaceholder() }
                 if let name = name {
                     strongSelf.preferredCountryIdForCode[code] = name
                 }
@@ -158,7 +192,7 @@ private final class PhoneAndCountryNode: ASDisplayNode {
                     if name == "FT" {
                         localizedName = strongSelf.strings.Login_AnonymousNumbers
                     }
-                    strongSelf.countryButton.setTitle("\(flagString) \(localizedName)", with: Font.regular(20.0), with: theme.list.itemAccentColor, for: [])
+                    strongSelf.setCountryTitle(name: localizedName, flag: flagString)
                     strongSelf.hasCountry = true
                     
                     if strongSelf.phoneInputNode.mask == nil {
@@ -170,7 +204,7 @@ private final class PhoneAndCountryNode: ASDisplayNode {
                     if countryId == "FT" {
                         localizedName = strongSelf.strings.Login_AnonymousNumbers
                     }
-                    strongSelf.countryButton.setTitle("\(flagString) \(localizedName)", with: Font.regular(20.0), with: theme.list.itemAccentColor, for: [])
+                    strongSelf.setCountryTitle(name: localizedName, flag: flagString)
                     strongSelf.hasCountry = true
                     
                     if strongSelf.phoneInputNode.mask == nil {
@@ -178,7 +212,7 @@ private final class PhoneAndCountryNode: ASDisplayNode {
                     }
                 } else {
                     strongSelf.hasCountry = false
-                    strongSelf.countryButton.setTitle(strings.Login_SelectCountry, with: Font.regular(20.0), with: theme.list.itemAccentColor, for: [])
+                    strongSelf.setCountryTitle(name: strings.Login_SelectCountry, flag: "")
                     strongSelf.phoneInputNode.mask = nil
                     strongSelf.phoneInputNode.numberField.textField.attributedPlaceholder = NSAttributedString(string: strings.Login_PhonePlaceholder, font: Font.regular(20.0), textColor: theme.list.itemPlaceholderTextColor)
                 }
@@ -213,13 +247,14 @@ private final class PhoneAndCountryNode: ASDisplayNode {
     }
     
     func processNumberChange(number: String) -> Bool {
+        defer { self.updateWegramPlaceholder() }
         if let (country, _) = AuthorizationSequenceCountrySelectionController.lookupCountryIdByNumber(number, preferredCountries: self.preferredCountryIdForCode) {
             let flagString = emojiFlagForISOCountryCode(country.id)
             var localizedName: String = AuthorizationSequenceCountrySelectionController.lookupCountryNameById(country.id, strings: self.strings) ?? country.name
             if country.id == "FT" {
                 localizedName = self.strings.Login_AnonymousNumbers
             }
-            self.countryButton.setTitle("\(flagString) \(localizedName)", with: Font.regular(20.0), with: self.theme.list.itemAccentColor, for: [])
+            self.setCountryTitle(name: localizedName, flag: flagString)
             self.hasCountry = true
             
             let maskFont = Font.with(size: 20.0, design: .regular, traits: [.monospacedNumbers])
@@ -236,6 +271,17 @@ private final class PhoneAndCountryNode: ASDisplayNode {
         }
     }
     
+    private func updateWegramPlaceholder() {
+        guard self.usesWegramLayout else { return }
+        self.phoneInputNode.placeholderNode.isHidden = true
+        self.phoneInputNode.numberField.textField.attributedPlaceholder = NSAttributedString(string: self.strings.baseLanguageCode.hasPrefix("zh") ? "请填写手机号码" : "Mobile number", font: Font.regular(17), textColor: self.theme.list.itemPlaceholderTextColor)
+    }
+
+    private func setCountryTitle(name: String, flag: String) {
+        self.countryButton.setTitle(self.usesWegramLayout ? name : (flag.isEmpty ? name : "\(flag) \(name)"), with: Font.regular(self.usesWegramLayout ? 17 : 20), with: self.usesWegramLayout ? self.theme.list.itemPrimaryTextColor : self.theme.list.itemAccentColor, for: .normal)
+        self.countryButton.accessibilityLabel = name
+    }
+
     @objc func countryPressed() {
         self.selectCountryCode?()
     }
@@ -245,7 +291,26 @@ private final class PhoneAndCountryNode: ASDisplayNode {
         
         let size = self.bounds.size
         let inset: CGFloat = 24.0
-        
+        if self.usesWegramLayout {
+            let side = floor(size.width * 0.077)
+            let fieldX = side + 94
+            self.countryButton.frame = CGRect(x: 0, y: 0, width: size.width, height: 52)
+            self.countryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: fieldX, bottom: 0, right: side + 18)
+            if let image = self.countryButtonArrow.image {
+                self.countryButtonArrow.frame = CGRect(x: size.width - side - image.size.width, y: floor((52 - image.size.height) * 0.5), width: image.size.width, height: image.size.height)
+            }
+            let countrySize = self.countryLabel.updateLayout(CGSize(width: 88, height: 52))
+            let phoneSize = self.phoneLabel.updateLayout(CGSize(width: 88, height: 52))
+            self.countryLabel.frame = CGRect(x: side, y: floor((52 - countrySize.height) * 0.5), width: countrySize.width, height: countrySize.height)
+            self.phoneLabel.frame = CGRect(x: side, y: 52 + floor((52 - phoneSize.height) * 0.5), width: phoneSize.width, height: phoneSize.height)
+            for (index, separator) in self.rowSeparators.enumerated() {
+                separator.frame = CGRect(x: side, y: CGFloat(index) * 52, width: size.width - 2 * side, height: UIScreenPixel)
+            }
+            self.phoneInputNode.frame = CGRect(x: fieldX, y: 52, width: size.width - side - fieldX, height: 52)
+            layoutWegramPhoneFields(self.phoneInputNode, size: self.phoneInputNode.bounds.size)
+            self.updateWegramPlaceholder()
+            return
+        }
         self.countryButton.frame = CGRect(origin: CGPoint(), size: CGSize(width: size.width, height: 67.0))
         self.phoneBackground.frame = CGRect(origin: CGPoint(x: 0.0, y: size.height - 57.0), size: CGSize(width: size.width - inset, height: 57.0))
         
@@ -310,6 +375,7 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
     private let strings: PresentationStrings
     private let theme: PresentationTheme
     private let hasOtherAccounts: Bool
+    private let usesWegramLayout: Bool
     
     private let animationNode: AnimatedStickerNode
     private let managedAnimationNode: ManagedPhoneAnimationNode
@@ -320,6 +386,7 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
     private let phoneAndCountryNode: PhoneAndCountryNode
     private let contactSyncNode: ContactSyncNode
     private let proceedNode: SolidRoundedButtonNode
+    private let backgroundTapNode = ASButtonNode()
     
     private var qrNode: ASImageNode?
     private let exportTokenDisposable = MetaDisposable()
@@ -395,6 +462,7 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
         self.theme = theme
         self.debugAction = debugAction
         self.hasOtherAccounts = hasOtherAccounts
+        self.usesWegramLayout = account != nil
         
         self.animationNode = DefaultAnimatedStickerNodeImpl(lottieSettings: .noAccountFallback)
         self.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: "IntroPhone"), width: 256, height: 256, playbackMode: .once, mode: .direct(cachePathPrefix: nil))
@@ -423,9 +491,10 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
         
         self.contactSyncNode = ContactSyncNode(theme: theme, strings: strings)
         
-        self.phoneAndCountryNode = PhoneAndCountryNode(strings: strings, theme: theme)
+        self.phoneAndCountryNode = PhoneAndCountryNode(strings: strings, theme: theme, usesWegramLayout: self.usesWegramLayout)
         
-        self.proceedNode = SolidRoundedButtonNode(title: self.strings.Login_Continue, theme: SolidRoundedButtonTheme(theme: self.theme), glass: false, height: 50.0, cornerRadius: 50 * 0.5)
+        let buttonTheme = self.usesWegramLayout ? SolidRoundedButtonTheme(backgroundColor: UIColor(rgb: 0x07c160), foregroundColor: .white, disabledBackgroundColor: theme.overallDarkAppearance ? UIColor(rgb: 0x2c2c2c) : UIColor(rgb: 0xf2f2f2), disabledForegroundColor: theme.overallDarkAppearance ? UIColor(rgb: 0x707070) : UIColor(rgb: 0xb4b4b4)) : SolidRoundedButtonTheme(theme: theme)
+        self.proceedNode = SolidRoundedButtonNode(title: self.strings.Login_Continue, theme: buttonTheme, glass: false, font: self.usesWegramLayout ? .regular : .bold, height: self.usesWegramLayout ? 44 : 50, cornerRadius: self.usesWegramLayout ? 5 : 25)
         self.proceedNode.progressType = .embedded
         self.proceedNode.isEnabled = false
         self.proceedNode.accessibilityIdentifier = "Auth.PhoneEntry.ContinueButton"
@@ -437,7 +506,12 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
         })
         
         self.backgroundColor = theme.list.plainBackgroundColor
-        
+        if self.usesWegramLayout {
+            self.backgroundTapNode.isAccessibilityElement = false
+            self.backgroundTapNode.accessibilityElementsHidden = true
+            self.backgroundTapNode.addTarget(self, action: #selector(self.backgroundPressed), forControlEvents: .touchUpInside)
+            self.addSubnode(self.backgroundTapNode)
+        }
         self.addSubnode(self.titleNode)
         self.addSubnode(self.noticeNode)
         self.addSubnode(self.titleActivateAreaNode)
@@ -600,6 +674,10 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
     }
     
     func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
+        if self.usesWegramLayout {
+            self.updateWegramLayout(layout, navigationBarHeight: navigationBarHeight, transition: transition)
+            return
+        }
         var insets = layout.insets(options: [])
         insets.top = layout.statusBarHeight ?? 20.0
         if let inputHeight = layout.inputHeight, !inputHeight.isZero {
@@ -670,6 +748,44 @@ final class AuthorizationSequencePhoneEntryControllerNode: ASDisplayNode {
         self.noticeActivateAreaNode.frame = self.noticeNode.frame
     }
     
+    @objc private func backgroundPressed() {
+        self.view.endEditing(true)
+    }
+
+    private func updateWegramLayout(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
+        self.backgroundTapNode.frame = CGRect(origin: .zero, size: layout.size)
+        let width = min(430, layout.size.width)
+        let title = self.strings.baseLanguageCode.hasPrefix("zh") ? "手机号登录" : "Log in via mobile number"
+        self.titleNode.attributedText = NSAttributedString(string: title, font: Font.regular(22), textColor: self.theme.list.itemPrimaryTextColor)
+        let titleSize = self.titleNode.measure(CGSize(width: width - 48, height: .greatestFiniteMagnitude))
+        if let text = self.noticeNode.attributedText {
+            let notice = NSMutableAttributedString(attributedString: text)
+            notice.addAttribute(.font, value: Font.regular(12), range: NSRange(location: 0, length: notice.length))
+            notice.enumerateAttribute(NSAttributedString.Key(rawValue: "URL"), in: NSRange(location: 0, length: notice.length)) { value, range, _ in
+                if value == nil { notice.addAttribute(.foregroundColor, value: self.theme.list.itemSecondaryTextColor, range: range) }
+            }
+            self.noticeNode.attributedText = notice
+        }
+        let noticeSize = self.noticeNode.updateLayout(CGSize(width: width - 60, height: .greatestFiniteMagnitude))
+        let syncSize = self.contactSyncNode.updateLayout(width: width)
+        let frames = WegramPhoneEntryLayout(size: layout.size, statusHeight: layout.statusBarHeight ?? 20, navigationBarHeight: navigationBarHeight, bottomInset: layout.insets(options: []).bottom, keyboardHeight: layout.inputHeight ?? 0, titleSize: titleSize, noticeSize: noticeSize, contactSyncHeight: self.hasOtherAccounts ? syncSize.height : 0)
+        transition.updateFrame(node: self.titleNode, frame: frames.title)
+        transition.updateFrame(node: self.phoneAndCountryNode, frame: frames.form)
+        self.contactSyncNode.isHidden = !self.hasOtherAccounts
+        transition.updateFrame(node: self.contactSyncNode, frame: frames.contactSync)
+        transition.updateFrame(node: self.noticeNode, frame: frames.notice)
+        let _ = self.proceedNode.updateLayout(width: frames.button.width, transition: transition)
+        transition.updateFrame(node: self.proceedNode, frame: frames.button)
+        self.proceedNode.isHidden = !frames.showsButton
+        self.animationNode.isHidden = true
+        self.animationNode.visibility = false
+        self.managedAnimationNode.isHidden = true
+        self.titleActivateAreaNode.accessibilityLabel = title
+        self.titleActivateAreaNode.frame = frames.title
+        self.noticeActivateAreaNode.accessibilityLabel = self.noticeNode.attributedText?.string
+        self.noticeActivateAreaNode.frame = frames.notice
+    }
+
     func activateInput() {
         self.phoneAndCountryNode.phoneInputNode.numberField.textField.becomeFirstResponder()
     }

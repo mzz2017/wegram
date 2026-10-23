@@ -70,7 +70,7 @@ final class HashtagSearchControllerNode: ASDisplayNode, ASGestureRecognizerDeleg
         var presentationData = context.sharedContext.currentPresentationData.with { $0 }
         var controllerParams: ChatControllerParams?
         if controller.forceDark {
-            controllerParams = ChatControllerParams(forcedTheme: defaultDarkColorPresentationTheme, forcedWallpaper: defaultBuiltinWallpaper(data: .default, colors: defaultDarkWallpaperGradientColors.map(\.rgb), intensity: -34))
+            controllerParams = ChatControllerParams(forcedTheme: defaultDarkColorPresentationTheme, forcedWallpaper: defaultDarkColorPresentationTheme.chat.defaultWallpaper)
             presentationData = presentationData.withUpdated(theme: defaultDarkColorPresentationTheme)
         }
         

@@ -679,35 +679,17 @@ public func recentSessionsController(context: AccountContext, activeSessionsCont
     let mode = ValuePromise<RecentSessionsMode>(websitesOnly ? .websites : .sessions)
     
     let removeSessionImpl: (Int64, @escaping () -> Void) -> Void = { sessionId, completion in
-        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-        let controller = textAlertController(
-            context: context,
-            title: nil,
-            text: presentationData.strings.AuthSessions_TerminateSessionText,
-            actions: [
-                TextAlertAction(type: .defaultDestructiveAction, title: presentationData.strings.AuthSessions_TerminateSession, action: {
-                    completion()
-                    
-                    updateState {
-                        return $0.withUpdatedRemovingSessionId(sessionId)
-                    }
-                    
-                    removeSessionDisposable.set((activeSessionsContext.remove(hash: sessionId)
-                    |> deliverOnMainQueue).start(error: { _ in
-                        updateState {
-                            return $0.withUpdatedRemovingSessionId(nil)
-                        }
-                    }, completed: {
-                        updateState {
-                            return $0.withUpdatedRemovingSessionId(nil)
-                        }
-                        context.sharedContext.updateNotificationTokensRegistration()
-                    }))
-                }),
-                TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {})
-            ],
-            actionLayout: .vertical
-        )
+        let controller = recentSessionTerminationController(context: context, confirmed: {
+            completion()
+            updateState { $0.withUpdatedRemovingSessionId(sessionId) }
+            removeSessionDisposable.set((activeSessionsContext.remove(hash: sessionId)
+            |> deliverOnMainQueue).start(error: { _ in
+                updateState { $0.withUpdatedRemovingSessionId(nil) }
+            }, completed: {
+                updateState { $0.withUpdatedRemovingSessionId(nil) }
+                context.sharedContext.updateNotificationTokensRegistration()
+            }))
+        })
         presentControllerImpl?(controller, nil)
     }
     

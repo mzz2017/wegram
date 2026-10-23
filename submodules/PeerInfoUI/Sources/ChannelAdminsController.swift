@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import AsyncDisplayKit
 import Display
 import SwiftSignalKit
 import TelegramCore
@@ -17,6 +18,8 @@ import ItemListPeerActionItem
 
 private final class ChannelAdminsControllerArguments {
     let context: AccountContext
+    let usesWegramAppearance: Bool
+    let toggleEditing: () -> Void
     
     let openRecentActions: () -> Void
     let setPeerIdWithRevealedOptions: (EnginePeer.Id?, EnginePeer.Id?) -> Void
@@ -26,8 +29,10 @@ private final class ChannelAdminsControllerArguments {
     let updateAntiSpamEnabled: (Bool) -> Void
     let updateSignaturesAndProfilesEnabled: (Bool, Bool) -> Void
     
-    init(context: AccountContext, openRecentActions: @escaping () -> Void, setPeerIdWithRevealedOptions: @escaping (EnginePeer.Id?, EnginePeer.Id?) -> Void, removeAdmin: @escaping (EnginePeer.Id) -> Void, addAdmin: @escaping () -> Void, openAdmin: @escaping (ChannelParticipant) -> Void, updateAntiSpamEnabled: @escaping (Bool) -> Void, updateSignaturesAndProfilesEnabled: @escaping (Bool, Bool) -> Void) {
+    init(context: AccountContext, usesWegramAppearance: Bool, toggleEditing: @escaping () -> Void, openRecentActions: @escaping () -> Void, setPeerIdWithRevealedOptions: @escaping (EnginePeer.Id?, EnginePeer.Id?) -> Void, removeAdmin: @escaping (EnginePeer.Id) -> Void, addAdmin: @escaping () -> Void, openAdmin: @escaping (ChannelParticipant) -> Void, updateAntiSpamEnabled: @escaping (Bool) -> Void, updateSignaturesAndProfilesEnabled: @escaping (Bool, Bool) -> Void) {
         self.context = context
+        self.usesWegramAppearance = usesWegramAppearance
+        self.toggleEditing = toggleEditing
         self.openRecentActions = openRecentActions
         self.setPeerIdWithRevealedOptions = setPeerIdWithRevealedOptions
         self.removeAdmin = removeAdmin
@@ -276,11 +281,11 @@ private enum ChannelAdminsEntry: ItemListNodeEntry {
         let arguments = arguments as! ChannelAdminsControllerArguments
         switch self {
             case let .recentActions(_, text):
-                return ItemListDisclosureItem(presentationData: presentationData, systemStyle: .glass, icon: PresentationResourcesSettings.recentActions, title: text, label: "", sectionId: self.section, style: .blocks, action: {
+                return ItemListDisclosureItem(presentationData: presentationData, systemStyle: arguments.usesWegramAppearance ? .legacy : .glass, icon: PresentationResourcesSettings.recentActions, title: text, label: "", sectionId: self.section, style: arguments.usesWegramAppearance ? .plain : .blocks, action: {
                     arguments.openRecentActions()
                 })
             case let .antiSpam(_, text, value):
-                return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, icon: PresentationResourcesSettings.antiSpam, title: text, value: value, sectionId: self.section, style: .blocks, updated: { value in
+                return ItemListSwitchItem(presentationData: presentationData, systemStyle: arguments.usesWegramAppearance ? .legacy : .glass, icon: PresentationResourcesSettings.antiSpam, title: text, value: value, sectionId: self.section, style: arguments.usesWegramAppearance ? .plain : .blocks, updated: { value in
                     arguments.updateAntiSpamEnabled(value)
                 })
             case let .antiSpamInfo(_, text):
@@ -333,29 +338,126 @@ private enum ChannelAdminsEntry: ItemListNodeEntry {
                     .init(type: .destructive, title: presentationData.strings.Channel_Management_DismissAdmin, action: { arguments.removeAdmin(participant.peer.id) })
                 ])
                 
-                return ItemListPeerItem(presentationData: presentationData, systemStyle: .glass, dateTimeFormat: dateTimeFormat, nameDisplayOrder: nameDisplayOrder, context: arguments.context, peer: participant.peer, presence: participant.presences[participant.peer.id].flatMap { EnginePeer.Presence($0) }, text: peerText.isEmpty ? .presence : .text(peerText, .secondary), label: label, editing: editing, revealOptions: revealOptions, switchValue: nil, enabled: enabled, selectable: true, sectionId: self.section, action: action, setPeerIdWithRevealedOptions: { previousId, id in
+                return ItemListPeerItem(presentationData: presentationData, systemStyle: arguments.usesWegramAppearance ? .legacy : .glass, dateTimeFormat: dateTimeFormat, nameDisplayOrder: nameDisplayOrder, context: arguments.context, peer: participant.peer, nameStyle: arguments.usesWegramAppearance ? .plain : .distinctBold, presence: participant.presences[participant.peer.id].flatMap { EnginePeer.Presence($0) }, text: peerText.isEmpty ? .presence : .text(peerText, .secondary), label: label, editing: editing, revealOptions: revealOptions, switchValue: nil, enabled: enabled, selectable: true, sectionId: self.section, action: action, setPeerIdWithRevealedOptions: { previousId, id in
                         arguments.setPeerIdWithRevealedOptions(previousId, id)
                     }, removePeer: { peerId in
                         arguments.removeAdmin(peerId)
-                    })
+                    }, noCorners: arguments.usesWegramAppearance, style: arguments.usesWegramAppearance ? .plain : .blocks)
             case let .addAdmin(theme, text, editing):
-                return ItemListPeerActionItem(presentationData: presentationData, systemStyle: .glass, icon: PresentationResourcesItemList.addPersonIcon(theme), title: text, sectionId: self.section, editing: editing, action: {
+                return ItemListPeerActionItem(presentationData: presentationData, style: arguments.usesWegramAppearance ? .plain : .blocks, systemStyle: arguments.usesWegramAppearance ? .legacy : .glass, icon: PresentationResourcesItemList.addPersonIcon(theme), title: text, sectionId: self.section, editing: editing, action: {
                     arguments.addAdmin()
                 })
             case let .adminsInfo(_, text):
                 return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
             case let .signMessages(_, text, value, profiles):
-                return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: text, value: value, sectionId: self.section, style: .blocks, updated: { value in
+                return ItemListSwitchItem(presentationData: presentationData, systemStyle: arguments.usesWegramAppearance ? .legacy : .glass, title: text, value: value, sectionId: self.section, style: arguments.usesWegramAppearance ? .plain : .blocks, updated: { value in
                     arguments.updateSignaturesAndProfilesEnabled(value, profiles)
                 })
             case let .showAuthorProfiles(_, text, value, signatures):
-                return ItemListSwitchItem(presentationData: presentationData, systemStyle: .glass, title: text, value: value, sectionId: self.section, style: .blocks, updated: { value in
+                return ItemListSwitchItem(presentationData: presentationData, systemStyle: arguments.usesWegramAppearance ? .legacy : .glass, title: text, value: value, sectionId: self.section, style: arguments.usesWegramAppearance ? .plain : .blocks, updated: { value in
                     arguments.updateSignaturesAndProfilesEnabled(signatures, value)
                 })
             case let .signMessagesInfo(_, text):
                 return ItemListTextItem(presentationData: presentationData, text: .plain(text), sectionId: self.section)
         }
     }
+}
+
+private struct WegramAdminGridData: Equatable {
+    let title: String
+    let info: String
+    let members: [WegramAdminGridView.Member]
+    let participants: [RenderedChannelParticipant]
+    let canAdd: Bool
+    let editing: Bool
+}
+
+private enum ChannelAdminsDisplayId: Hashable {
+    case original(ChannelAdminsEntryStableId)
+    case grid
+}
+
+private enum ChannelAdminsDisplayEntry: ItemListNodeEntry {
+    case original(Int, ChannelAdminsEntry)
+    case grid(Int, WegramAdminGridData)
+    var order: Int { switch self { case let .original(order, _), let .grid(order, _): return order } }
+    var section: ItemListSectionId { switch self { case let .original(_, entry): return entry.section; case .grid: return ChannelAdminsSection.admins.rawValue } }
+    var stableId: ChannelAdminsDisplayId { switch self { case let .original(_, entry): return .original(entry.stableId); case .grid: return .grid } }
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.order < rhs.order }
+    func item(presentationData: ItemListPresentationData, arguments: Any) -> ListViewItem {
+        switch self {
+        case let .original(_, entry): return entry.item(presentationData: presentationData, arguments: arguments)
+        case let .grid(_, data):
+            let arguments = arguments as! ChannelAdminsControllerArguments
+            return WegramAdminGridItem(context: arguments.context, presentationData: presentationData, peers: data.participants.map { $0.peer }, members: data.members, canAdd: data.canAdd, editing: data.editing, title: data.title, info: data.info, sectionId: self.section, open: { action in
+                switch action {
+                case .add: if data.canAdd { arguments.addAdmin() }
+                case .toggleEditing: arguments.toggleEditing()
+                case let .member(id):
+                    guard let member = data.members.first(where: { $0.id == id }), member.enabled, member.canOpen, !data.editing,
+                        let participant = data.participants.first(where: { $0.peer.id.toInt64() == id }) else { return }
+                    arguments.openAdmin(participant.participant)
+                case let .remove(id):
+                    guard data.editing, let member = data.members.first(where: { $0.id == id }), member.enabled, member.canRemove,
+                        let participant = data.participants.first(where: { $0.peer.id.toInt64() == id }) else { return }
+                    arguments.removeAdmin(participant.peer.id)
+                }
+            })
+        }
+    }
+}
+
+private func channelAdminsDisplayEntries(_ entries: [ChannelAdminsEntry], peer: EnginePeer?, enabled: Bool, editing: Bool, strings: PresentationStrings) -> [ChannelAdminsDisplayEntry] {
+    let isGroup: Bool
+    switch peer {
+    case .legacyGroup: isGroup = true
+    case let .channel(channel): if case .group = channel.info { isGroup = true } else { isGroup = false }
+    default: isGroup = false
+    }
+    guard enabled, isGroup else { return entries.enumerated().map { .original($0.offset, $0.element) } }
+    var members: [WegramAdminGridView.Member] = []
+    var participants: [RenderedChannelParticipant] = []
+    var canAdd = false
+    var info = ""
+    for entry in entries {
+        switch entry {
+        case .addAdmin: canAdd = true
+        case let .adminsInfo(_, text): info = text
+        case let .adminPeerItem(_, strings, _, order, _, _, participant, edit, enabled, canOpen):
+            var role: String
+            switch participant.participant {
+            case let .creator(_, _, rank): role = rank ?? strings.Conversation_Owner
+            case let .member(_, _, adminInfo, _, rank, _):
+                role = rank ?? strings.Conversation_Admin
+                if let adminInfo, let promoter = participant.peers[adminInfo.promotedBy], promoter.id != participant.peer.id {
+                    role += " · " + strings.Channel_Management_PromotedBy(promoter.displayTitle(strings: strings, displayOrder: order)).string
+                }
+            }
+            let warning: String?
+            if participant.peer.isScam { warning = strings.Message_ScamAccount.uppercased() }
+            else if participant.peer.isFake { warning = strings.Message_FakeAccount.uppercased() }
+            else { warning = nil }
+            if let warning { role = warning + " · " + role }
+            members.append(.init(id: participant.peer.id.toInt64(), name: participant.peer.displayTitle(strings: strings, displayOrder: order), role: role, enabled: enabled, canOpen: canOpen, canRemove: edit.editable, warning: warning))
+            participants.append(participant)
+        default: break
+        }
+    }
+    var result: [ChannelAdminsDisplayEntry] = []
+    var inserted = false
+    for (index, entry) in entries.enumerated() {
+        switch entry {
+        case .recentActions, .antiSpam, .antiSpamInfo:
+            continue
+        case .adminsHeader, .adminPeerItem, .addAdmin, .adminsInfo:
+            if !inserted {
+                inserted = true
+                result.append(.grid(index, WegramAdminGridData(title: strings.ChatAdmins_Title, info: info, members: members, participants: participants, canAdd: canAdd, editing: editing)))
+            }
+        default: result.append(.original(index, entry))
+        }
+    }
+    return result
 }
 
 private struct ChannelAdminsControllerState: Equatable {
@@ -662,6 +764,7 @@ public func channelAdminsController(
     context: AccountContext,
     updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil,
     peerId initialPeerId: EnginePeer.Id,
+    usesWegramAppearance: Bool = false,
     loadCompleted: @escaping () -> Void = {}
 ) -> ViewController {
     let statePromise = ValuePromise(ChannelAdminsControllerState(), ignoreRepeated: true)
@@ -777,7 +880,9 @@ public func channelAdminsController(
         }
     })
     
-    let arguments = ChannelAdminsControllerArguments(context: context, openRecentActions: {
+    let arguments = ChannelAdminsControllerArguments(context: context, usesWegramAppearance: usesWegramAppearance, toggleEditing: {
+        updateState { $0.withUpdatedEditing(!$0.editing) }
+    }, openRecentActions: {
         let _ = (currentPeerId.get()
         |> take(1)
         |> deliverOnMainQueue).start(next: { peerId in
@@ -1152,15 +1257,35 @@ public func channelAdminsController(
             title = isGroup ? presentationData.strings.ChatAdmins_Title : presentationData.strings.Channel_Management_Title
         }
 
+        if usesWegramAppearance && isGroup {
+            secondaryRightNavigationButton = nil
+            if !state.editing {
+                let more = ASDisplayNode(viewBlock: {
+                    let label = UILabel()
+                    label.text = "•••"
+                    label.font = Font.regular(17)
+                    label.textAlignment = .center
+                    label.textColor = WegramNavigationColors(isDark: presentationData.theme.overallDarkAppearance).control
+                    return label
+                })
+                more.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+                more.accessibilityLabel = presentationData.strings.Common_More
+                more.accessibilityTraits = .button
+                rightNavigationButton = ItemListNavigationButton(content: .node(more), style: .regular, enabled: true, action: {
+                    pushControllerImpl?(channelAdminsController(context: context, updatedPresentationData: updatedPresentationData, peerId: peerId))
+                })
+            }
+        }
+
         let controllerState = ItemListControllerState(presentationData: ItemListPresentationData(presentationData), title: .text(title), leftNavigationButton: nil, rightNavigationButton: rightNavigationButton, secondaryRightNavigationButton: secondaryRightNavigationButton, backNavigationButton: ItemListBackButton(title: presentationData.strings.Common_Back), animateChanges: true)
-        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: channelAdminsControllerEntries(presentationData: presentationData, accountPeerId: context.account.peerId, peer: view.peer, state: state, participants: admins, antiSpamAvailable: antiSpamAvailable, antiSpamEnabled: antiSpamEnabled, signMessagesEnabled: signMessagesEnabled, showAuthorProfilesEnabled: showAuthorProfilesEnabled), style: .blocks, emptyStateItem: emptyStateItem, searchItem: searchItem, animateChanges: previous != nil && admins != nil && previous!.count >= admins!.count)
+        let listState = ItemListNodeState(presentationData: ItemListPresentationData(presentationData), entries: channelAdminsDisplayEntries(channelAdminsControllerEntries(presentationData: presentationData, accountPeerId: context.account.peerId, peer: view.peer, state: state, participants: admins, antiSpamAvailable: antiSpamAvailable, antiSpamEnabled: antiSpamEnabled, signMessagesEnabled: signMessagesEnabled, showAuthorProfilesEnabled: showAuthorProfilesEnabled), peer: view.peer, enabled: usesWegramAppearance, editing: state.editing, strings: presentationData.strings), style: usesWegramAppearance ? .plain : .blocks, emptyStateItem: emptyStateItem, searchItem: searchItem, animateChanges: previous != nil && admins != nil && previous!.count >= admins!.count)
         
         return (controllerState, (listState, arguments))
     } |> afterDisposed {
         actionsDisposable.dispose()
     }
     
-    let controller = ItemListController(context: context, state: signal)
+    let controller = ItemListController(context: context, state: signal, usesWegramAppearance: usesWegramAppearance)
     pushControllerImpl = { [weak controller] c in
         (controller?.navigationController as? NavigationController)?.pushViewController(c)
     }
@@ -1180,7 +1305,7 @@ public func channelAdminsController(
 
         rebuildControllerStackAfterSupergroupUpgrade(controller: controller, navigationController: navigationController, replace: { c in
             if c === controller {
-                return channelAdminsController(context: context, peerId: upgradedPeerId, loadCompleted: {
+                return channelAdminsController(context: context, peerId: upgradedPeerId, usesWegramAppearance: usesWegramAppearance, loadCompleted: {
                 })
             } else {
                 return c

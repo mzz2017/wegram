@@ -97,7 +97,7 @@ public func fetchMediaData(context: AccountContext, userLocation: MediaResourceU
     }
 }
 
-public func saveToCameraRoll(context: AccountContext, userLocation: MediaResourceUserLocation, customUserContentType: MediaResourceUserContentType? = nil, mediaReference: AnyMediaReference, video: AnyMediaReference? = nil) -> Signal<Float, NoError> {
+public func saveToCameraRoll(context: AccountContext, userLocation: MediaResourceUserLocation, customUserContentType: MediaResourceUserContentType? = nil, mediaReference: AnyMediaReference, video: AnyMediaReference? = nil, result: ((CameraRollSaveResult) -> Void)? = nil) -> Signal<Float, NoError> {
     let mediaData: Signal<(FetchMediaDataState, Bool), NoError> = fetchMediaData(context: context, userLocation: userLocation, customUserContentType: customUserContentType, mediaReference: mediaReference)
     let videoData: Signal<FetchMediaDataState?, NoError>
     if let video {
@@ -148,6 +148,7 @@ public func saveToCameraRoll(context: AccountContext, userLocation: MediaResourc
                     context.sharedContext.presentGlobalController(c, a)
                 }, openSettings: context.sharedContext.applicationBindings.openSettings, { authorized in
                     if !authorized {
+                        result?(.accessDenied)
                         subscriber.putCompletion()
                         return
                     }
@@ -156,41 +157,55 @@ public func saveToCameraRoll(context: AccountContext, userLocation: MediaResourc
                     if isImage, let videoData, let imageData = try? Data(contentsOf: URL(fileURLWithPath: mainData.path)) {
                         let id = UUID().uuidString
 
-                        let jpegWithID = addAssetIdentifierToJPEG(imageData, assetIdentifier: id)!
+                        guard let jpegWithID = addAssetIdentifierToJPEG(imageData, assetIdentifier: id) else {
+                            result?(.failed)
+                            subscriber.putCompletion()
+                            return
+                        }
                         let outputVideoURL = URL(fileURLWithPath: NSTemporaryDirectory() + "\(id).mov")
 
                         try? FileManager.default.copyItem(atPath: videoData.path, toPath: tempVideoPath)
 
                         addAssetIdentifierToVideo(inputURL: URL(fileURLWithPath: tempVideoPath), outputURL: outputVideoURL, assetIdentifier: id) { success in
-                            guard success else { return }
+                            guard success else {
+                                let _ = try? FileManager.default.removeItem(atPath: tempVideoPath)
+                                result?(.failed)
+                                subscriber.putCompletion()
+                                return
+                            }
 
                             PHPhotoLibrary.shared().performChanges({
                                 let request = PHAssetCreationRequest.forAsset()
 
                                 request.addResource(with: .photo, data: jpegWithID, options: nil)
                                 request.addResource(with: .pairedVideo, fileURL: outputVideoURL, options: nil)
-                            }, completionHandler: { _, error in
+                            }, completionHandler: { success, error in
                                 let _ = try? FileManager.default.removeItem(atPath: tempVideoPath)
+                                result?(success && error == nil ? .saved : .failed)
                                 subscriber.putNext(1.0)
                                 subscriber.putCompletion()
                             })
                         }
                     } else {
+                        let createdAsset = Atomic<Bool>(value: false)
                         PHPhotoLibrary.shared().performChanges({
                             if isImage {
                                 if let imageData = try? Data(contentsOf: URL(fileURLWithPath: mainData.path)) {
-                                    PHAssetCreationRequest.forAsset().addResource(with: .photo, data: imageData, options: nil)
+                                    let request = PHAssetCreationRequest.forAsset()
+                                    request.addResource(with: .photo, data: imageData, options: nil)
+                                    let _ = createdAsset.swap(request.placeholderForCreatedAsset != nil)
                                 }
                             } else {
                                 if let _ = try? FileManager.default.copyItem(atPath: mainData.path, toPath: tempVideoPath) {
-                                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: URL(fileURLWithPath: tempVideoPath))
+                                    let _ = createdAsset.swap(PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: URL(fileURLWithPath: tempVideoPath)) != nil)
                                 }
                             }
-                        }, completionHandler: { _, error in
+                        }, completionHandler: { success, error in
                             if let error {
                                 print("\(error)")
                             }
                             let _ = try? FileManager.default.removeItem(atPath: tempVideoPath)
+                            result?(success && error == nil && createdAsset.with({ $0 }) ? .saved : .failed)
                             subscriber.putNext(1.0)
                             subscriber.putCompletion()
                         })
@@ -203,6 +218,39 @@ public func saveToCameraRoll(context: AccountContext, userLocation: MediaResourc
         } else {
             return .complete()
         }
+    }
+}
+
+public func saveImageToCameraRoll(context: AccountContext, image: UIImage, validUntil: Date? = nil) -> Signal<CameraRollSaveResult, NoError> {
+    return Signal { subscriber in
+        let cancelled = Atomic<Bool>(value: false)
+        DeviceAccess.authorizeAccess(to: .mediaLibrary(.save), presentationData: context.sharedContext.currentPresentationData.with { $0 }, present: { controller, arguments in
+            guard !cancelled.with({ $0 }) else { return }
+            context.sharedContext.presentGlobalController(controller, arguments)
+        }, openSettings: context.sharedContext.applicationBindings.openSettings, { authorized in
+            guard !cancelled.with({ $0 }) else { return }
+            guard authorized else {
+                subscriber.putNext(.accessDenied)
+                subscriber.putCompletion()
+                return
+            }
+            guard let data = cameraRollImageData(image, validUntil: validUntil) else {
+                subscriber.putNext(.failed)
+                subscriber.putCompletion()
+                return
+            }
+            let createdAsset = Atomic<Bool>(value: false)
+            PHPhotoLibrary.shared().performChanges({
+                guard !cancelled.with({ $0 }), validUntil.map({ $0 > Date() }) ?? true else { return }
+                let request = PHAssetCreationRequest.forAsset()
+                request.addResource(with: .photo, data: data, options: nil)
+                let _ = createdAsset.swap(request.placeholderForCreatedAsset != nil)
+            }, completionHandler: { success, error in
+                subscriber.putNext(success && error == nil && createdAsset.with({ $0 }) ? .saved : .failed)
+                subscriber.putCompletion()
+            })
+        })
+        return ActionDisposable { let _ = cancelled.swap(true) }
     }
 }
 

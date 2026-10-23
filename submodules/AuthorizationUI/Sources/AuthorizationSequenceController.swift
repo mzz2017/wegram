@@ -32,8 +32,8 @@ private enum InnerState: Equatable {
 }
 
 public final class AuthorizationSequenceController: NavigationController, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
-    static func navigationBarTheme(_ theme: PresentationTheme) -> NavigationBarTheme {
-        return NavigationBarTheme(overallDarkAppearance: theme.overallDarkAppearance, buttonColor: theme.chat.inputPanel.panelControlColor, disabledButtonColor: theme.intro.disabledTextColor, primaryTextColor: theme.intro.primaryTextColor, backgroundColor: .clear, opaqueBackgroundColor: .clear, enableBackgroundBlur: false, separatorColor: .clear, badgeBackgroundColor: theme.rootController.navigationBar.badgeBackgroundColor, badgeStrokeColor: theme.rootController.navigationBar.badgeStrokeColor, badgeTextColor: theme.rootController.navigationBar.badgeTextColor, edgeEffectColor: .clear, accentButtonColor: theme.list.itemCheckColors.fillColor, accentDisabledButtonColor: theme.chat.inputPanel.panelControlDisabledColor, accentForegroundColor: theme.list.itemCheckColors.foregroundColor, style: .glass)
+    static func navigationBarTheme(_ theme: PresentationTheme, usesWegramAppearance: Bool = false) -> NavigationBarTheme {
+        return NavigationBarTheme(overallDarkAppearance: theme.overallDarkAppearance, buttonColor: theme.chat.inputPanel.panelControlColor, disabledButtonColor: theme.intro.disabledTextColor, primaryTextColor: theme.intro.primaryTextColor, backgroundColor: .clear, opaqueBackgroundColor: .clear, enableBackgroundBlur: false, separatorColor: .clear, badgeBackgroundColor: theme.rootController.navigationBar.badgeBackgroundColor, badgeStrokeColor: theme.rootController.navigationBar.badgeStrokeColor, badgeTextColor: theme.rootController.navigationBar.badgeTextColor, edgeEffectColor: .clear, accentButtonColor: theme.list.itemCheckColors.fillColor, accentDisabledButtonColor: theme.chat.inputPanel.panelControlDisabledColor, accentForegroundColor: theme.list.itemCheckColors.foregroundColor, style: usesWegramAppearance ? .legacy : .glass)
     }
     
     private let sharedContext: SharedAccountContext
@@ -140,7 +140,16 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
         if let currentController = currentController {
             controller = currentController
         } else {
-            controller = AuthorizationSequenceSplashController(accountManager: self.sharedContext.accountManager, account: self.account, theme: self.presentationData.theme)
+            controller = AuthorizationSequenceSplashController(accountManager: self.sharedContext.accountManager, account: self.account, theme: self.presentationData.theme, strings: self.presentationData.strings)
+            controller.localizationUpdated = { [weak self] strings in
+                guard let self else { return }
+                self.presentationData = self.presentationData.withStrings(strings)
+            }
+            controller.localizationFailed = { [weak self, weak controller] in
+                guard let self, let controller else { return }
+                let presenter = controller.navigationController?.viewControllers.last as? ViewController ?? controller
+                presenter.present(textAlertController(sharedContext: self.sharedContext, title: nil, text: self.presentationData.strings.Login_UnknownError, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+            }
             controller.nextPressed = { [weak self] strings in
                 if let strongSelf = self {
                     if let strings = strings {
@@ -376,7 +385,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
         if let currentController = currentController {
             controller = currentController
         } else {
-            controller = AuthorizationSequenceCodeEntryController(sharedContext: self.sharedContext, presentationData: self.presentationData, back: { [weak self] in
+            controller = AuthorizationSequenceCodeEntryController(sharedContext: self.sharedContext, presentationData: self.presentationData, usesWegramAppearance: true, back: { [weak self] in
                 guard let strongSelf = self else {
                     return
                 }
@@ -743,7 +752,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
         if let currentController = currentController {
             controller = currentController
         } else {
-            controller = AuthorizationSequenceEmailEntryController(presentationData: self.presentationData, mode: .setup, back: { [weak self] in
+            controller = AuthorizationSequenceEmailEntryController(presentationData: self.presentationData, mode: .setup, usesWegramAppearance: true, back: { [weak self] in
                 guard let strongSelf = self else {
                     return
                 }
@@ -927,7 +936,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
         if let currentController = currentController {
             controller = currentController
         } else {
-            controller = AuthorizationSequencePasswordEntryController(sharedContext: self.sharedContext, presentationData: self.presentationData, back: { [weak self] in
+            controller = AuthorizationSequencePasswordEntryController(sharedContext: self.sharedContext, presentationData: self.presentationData, usesWegramAppearance: true, back: { [weak self] in
                 guard let strongSelf = self else {
                     return
                 }
@@ -995,7 +1004,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
         }
         controller.reset = { [weak self, weak controller] in
             if let strongSelf = self, let strongController = controller {
-                strongController.present(textAlertController(sharedContext: strongSelf.sharedContext, title: nil, text: suggestReset ? strongSelf.presentationData.strings.TwoStepAuth_RecoveryFailed : strongSelf.presentationData.strings.TwoStepAuth_RecoveryUnavailable, actions: [
+                strongController.present(wegramAuthorizationConfirmationController(updatedPresentationData: (initial: strongSelf.presentationData, signal: strongSelf.sharedContext.presentationData), text: suggestReset ? strongSelf.presentationData.strings.TwoStepAuth_RecoveryFailed : strongSelf.presentationData.strings.TwoStepAuth_RecoveryUnavailable, actions: [
                     TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {}),
                     TextAlertAction(type: .destructiveAction, title: strongSelf.presentationData.strings.Login_ResetAccountProtected_Reset, action: {
                         if let strongSelf = self, let strongController = controller {
@@ -1072,7 +1081,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
         if let currentController = currentController {
             controller = currentController
         } else {
-            controller = AuthorizationSequenceAwaitingAccountResetController(strings: self.presentationData.strings, theme: self.presentationData.theme, back: { [weak self] in
+            controller = AuthorizationSequenceAwaitingAccountResetController(strings: self.presentationData.strings, theme: self.presentationData.theme, usesWegramAppearance: true, back: { [weak self] in
                 guard let strongSelf = self else {
                     return
                 }
@@ -1082,7 +1091,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
             })
             controller.reset = { [weak self, weak controller] in
                 if let strongSelf = self, let strongController = controller {
-                    strongController.present(textAlertController(sharedContext: strongSelf.sharedContext, title: nil, text: strongSelf.presentationData.strings.TwoStepAuth_ResetAccountConfirmation, actions: [
+                    strongController.present(wegramAuthorizationConfirmationController(updatedPresentationData: (initial: strongSelf.presentationData, signal: strongSelf.sharedContext.presentationData), text: strongSelf.presentationData.strings.TwoStepAuth_ResetAccountConfirmation, actions: [
                         TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {}),
                         TextAlertAction(type: .destructiveAction, title: strongSelf.presentationData.strings.Login_ResetAccountProtected_Reset, action: {
                             if let strongSelf = self, let strongController = controller {
@@ -1139,7 +1148,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
                 let countryCode = AuthorizationSequenceCountrySelectionController.defaultCountryCode()
                 
                 let _ = strongSelf.engine.auth.setState(state: UnauthorizedAccountState(isTestingEnvironment: strongSelf.account.testingEnvironment, masterDatacenterId: strongSelf.account.masterDatacenterId, contents: .phoneEntry(countryCode: countryCode, number: ""))).startStandalone()
-            }, displayCancel: displayCancel)
+            }, displayCancel: displayCancel, usesWegramAppearance: true)
             controller.openUrl = { [weak self] url in
                 guard let self else {
                     return
@@ -1466,7 +1475,7 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
         let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
         let systemVersion = UIDevice.current.systemVersion
         let locale = Locale.current.identifier
-        emailBody.append("Telegram: \(appVersion)\n")
+        emailBody.append("WeGram: \(appVersion)\n")
         emailBody.append("OS: \(systemVersion)\n")
         emailBody.append("Locale: \(locale)\n")
         emailBody.append("MNC: \(mnc)")

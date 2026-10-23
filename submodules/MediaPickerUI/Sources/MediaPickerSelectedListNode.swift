@@ -17,6 +17,7 @@ import ChatSendMessageActionUI
 import ComponentFlow
 import ComponentDisplayAdapters
 import MediaAssetsContext
+import AttachmentUI
 
 private class MediaPickerSelectedItemNode: ASDisplayNode {
     let asset: TGMediaEditableItem
@@ -25,6 +26,7 @@ private class MediaPickerSelectedItemNode: ASDisplayNode {
     private let isExternalPreview: Bool
     
     private let imageNode: ImageNode
+    private let accessibilityAreaNode: AccessibilityAreaNode?
     private var checkNode: InteractiveCheckNode?
     private var durationBackgroundNode: ASDisplayNode?
     private var durationTextNode: ImmediateTextNode?
@@ -62,12 +64,13 @@ private class MediaPickerSelectedItemNode: ASDisplayNode {
     
     private var videoDuration: Double?
     
-    init(asset: TGMediaEditableItem, interaction: MediaPickerInteraction?, enableAnimations: Bool, isExternalPreview: Bool) {
+    init(asset: TGMediaEditableItem, interaction: MediaPickerInteraction?, enableAnimations: Bool, isExternalPreview: Bool, usesWegramAppearance: Bool) {
         self.asset = asset
         self.interaction = interaction
         self.enableAnimations = enableAnimations
         self.isExternalPreview = isExternalPreview
         
+        self.accessibilityAreaNode = usesWegramAppearance && !isExternalPreview ? AccessibilityAreaNode() : nil
         self.imageNode = ImageNode()
         self.imageNode.contentMode = .scaleAspectFill
         self.imageNode.clipsToBounds = true
@@ -78,6 +81,15 @@ private class MediaPickerSelectedItemNode: ASDisplayNode {
         self.clipsToBounds = true
         
         self.addSubnode(self.imageNode)
+        if let accessibilityAreaNode = self.accessibilityAreaNode {
+            self.addSubnode(accessibilityAreaNode)
+            accessibilityAreaNode.accessibilityTraits = [.button, .image, .selected]
+            accessibilityAreaNode.activate = { [weak self] in
+                guard let self, self.canPerformAccessibilityAction else { return false }
+                self.tap()
+                return true
+            }
+        }
         
         if let editingState = interaction?.editingState {
             if asset.isVideo {
@@ -178,6 +190,57 @@ private class MediaPickerSelectedItemNode: ASDisplayNode {
         self.interaction?.openSelectedMedia(asset, self.imageNode.image)
     }
     
+    private var canPerformAccessibilityAction: Bool {
+        guard self.view.window != nil, wegramViewAcceptsActions(self.view),
+              let item = self.asset as? TGMediaSelectableItem,
+              self.interaction?.selectionState?.isIdentifierSelected(item.uniqueIdentifier) == true else { return false }
+        var ancestor: UIView? = self.view
+        while let view = ancestor {
+            if view.accessibilityElementsHidden { return false }
+            ancestor = view.superview
+        }
+        return true
+    }
+
+    func updateAccessibility(chinese: Bool, focused: @escaping () -> Void) {
+        guard let area = self.accessibilityAreaNode, let selection = self.interaction?.selectionState,
+              let item = self.asset as? TGMediaSelectableItem else { return }
+        let index = selection.index(of: item)
+        let count = selection.count()
+        guard index != NSNotFound, index > 0, index <= count else {
+            area.accessibilityElementsHidden = true
+            return
+        }
+        area.accessibilityElementsHidden = false
+        area.focused = { [weak self] in
+            guard let self, self.canPerformAccessibilityAction else { return }
+            focused()
+        }
+        let kind = self.asset.isVideo ? (chinese ? "视频" : "Video") : (chinese ? "照片" : "Photo")
+        let date = (self.asset as? TGMediaAsset)?.date?.formatted(date: .abbreviated, time: .omitted)
+        area.accessibilityLabel = ["\(kind) \(index)/\(count)", date].compactMap { $0 }.joined(separator: ", ")
+        area.accessibilityIdentifier = "Wegram.Photo.Selected.\(item.uniqueIdentifier ?? "")"
+        area.accessibilityHint = chinese ? "双击预览；操作菜单可取消选择或调整顺序" : "Double-tap to preview. Actions remove or reorder this item."
+        var actions = [UIAccessibilityCustomAction(name: chinese ? "取消选择" : "Deselect", actionHandler: { [weak self] _ in
+            guard let self, self.canPerformAccessibilityAction, let item = self.asset as? TGMediaSelectableItem,
+                  let interaction = self.interaction else { return false }
+            return interaction.toggleSelection(item, false, true)
+        })]
+        for offset in [-1, 1] where offset < 0 ? index > 1 : index < count {
+            actions.append(UIAccessibilityCustomAction(name: offset < 0 ? (chinese ? "前移" : "Move Earlier") : (chinese ? "后移" : "Move Later"), actionHandler: { [weak self] _ in
+                guard let self, self.canPerformAccessibilityAction, let item = self.asset as? TGMediaSelectableItem,
+                      let selection = self.interaction?.selectionState else { return false }
+                let current = selection.index(of: item)
+                guard current != NSNotFound, current > 0, current <= selection.count() else { return false }
+                let target = Int(current) + offset
+                guard target >= 1, target <= Int(selection.count()) else { return false }
+                selection.move(item, to: UInt(target))
+                return true
+            }))
+        }
+        area.accessibilityCustomActions = actions
+    }
+
     private var didSetupSpoiler = false
     private func updateHasSpoiler(_ hasSpoiler: Bool, price: Int64?) {
         var animated = true
@@ -284,6 +347,7 @@ private class MediaPickerSelectedItemNode: ASDisplayNode {
             }
             self.addSubnode(checkNode)
             self.checkNode = checkNode
+            checkNode.accessibilityElementsHidden = self.accessibilityAreaNode != nil
 
             if let size = self.validLayout {
                 self.updateLayout(size: size, transition: .immediate)
@@ -340,6 +404,7 @@ private class MediaPickerSelectedItemNode: ASDisplayNode {
     
     func updateLayout(size: CGSize, transition: ContainedViewLayoutTransition) {
         self.validLayout = size
+        if let area = self.accessibilityAreaNode { transition.updateFrame(node: area, frame: CGRect(origin: .zero, size: size)) }
         
         transition.updateFrame(node: self.imageNode, frame: CGRect(origin: CGPoint(), size: size))
         
@@ -632,14 +697,17 @@ final class MediaPickerSelectedListNode: ASDisplayNode, ASScrollViewDelegate, AS
         return self.ready.get()
     }
     
-    init(context: AccountContext, persistentItems: Bool, isExternalPreview: Bool, isObscuredExternalPreview: Bool) {
+    private let usesWegramAppearance: Bool
+
+    init(context: AccountContext, persistentItems: Bool, isExternalPreview: Bool, isObscuredExternalPreview: Bool, usesWegramAppearance: Bool = false) {
         self.context = context
         self.persistentItems = persistentItems
         self.isExternalPreview = isExternalPreview
         self.isObscuredExternalPreview = isObscuredExternalPreview
+        self.usesWegramAppearance = usesWegramAppearance
         
         self.scrollNode = ASScrollNode()
-        self.scrollNode.clipsToBounds = false
+        self.scrollNode.clipsToBounds = usesWegramAppearance && !isExternalPreview
         
         super.init()
         
@@ -970,7 +1038,7 @@ final class MediaPickerSelectedListNode: ASDisplayNode, ASScrollViewDelegate, AS
             if let current = self.itemNodes[identifier] {
                 itemNode = current
             } else {
-                itemNode = MediaPickerSelectedItemNode(asset: asset, interaction: self.interaction, enableAnimations: self.context.sharedContext.energyUsageSettings.fullTranslucency, isExternalPreview: self.isExternalPreview)
+                itemNode = MediaPickerSelectedItemNode(asset: asset, interaction: self.interaction, enableAnimations: self.context.sharedContext.energyUsageSettings.fullTranslucency, isExternalPreview: self.isExternalPreview, usesWegramAppearance: self.usesWegramAppearance)
                 self.itemNodes[identifier] = itemNode
                 self.scrollNode.addSubnode(itemNode)
                 
@@ -978,6 +1046,14 @@ final class MediaPickerSelectedListNode: ASDisplayNode, ASScrollViewDelegate, AS
             }
             itemNode.update(theme: theme)
             itemNode.updateSelectionState()
+            itemNode.updateAccessibility(chinese: presentationData.strings.baseLanguageCode.hasPrefix("zh"), focused: { [weak self, weak itemNode] in
+                guard let self, let itemNode else { return }
+                let topInset = self.validLayout?.insets.top ?? 0
+                var rect = itemNode.frame.insetBy(dx: 0, dy: -8)
+                rect.origin.y -= topInset
+                rect.size.height += topInset
+                self.scrollNode.view.scrollRectToVisible(rect, animated: false)
+            })
             if !self.isReordering {
                 itemNode.updateHiddenMedia()
             }
@@ -1223,7 +1299,7 @@ final class MediaPickerSelectedListNode: ASDisplayNode, ASScrollViewDelegate, AS
         }
         
         contentHeight += insets.top
-        contentHeight += insets.bottom
+        contentHeight += self.usesWegramAppearance && !self.isExternalPreview ? 16 : insets.bottom
         
         var removeIds: [String] = []
         for id in self.itemNodes.keys {
@@ -1339,10 +1415,15 @@ final class MediaPickerSelectedListNode: ASDisplayNode, ASScrollViewDelegate, AS
             wallpaperBackgroundNode.updateLayout(size: CGSize(width: size.width - inset * 2.0, height: size.height), displayMode: .aspectFill, transition: transition)
         }
         
+        var scrollSize = size
+        if self.usesWegramAppearance && !self.isExternalPreview {
+            scrollSize.height = max(0, scrollSize.height - insets.bottom)
+            transition.updateFrame(node: self.scrollNode, frame: CGRect(origin: .zero, size: scrollSize))
+        }
         self.updateItems(transition: itemsTransition)
-        
-        let bounds = CGRect(origin: CGPoint(), size: size)
-        transition.updateFrame(node: self.scrollNode, frame: bounds)
+        if !self.usesWegramAppearance || self.isExternalPreview {
+            transition.updateFrame(node: self.scrollNode, frame: CGRect(origin: .zero, size: scrollSize))
+        }
     }
     
     func transitionView(for identifier: String, hideSource: Bool) -> UIView? {

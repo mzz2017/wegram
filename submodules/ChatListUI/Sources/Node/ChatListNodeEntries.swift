@@ -344,6 +344,7 @@ enum ChatListNodeEntry: Comparable, Identifiable {
         var groupId: EngineChatList.Group
         var peers: [EngineChatList.GroupItem.Item]
         var message: EngineMessage?
+        var latestMessage: EngineMessage?
         var editing: Bool
         var unreadCount: Int
         var revealed: Bool
@@ -357,6 +358,7 @@ enum ChatListNodeEntry: Comparable, Identifiable {
             groupId: EngineChatList.Group,
             peers: [EngineChatList.GroupItem.Item],
             message: EngineMessage?,
+            latestMessage: EngineMessage?,
             editing: Bool,
             unreadCount: Int,
             revealed: Bool,
@@ -369,6 +371,7 @@ enum ChatListNodeEntry: Comparable, Identifiable {
             self.groupId = groupId
             self.peers = peers
             self.message = message
+            self.latestMessage = latestMessage
             self.editing = editing
             self.unreadCount = unreadCount
             self.revealed = revealed
@@ -391,6 +394,9 @@ enum ChatListNodeEntry: Comparable, Identifiable {
                 return false
             }
             if lhs.message?.stableId != rhs.message?.stableId {
+                return false
+            }
+            if lhs.latestMessage?.stableId != rhs.latestMessage?.stableId || lhs.latestMessage?.stableVersion != rhs.latestMessage?.stableVersion {
                 return false
             }
             if lhs.editing != rhs.editing {
@@ -604,7 +610,7 @@ struct ChatListContactPeer {
     }
 }
 
-func chatListNodeEntriesForView(view: EngineChatList, state: ChatListNodeState, savedMessagesPeer: EnginePeer?, foundPeers: [(EnginePeer, EnginePeer?)], hideArchivedFolderByDefault: Bool, displayArchiveIntro: Bool, mode: ChatListNodeMode, chatListLocation: ChatListControllerLocation, contacts: [ChatListContactPeer], accountPeerId: EnginePeer.Id, isMainTab: Bool) -> (entries: [ChatListNodeEntry], loading: Bool) {
+func chatListNodeEntriesForView(view: EngineChatList, state: ChatListNodeState, savedMessagesPeer: EnginePeer?, foundPeers: [(EnginePeer, EnginePeer?)], hideArchivedFolderByDefault: Bool, foldedChatsTimestamp: Int32?, displayArchiveIntro: Bool, mode: ChatListNodeMode, chatListLocation: ChatListControllerLocation, contacts: [ChatListContactPeer], accountPeerId: EnginePeer.Id, isMainTab: Bool) -> (entries: [ChatListNodeEntry], loading: Bool) {
     var groupItems = view.groupItems
     if isMainTab && state.archiveStoryState != nil && groupItems.isEmpty {
         groupItems.append(EngineChatList.GroupItem(
@@ -615,8 +621,21 @@ func chatListNodeEntriesForView(view: EngineChatList, state: ChatListNodeState, 
         ))
     }
     
+    // WeChat's 折叠的聊天 row has no slot of its own: it sorts among the chats, never pinned or hidden
+    // (IMG_2440, between a 15:34 and a 14:22 chat), and a new folded message does not raise it — in
+    // IMG_2441, taken the same minute, the newest folded message is 19:34. What does set its time is
+    // not documented; WeGram uses the newest folded message when the page was last opened
+    // (`foldedChatsTimestamp`), the live one before the first visit, and never later than the live one
+    // so the row sinks when its newest chat leaves. An archive with no message to sort by (one holding
+    // only stories) keeps the upstream slot.
+    var chronologicalGroupItems: [EngineChatList.GroupItem] = []
+    if case .chatList = mode {
+        chronologicalGroupItems = groupItems.filter { $0.latestMessage != nil }
+        groupItems = groupItems.filter { $0.latestMessage == nil }
+    }
+
     var result: [ChatListNodeEntry] = []
-    
+
     var hasContacts = false
     if !view.hasEarlier {
         var existingPeerIds = Set<EnginePeer.Id>()
@@ -932,6 +951,7 @@ func chatListNodeEntriesForView(view: EngineChatList, state: ChatListNodeState, 
                     groupId: groupReference.id,
                     peers: groupReference.items,
                     message: groupReference.topMessage,
+                    latestMessage: groupReference.latestMessage,
                     editing: state.editing,
                     unreadCount: groupReference.unreadCount,
                     revealed: state.hiddenItemShouldBeTemporaryRevealed,
@@ -993,5 +1013,53 @@ func chatListNodeEntriesForView(view: EngineChatList, state: ChatListNodeState, 
     } else if result.count == 1, case .HoleEntry = result[0] {
         return ([.HeaderEntry], true)
     }
+
+    if !chronologicalGroupItems.isEmpty {
+        let loadedIndices = view.items.map(\.index)
+        for groupReference in chronologicalGroupItems {
+            guard let latestMessage = groupReference.latestMessage else {
+                continue
+            }
+            var timestamp = latestMessage.timestamp
+            if let foldedChatsTimestamp {
+                timestamp = min(timestamp, foldedChatsTimestamp)
+            }
+            // Peer 0 as upstream's slot uses: code reading a peer id off a row's index must not reach
+            // the folded chat the message is from.
+            let messageIndex = EngineMessage.Index(id: EngineMessage.Id(peerId: EnginePeer.Id(0), namespace: 0, id: 0), timestamp: timestamp)
+            let index: EngineChatList.Item.Index = .chatList(EngineChatList.Item.Index.ChatList(pinningIndex: nil, messageIndex: messageIndex))
+            // Only inside the loaded window: past its edge the row would sit at the edge until the
+            // window moved.
+            if view.hasEarlier, let lowest = loadedIndices.min(), index < lowest {
+                continue
+            }
+            if view.hasLater, let highest = loadedIndices.max(), index > highest {
+                continue
+            }
+            let entry: ChatListNodeEntry = .GroupReferenceEntry(ChatListNodeEntry.GroupReferenceEntryData(
+                index: index,
+                presentationData: state.presentationData,
+                groupId: groupReference.id,
+                peers: groupReference.items,
+                message: groupReference.topMessage,
+                latestMessage: groupReference.latestMessage,
+                editing: state.editing,
+                unreadCount: groupReference.unreadCount,
+                revealed: false,
+                hiddenByDefault: false,
+                appearsPinned: false,
+                storyState: state.archiveStoryState
+            ))
+            let position = result.firstIndex(where: { other in
+                if case .index = other.sortIndex {
+                    return other.sortIndex > entry.sortIndex
+                } else {
+                    return false
+                }
+            }) ?? result.count
+            result.insert(entry, at: position)
+        }
+    }
+
     return (result, view.isLoading)
 }

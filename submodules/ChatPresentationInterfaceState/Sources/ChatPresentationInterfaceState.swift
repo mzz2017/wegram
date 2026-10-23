@@ -80,18 +80,25 @@ public enum ChatSearchDomainSuggestionContext: Equatable {
 
 public struct ChatSearchData: Equatable {
     public let query: String
+    public let mediaTags: EngineMessage.Tags?
     public let domain: ChatSearchDomain
     public let domainSuggestionContext: ChatSearchDomainSuggestionContext
     public let resultsState: ChatSearchResultsState?
     
-    public init(query: String = "", domain: ChatSearchDomain = .everything, domainSuggestionContext: ChatSearchDomainSuggestionContext = .none, resultsState: ChatSearchResultsState? = nil) {
+    public init(query: String = "", domain: ChatSearchDomain = .everything, domainSuggestionContext: ChatSearchDomainSuggestionContext = .none, resultsState: ChatSearchResultsState? = nil, mediaTags: EngineMessage.Tags? = nil) {
         self.query = query
+        if case .everything = domain {
+            self.mediaTags = mediaTags.flatMap { $0.isEmpty ? nil : $0 }
+        } else {
+            self.mediaTags = nil
+        }
         self.domain = domain
         self.domainSuggestionContext = domainSuggestionContext
         self.resultsState = resultsState
     }
     
     public static func ==(lhs: ChatSearchData, rhs: ChatSearchData) -> Bool {
+        if lhs.mediaTags != rhs.mediaTags { return false }
         if lhs.query != rhs.query {
             return false
         }
@@ -108,20 +115,36 @@ public struct ChatSearchData: Equatable {
     }
     
     public func withUpdatedQuery(_ query: String) -> ChatSearchData {
-        return ChatSearchData(query: query, domain: self.domain, domainSuggestionContext: self.domainSuggestionContext, resultsState: self.resultsState)
+        return ChatSearchData(query: query, domain: self.domain, domainSuggestionContext: self.domainSuggestionContext, resultsState: self.resultsState, mediaTags: self.mediaTags)
     }
     
     public func withUpdatedDomain(_ domain: ChatSearchDomain) -> ChatSearchData {
-        return ChatSearchData(query: self.query, domain: domain, domainSuggestionContext: self.domainSuggestionContext, resultsState: self.resultsState)
+        return ChatSearchData(query: self.query, domain: domain, domainSuggestionContext: self.domainSuggestionContext, resultsState: self.mediaTags == nil ? self.resultsState : nil)
     }
     
     public func withUpdatedDomainSuggestionContext(_ domain: ChatSearchDomainSuggestionContext) -> ChatSearchData {
-        return ChatSearchData(query: self.query, domain: self.domain, domainSuggestionContext: domainSuggestionContext, resultsState: self.resultsState)
+        return ChatSearchData(query: self.query, domain: self.domain, domainSuggestionContext: domainSuggestionContext, resultsState: self.resultsState, mediaTags: self.mediaTags)
     }
     
     public func withUpdatedResultsState(_ resultsState: ChatSearchResultsState?) -> ChatSearchData {
-        return ChatSearchData(query: self.query, domain: self.domain, domainSuggestionContext: self.domainSuggestionContext, resultsState: resultsState)
+        return ChatSearchData(query: self.query, domain: self.domain, domainSuggestionContext: self.domainSuggestionContext, resultsState: resultsState, mediaTags: self.mediaTags)
     }
+    public func withUpdatedMediaTags(_ tags: EngineMessage.Tags?) -> ChatSearchData {
+        return ChatSearchData(query: self.query, domain: .everything, mediaTags: tags)
+    }
+
+    public func mediaTitle(strings: PresentationStrings) -> String? {
+        guard let tags = self.mediaTags else { return nil }
+        switch tags {
+        case .photoOrVideo: return strings.baseLanguageCode.hasPrefix("zh") ? "图片及视频" : strings.PeerInfo_PaneMedia
+        case .file: return strings.PeerInfo_PaneFiles
+        case .webPage: return strings.PeerInfo_PaneLinks
+        case .music: return strings.PeerInfo_PaneAudio
+        case .voiceOrInstantVideo: return strings.PeerInfo_PaneVoiceAndVideo
+        default: return strings.PeerInfo_PaneMedia
+        }
+    }
+
 }
 
 public enum ChatRecordedMediaPreview: Equatable {
@@ -891,6 +914,25 @@ public final class ChatPresentationInterfaceState: Equatable {
         self.canStopIncomingStreamingMessage = canStopIncomingStreamingMessage
     }
     
+    public var wegramHiddenPinnedMessage: ChatPinnedMessage? {
+        guard case .standard(.default) = self.mode,
+              self.subject == nil,
+              case let .peer(id) = self.chatLocation,
+              id.namespace != Namespaces.Peer.SecretChat,
+              !self.pendingUnpinnedAllMessages,
+              !self.isNotAccessible,
+              let peer = self.renderedPeer?.chatMainPeer else {
+            return nil
+        }
+        if peer is TelegramUser {
+            return self.pinnedMessage
+        }
+        if let channel = peer as? TelegramChannel, case .broadcast = channel.info {
+            return self.pinnedMessage
+        }
+        return nil
+    }
+
     public static func ==(lhs: ChatPresentationInterfaceState, rhs: ChatPresentationInterfaceState) -> Bool {
         if lhs.interfaceState != rhs.interfaceState {
             return false

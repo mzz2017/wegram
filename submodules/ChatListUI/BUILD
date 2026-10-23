@@ -96,6 +96,7 @@ swift_library(
         "//submodules/TelegramUI/Components/ChatFolderLinkPreviewScreen",
         "//submodules/ItemListUI",
         "//submodules/QrCodeUI",
+        "//submodules/CallListUI",
         "//submodules/TelegramUI/Components/ActionPanelComponent",
         "//submodules/TelegramUI/Components/Stories/StoryContainerScreen",
         "//submodules/TelegramUI/Components/Stories/StoryPeerListComponent",
@@ -145,9 +146,17 @@ swift_library(
 swift_library(
     name = "ChatListUITestsLib",
     testonly = True,
-    srcs = glob(["Tests/**/*.swift"]),
+    srcs = glob(["Tests/**/*.swift"], exclude = ["Tests/WegramChatListEmptyHostedTests.swift"]),
     deps = [
         ":ChatListUI",
+        "//submodules/CallListUI",
+        "//submodules/PeerInfoUI",
+        "//submodules/ItemListUI",
+        "//submodules/Display",
+        "//submodules/AsyncDisplayKit",
+        "//submodules/ShimmerEffect",
+        "//submodules/MergeLists",
+        "//submodules/ChatListSearchItemHeader",
         "//submodules/TelegramCore:TelegramCore",
         "//submodules/Postbox:Postbox",
         "//submodules/TelegramPresentationData:TelegramPresentationData",
@@ -161,7 +170,7 @@ swift_library(
 ios_test_runner(
     name = "ChatListUITestRunner",
     device_type = "iPhone 17",
-    os_version = "26.5",
+    os_version = "27.0",
 )
 
 ios_unit_test(
@@ -170,5 +179,23 @@ ios_unit_test(
     runner = ":ChatListUITestRunner",
     resources = ["//Telegram:InstantPagePreviewTestStrings"],
     deps = [":ChatListUITestsLib"],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["Sources/WegramShortcutMenuView.swift", "Sources/WegramShortcutMenuController.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+swift_library(
+    name = "WegramChatListEmptyHostedTestsLib",
+    testonly = True,
+    srcs = ["Tests/WegramChatListEmptyHostedTests.swift", "Sources/WegramChatListEmptyView.swift"],
+    deps = ["//submodules/Display", "//submodules/ItemListUI", "//submodules/TelegramPresentationData", "//submodules/TelegramUIPreferences"],
+)
+
+ios_unit_test(
+    name = "WegramChatListEmptyHostedTests",
+    minimum_os_version = "15.0",
+    runner = ":ChatListUITestRunner",
+    test_host = "//Tests/wegram/qr-host:WegramQrTestHost",
+    deps = [":WegramChatListEmptyHostedTestsLib"],
     visibility = ["//visibility:public"],
 )

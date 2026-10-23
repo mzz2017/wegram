@@ -9,7 +9,7 @@ import ItemListUI
 import PresentationDataUtils
 import AccountContext
 
-enum AutomaticDownloadConnectionType {
+public enum AutomaticDownloadConnectionType {
     case cellular
     case wifi
     
@@ -283,6 +283,10 @@ private func stringForAutomaticDownloadPeers(strings: PresentationStrings, decim
     }
 }
 
+public func automaticDownloadCategorySummary(strings: PresentationStrings, decimalSeparator: String, category: MediaAutoDownloadCategory, type: AutomaticDownloadCategory) -> String {
+    return stringForAutomaticDownloadPeers(strings: strings, decimalSeparator: decimalSeparator, peers: AutomaticDownloadPeers(category: category), category: type)
+}
+
 private func autodownloadMediaConnectionTypeControllerEntries(presentationData: PresentationData, connectionType: AutomaticDownloadConnectionType, settings: MediaAutoDownloadSettings) -> [AutodownloadMediaCategoryEntry] {
     var entries: [AutodownloadMediaCategoryEntry] = []
     
@@ -317,7 +321,7 @@ private func autodownloadMediaConnectionTypeControllerEntries(presentationData: 
     return entries
 }
 
-func autodownloadMediaConnectionTypeController(context: AccountContext, connectionType: AutomaticDownloadConnectionType, focusOnItemTag: AutodownloadMediaCategoryEntryTag? = nil) -> ViewController {
+public func autodownloadMediaConnectionTypeController(context: AccountContext, connectionType: AutomaticDownloadConnectionType, focusOnItemTag: AutodownloadMediaCategoryEntryTag? = nil) -> ViewController {
     var pushControllerImpl: ((ViewController) -> Void)?
     
     let arguments = AutodownloadMediaConnectionTypeControllerArguments(toggleMaster: { value in

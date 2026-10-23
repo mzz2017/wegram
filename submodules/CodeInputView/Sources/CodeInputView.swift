@@ -111,6 +111,8 @@ public final class CodeInputView: ASDisplayNode, UITextFieldDelegate {
         }
     }
     
+    private let flatSeparator = ASDisplayNode()
+    private var usesWegramAppearance = false
     private let prefixLabel: ImmediateTextNode
     public let textField: UITextField
     
@@ -153,6 +155,9 @@ public final class CodeInputView: ASDisplayNode, UITextFieldDelegate {
         super.init()
         
         self.addSubnode(self.prefixLabel)
+        self.flatSeparator.isUserInteractionEnabled = false
+        self.flatSeparator.isHidden = true
+        self.addSubnode(self.flatSeparator)
         self.textField.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
         self.textField.alpha = 0.01
         self.view.addSubview(self.textField)
@@ -271,6 +276,10 @@ public final class CodeInputView: ASDisplayNode, UITextFieldDelegate {
             return
         }
         
+        if self.usesWegramAppearance {
+            self.flatSeparator.backgroundColor = UIColor(argb: self.isFailed ? theme.failedBorder : (self.isSucceed ? theme.succeedBorder : theme.inactiveBorder))
+            return
+        }
         var delay: Double = 0.0
         for i in 0 ..< self.itemViews.count {
             let itemView = self.itemViews[i]
@@ -308,12 +317,34 @@ public final class CodeInputView: ASDisplayNode, UITextFieldDelegate {
         }
     }
     
-    public func update(theme: Theme, prefix: String, count: Int, width: CGFloat, compact: Bool) -> CGSize {
+    public func update(theme: Theme, prefix: String, count: Int, width: CGFloat, compact: Bool, usesWegramAppearance: Bool = false, wegramLabel: String = "") -> CGSize {
         self.theme = theme
         self.count = count
         self.prefix = prefix
         self.compact = compact
-        
+        self.usesWegramAppearance = usesWegramAppearance
+        self.flatSeparator.isHidden = !usesWegramAppearance
+        self.textField.alpha = usesWegramAppearance ? 1 : 0.01
+        self.prefixLabel.isHidden = false
+        if usesWegramAppearance {
+            for item in self.itemViews { item.removeFromSupernode() }
+            self.itemViews.removeAll()
+            let title = prefix.isEmpty ? wegramLabel : prefix
+            self.prefixLabel.attributedText = NSAttributedString(string: title, font: Font.regular(17), textColor: UIColor(argb: theme.foreground))
+            let labelSize = self.prefixLabel.updateLayout(CGSize(width: max(0, width * 0.5 - 8), height: 52))
+            self.prefixLabel.frame = CGRect(x: 0, y: floor((52 - labelSize.height) / 2), width: labelSize.width, height: labelSize.height)
+            let textX = min(width, prefix.isEmpty ? 94 : labelSize.width + 8)
+            self.textField.frame = CGRect(x: textX, y: 0, width: max(0, width - textX), height: 52)
+            self.textField.font = Font.regular(17)
+            self.textField.textColor = UIColor(argb: theme.foreground)
+            self.textField.tintColor = UIColor(argb: theme.activeBorder)
+            self.textField.textAlignment = .left
+            self.flatSeparator.frame = CGRect(x: 0, y: 52 - UIScreenPixel, width: width, height: UIScreenPixel)
+            self.updateItemViews(animated: false)
+            self.textField.keyboardAppearance = theme.isDark ? .dark : .light
+            return CGSize(width: width, height: 52)
+        }
+        self.textField.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
         if theme.isDark {
             self.textField.keyboardAppearance = .dark
         } else {

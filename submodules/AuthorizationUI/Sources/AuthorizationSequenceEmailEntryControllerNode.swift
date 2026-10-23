@@ -51,6 +51,7 @@ final class AuthorizationDividerNode: ASDisplayNode {
 final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UITextFieldDelegate {
     private let strings: PresentationStrings
     private let theme: PresentationTheme
+    private let usesWegramAppearance: Bool
     private let mode: AuthorizationSequenceEmailEntryController.Mode
     
     private let animationNode: AnimatedStickerNode
@@ -91,17 +92,21 @@ final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UIText
     
     private let appearanceTimestamp = CACurrentMediaTime()
     
-    init(strings: PresentationStrings, theme: PresentationTheme, mode: AuthorizationSequenceEmailEntryController.Mode) {
+    init(strings: PresentationStrings, theme: PresentationTheme, mode: AuthorizationSequenceEmailEntryController.Mode, usesWegramAppearance: Bool = false) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.strings = strings
         self.theme = theme
         self.mode = mode
         
         self.animationNode = DefaultAnimatedStickerNodeImpl(lottieSettings: .noAccountFallback)
-        self.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: "IntroMail"), width: 256, height: 256, playbackMode: .once, mode: .direct(cachePathPrefix: nil))
+        if !usesWegramAppearance {
+            self.animationNode.setup(source: AnimatedStickerNodeLocalFileSource(name: "IntroMail"), width: 256, height: 256, playbackMode: .once, mode: .direct(cachePathPrefix: nil))
+        }
         
         self.titleNode = ASTextNode()
         self.titleNode.isUserInteractionEnabled = false
         self.titleNode.displaysAsynchronously = false
+        self.titleNode.accessibilityIdentifier = "Auth.EmailEntry.Title"
         
         self.noticeNode = ASTextNode()
         self.noticeNode.isUserInteractionEnabled = false
@@ -111,10 +116,11 @@ final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UIText
         
         if #available(iOS 13.0, *) {
             self.signInWithAppleButton = ASAuthorizationAppleIDButton(authorizationButtonType: .signIn, authorizationButtonStyle: theme.overallDarkAppearance ? .white : .black)
-            (self.signInWithAppleButton as? ASAuthorizationAppleIDButton)?.cornerRadius = 11
+            (self.signInWithAppleButton as? ASAuthorizationAppleIDButton)?.cornerRadius = usesWegramAppearance ? 5 : 11
         }
         
-        self.proceedNode = SolidRoundedButtonNode(title: self.strings.Login_Continue, theme: SolidRoundedButtonTheme(theme: self.theme), glass: false, height: 50.0, cornerRadius: 50.0 * 0.5)
+        self.proceedNode = SolidRoundedButtonNode(title: self.strings.Login_Continue, theme: usesWegramAppearance ? SolidRoundedButtonTheme(backgroundColor: UIColor(rgb: 0x07c160), foregroundColor: .white) : SolidRoundedButtonTheme(theme: self.theme), glass: false, font: usesWegramAppearance ? .regular : .bold, height: usesWegramAppearance ? 44 : 50, cornerRadius: usesWegramAppearance ? 5 : 25)
+        self.proceedNode.accessibilityIdentifier = "Auth.EmailEntry.Continue"
         self.proceedNode.progressType = .embedded
         
         self.codeSeparatorNode = ASDisplayNode()
@@ -122,7 +128,7 @@ final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UIText
         self.codeSeparatorNode.backgroundColor = self.theme.list.itemPlainSeparatorColor
         
         self.codeField = TextFieldNode()
-        self.codeField.textField.font = Font.regular(20.0)
+        self.codeField.textField.font = Font.regular(usesWegramAppearance ? 17 : 20)
         self.codeField.textField.textColor = self.theme.list.itemPrimaryTextColor
         self.codeField.textField.textAlignment = .natural
         self.codeField.textField.autocorrectionType = .no
@@ -134,8 +140,13 @@ final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UIText
         self.codeField.textField.returnKeyType = .done
         self.codeField.textField.keyboardAppearance = self.theme.rootController.keyboardColor.keyboardAppearance
         self.codeField.textField.disableAutomaticKeyboardHandling = [.forward, .backward]
-        self.codeField.textField.tintColor = self.theme.list.itemAccentColor
+        self.codeField.textField.tintColor = usesWegramAppearance ? UIColor(rgb: 0x07c160) : self.theme.list.itemAccentColor
+        self.codeField.textField.accessibilityIdentifier = "Auth.EmailEntry.Email"
+        self.codeField.textField.accessibilityLabel = self.strings.Login_AddEmailPlaceholder
         self.codeField.textField.placeholder = self.strings.Login_AddEmailPlaceholder
+        if usesWegramAppearance {
+            self.codeField.textField.attributedPlaceholder = NSAttributedString(string: self.strings.Login_AddEmailPlaceholder, font: Font.regular(17), textColor: theme.list.itemPlaceholderTextColor)
+        }
                 
         self.dividerNode = AuthorizationDividerNode(theme: self.theme, strings: self.strings)
         
@@ -212,35 +223,35 @@ final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UIText
         }
                 
         var insets = layout.insets(options: [])
-        insets.top = layout.statusBarHeight ?? 20.0
+        insets.top = self.usesWegramAppearance ? navigationBarHeight : (layout.statusBarHeight ?? 20.0)
         if let inputHeight = layout.inputHeight {
             insets.bottom = max(inputHeight, insets.bottom)
         }
         
         let titleInset: CGFloat = layout.size.width > 320.0 ? 18.0 : 0.0
         
-        self.titleNode.attributedText = NSAttributedString(string: self.mode == .setup ? self.strings.LoginEmail_Title : self.strings.Login_EnterNewEmailTitle, font: Font.bold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
+        self.titleNode.attributedText = NSAttributedString(string: self.mode == .setup ? self.strings.LoginEmail_Title : self.strings.Login_EnterNewEmailTitle, font: self.usesWegramAppearance ? Font.regular(22) : Font.bold(28.0), textColor: self.theme.list.itemPrimaryTextColor)
 
         
-        let inset: CGFloat = 24.0
+        let inset: CGFloat = self.usesWegramAppearance ? 30 : 24
         let maximumWidth: CGFloat = min(430.0, layout.size.width)
         
         let animationSize = CGSize(width: 100.0, height: 100.0)
         let titleSize = self.titleNode.measure(CGSize(width: maximumWidth, height: CGFloat.greatestFiniteMagnitude))
         
-        let noticeSize = self.noticeNode.measure(CGSize(width: maximumWidth - 80.0, height: CGFloat.greatestFiniteMagnitude))
-        let proceedHeight = self.proceedNode.updateLayout(width: maximumWidth - 48.0, transition: transition)
-        let proceedSize = CGSize(width: maximumWidth - 48.0, height: proceedHeight)
+        let noticeSize = self.noticeNode.measure(CGSize(width: maximumWidth - (self.usesWegramAppearance ? 60 : 80), height: CGFloat.greatestFiniteMagnitude))
+        let proceedHeight = self.proceedNode.updateLayout(width: maximumWidth - inset * 2, transition: transition)
+        let proceedSize = CGSize(width: maximumWidth - inset * 2, height: proceedHeight)
         
         var items: [AuthorizationLayoutItem] = []
         
         items.append(AuthorizationLayoutItem(node: self.titleNode, size: titleSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: titleInset, maxValue: titleInset), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         items.append(AuthorizationLayoutItem(node: self.noticeNode, size: noticeSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 18.0, maxValue: 18.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         
-        items.append(AuthorizationLayoutItem(node: self.codeField, size: CGSize(width: maximumWidth - 88.0, height: 44.0), spacingBefore: AuthorizationLayoutItemSpacing(weight: 18.0, maxValue: 30.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
-        items.append(AuthorizationLayoutItem(node: self.codeSeparatorNode, size: CGSize(width: maximumWidth - 48.0, height: UIScreenPixel), spacingBefore: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
+        items.append(AuthorizationLayoutItem(node: self.codeField, size: CGSize(width: maximumWidth - (self.usesWegramAppearance ? 60 : 88), height: self.usesWegramAppearance ? 52 : 44), spacingBefore: AuthorizationLayoutItemSpacing(weight: 18.0, maxValue: 30.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
+        items.append(AuthorizationLayoutItem(node: self.codeSeparatorNode, size: CGSize(width: maximumWidth - inset * 2, height: UIScreenPixel), spacingBefore: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)))
         
-        if layout.size.width > 320.0 {
+        if !self.usesWegramAppearance && layout.size.width > 320.0 {
             items.insert(AuthorizationLayoutItem(node: self.animationNode, size: animationSize, spacingBefore: AuthorizationLayoutItemSpacing(weight: 10.0, maxValue: 10.0), spacingAfter: AuthorizationLayoutItemSpacing(weight: 0.0, maxValue: 0.0)), at: 0)
             self.animationNode.updateLayout(size: animationSize)
             self.proceedNode.isHidden = false
@@ -248,7 +259,7 @@ final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UIText
             self.animationNode.visibility = true
         } else {
             insets.top = navigationBarHeight
-            self.proceedNode.isHidden = true
+            self.proceedNode.isHidden = !self.usesWegramAppearance
             self.animationNode.isHidden = true
         }
         
@@ -264,13 +275,16 @@ final class AuthorizationSequenceEmailEntryControllerNode: ASDisplayNode, UIText
             self.dividerNode.isHidden = true
         }
         
-        let _ = layoutAuthorizationItems(bounds: CGRect(origin: CGPoint(x: 0.0, y: insets.top), size: CGSize(width: layout.size.width, height: layout.size.height - insets.top - insets.bottom - 120.0)), items: items, transition: transition, failIfDoesNotFit: false)
+        let _ = layoutAuthorizationItems(bounds: CGRect(origin: CGPoint(x: 0.0, y: insets.top), size: CGSize(width: layout.size.width, height: layout.size.height - insets.top - insets.bottom - (self.usesWegramAppearance ? 44 + inset + dividerSize.height + 8 : 120))), items: items, transition: transition, failIfDoesNotFit: false)
         
         if let signInWithAppleButton = self.signInWithAppleButton, self.appleSignInAllowed {
             signInWithAppleButton.isHidden = false
             transition.updateFrame(view: signInWithAppleButton, frame: self.proceedNode.frame)
         } else {
             self.signInWithAppleButton?.isHidden = true
+        }
+        if self.usesWegramAppearance {
+            self.updateButtonsVisibility(transition: .immediate)
         }
     }
     

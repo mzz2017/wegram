@@ -48,6 +48,7 @@ private enum ChatListTokenId: Int32 {
     case filter
     case peer
     case date
+    case wegramHistory
 }
 
 final class ChatListSearchInteraction {
@@ -68,8 +69,10 @@ final class ChatListSearchInteraction {
     let switchToFilter: (ChatListSearchPaneKey) -> Void
     let dismissSearch: () -> Void
     let openAdInfo: (ASDisplayNode, AdPeer) -> Void
+    let searchInPeer: (EnginePeer) -> Void
+    let openHistoryResults: () -> Void
     
-    init(openPeer: @escaping (EnginePeer, EnginePeer?, Int64?, Bool) -> Void, openDisabledPeer: @escaping (EnginePeer, Int64?, ChatListDisabledPeerReason) -> Void, openMessage: @escaping (EnginePeer, Int64?, EngineMessage.Id, Bool) -> Void, openUrl: @escaping (String) -> Void, clearRecentSearch: @escaping (ASDisplayNode) -> Void, addContact: @escaping (String) -> Void, toggleMessageSelection: @escaping (EngineMessage.Id, Bool) -> Void, messageContextAction: @escaping ((EngineMessage, ASDisplayNode?, CGRect?, UIGestureRecognizer?, ChatListSearchPaneKey, (id: String, size: Int64, isFirstInList: Bool)?) -> Void), mediaMessageContextAction: @escaping ((EngineMessage, ASDisplayNode?, CGRect?, UIGestureRecognizer?) -> Void), peerContextAction: ((EnginePeer, ChatListSearchContextActionSource, ASDisplayNode, ContextGesture?, CGPoint?) -> Void)?, present: @escaping (ViewController, Any?) -> Void, dismissInput: @escaping () -> Void, getSelectedMessageIds: @escaping () -> Set<EngineMessage.Id>?, openStories: ((EnginePeer.Id, ASDisplayNode) -> Void)?, switchToFilter: @escaping (ChatListSearchPaneKey) -> Void, dismissSearch: @escaping () -> Void, openAdInfo: @escaping (ASDisplayNode, AdPeer) -> Void) {
+    init(openPeer: @escaping (EnginePeer, EnginePeer?, Int64?, Bool) -> Void, openDisabledPeer: @escaping (EnginePeer, Int64?, ChatListDisabledPeerReason) -> Void, openMessage: @escaping (EnginePeer, Int64?, EngineMessage.Id, Bool) -> Void, openUrl: @escaping (String) -> Void, clearRecentSearch: @escaping (ASDisplayNode) -> Void, addContact: @escaping (String) -> Void, toggleMessageSelection: @escaping (EngineMessage.Id, Bool) -> Void, messageContextAction: @escaping ((EngineMessage, ASDisplayNode?, CGRect?, UIGestureRecognizer?, ChatListSearchPaneKey, (id: String, size: Int64, isFirstInList: Bool)?) -> Void), mediaMessageContextAction: @escaping ((EngineMessage, ASDisplayNode?, CGRect?, UIGestureRecognizer?) -> Void), peerContextAction: ((EnginePeer, ChatListSearchContextActionSource, ASDisplayNode, ContextGesture?, CGPoint?) -> Void)?, present: @escaping (ViewController, Any?) -> Void, dismissInput: @escaping () -> Void, getSelectedMessageIds: @escaping () -> Set<EngineMessage.Id>?, openStories: ((EnginePeer.Id, ASDisplayNode) -> Void)?, switchToFilter: @escaping (ChatListSearchPaneKey) -> Void, dismissSearch: @escaping () -> Void, openAdInfo: @escaping (ASDisplayNode, AdPeer) -> Void, searchInPeer: @escaping (EnginePeer) -> Void, openHistoryResults: @escaping () -> Void) {
         self.openPeer = openPeer
         self.openDisabledPeer = openDisabledPeer
         self.openMessage = openMessage
@@ -87,6 +90,8 @@ final class ChatListSearchInteraction {
         self.switchToFilter = switchToFilter
         self.dismissSearch = dismissSearch
         self.openAdInfo = openAdInfo
+        self.searchInPeer = searchInPeer
+        self.openHistoryResults = openHistoryResults
     }
 }
 
@@ -121,6 +126,9 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
     private let communityId: EnginePeer.Id?
     private var folder: (Int32, String)?
     private let displaySearchFilters: Bool
+    private let usesWegramAppearance: Bool
+    private var wegramCategoryView: WegramSearchCategoryView?
+    private var wegramCategoriesVisible = false
     private let hasDownloads: Bool
     private var interaction: ChatListSearchInteraction?
     private let openMessage: (EnginePeer, Int64?, EngineMessage.Id, Bool) -> Void
@@ -184,7 +192,7 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
     private var recentAppsDisposable: Disposable?
     private var refreshedGlobalPostSearchStateDisposable: Disposable?
     
-    public init(context: AccountContext, animationCache: AnimationCache, animationRenderer: MultiAnimationRenderer, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, filter: ChatListNodePeersFilter, requestPeerType: [ReplyMarkupButtonRequestPeerType]?, excludedPeerIds: Set<EnginePeer.Id> = [], location: ChatListControllerLocation, communityId: EnginePeer.Id? = nil, folder: (Int32, String)?, displaySearchFilters: Bool, hasDownloads: Bool, initialFilter: ChatListSearchFilter = .chats, openPeer originalOpenPeer: @escaping (EnginePeer, EnginePeer?, Int64?, Bool) -> Void, openDisabledPeer: @escaping (EnginePeer, Int64?, ChatListDisabledPeerReason) -> Void, openRecentPeerOptions: @escaping (EnginePeer) -> Void, openMessage originalOpenMessage: @escaping (EnginePeer, Int64?, EngineMessage.Id, Bool) -> Void, addContact: ((String) -> Void)?, peerContextAction: ((EnginePeer, ChatListSearchContextActionSource, ASDisplayNode, ContextGesture?, CGPoint?) -> Void)?, present: @escaping (ViewController, Any?) -> Void, presentInGlobalOverlay: @escaping (ViewController, Any?) -> Void, navigationController: NavigationController?, parentController: @escaping () -> ViewController?) {
+    public init(context: AccountContext, animationCache: AnimationCache, animationRenderer: MultiAnimationRenderer, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil, filter: ChatListNodePeersFilter, requestPeerType: [ReplyMarkupButtonRequestPeerType]?, excludedPeerIds: Set<EnginePeer.Id> = [], location: ChatListControllerLocation, communityId: EnginePeer.Id? = nil, usesWegramAppearance: Bool = false, folder: (Int32, String)?, displaySearchFilters: Bool, hasDownloads: Bool, initialFilter: ChatListSearchFilter = .chats, openPeer originalOpenPeer: @escaping (EnginePeer, EnginePeer?, Int64?, Bool) -> Void, openDisabledPeer: @escaping (EnginePeer, Int64?, ChatListDisabledPeerReason) -> Void, openRecentPeerOptions: @escaping (EnginePeer) -> Void, openMessage originalOpenMessage: @escaping (EnginePeer, Int64?, EngineMessage.Id, Bool) -> Void, addContact: ((String) -> Void)?, peerContextAction: ((EnginePeer, ChatListSearchContextActionSource, ASDisplayNode, ContextGesture?, CGPoint?) -> Void)?, present: @escaping (ViewController, Any?) -> Void, presentInGlobalOverlay: @escaping (ViewController, Any?) -> Void, navigationController: NavigationController?, parentController: @escaping () -> ViewController?) {
         var initialFilter = initialFilter
         if case .chats = initialFilter, case .forum = location {
             initialFilter = .topics
@@ -203,6 +211,7 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
         self.folder = folder
         
         self.displaySearchFilters = displaySearchFilters
+        self.usesWegramAppearance = usesWegramAppearance
         self.hasDownloads = hasDownloads
         self.navigationController = navigationController
         self.presentationData = updatedPresentationData?.initial ?? context.sharedContext.currentPresentationData.with { $0 }
@@ -217,7 +226,7 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
         self.edgeEffectView = EdgeEffectView()
         
         self.filterContainerNode = ChatListSearchFiltersContainerNode()
-        self.paneContainerNode = ChatListSearchPaneContainerNode(context: context, animationCache: animationCache, animationRenderer: animationRenderer, updatedPresentationData: updatedPresentationData, peersFilter: self.peersFilter, requestPeerType: self.requestPeerType, excludedPeerIds: self.excludedPeerIds, location: location, communityId: communityId, searchQuery: self.searchQuery.get(), searchOptions: self.searchOptions.get(), navigationController: navigationController, parentController: parentController())
+        self.paneContainerNode = ChatListSearchPaneContainerNode(context: context, animationCache: animationCache, animationRenderer: animationRenderer, updatedPresentationData: updatedPresentationData, peersFilter: self.peersFilter, requestPeerType: self.requestPeerType, excludedPeerIds: self.excludedPeerIds, location: location, communityId: communityId, usesWegramAppearance: usesWegramAppearance, searchQuery: self.searchQuery.get(), searchOptions: self.searchOptions.get(), navigationController: navigationController, parentController: parentController())
         self.paneContainerNode.clipsToBounds = true
         
         super.init()
@@ -350,6 +359,20 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
             self?.dismissSearch?()
         }, openAdInfo: { [weak self] node, adPeer in
             self?.openAdInfo?(node, adPeer)
+        }, searchInPeer: { [weak self] peer in
+            guard let self else { return }
+            let isGroup: Bool
+            switch peer {
+            case .legacyGroup: isGroup = true
+            case let .channel(channel):
+                if case .group = channel.info { isGroup = true } else { isGroup = false }
+            default: isGroup = false
+            }
+            let title = peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder)
+            self.updateSearchOptions(self.currentSearchOptions.withUpdatedPeer((peer.id, isGroup, title)).withUpdatedWegramMessagesOnly(false))
+        }, openHistoryResults: { [weak self] in
+            guard let self else { return }
+            self.updateSearchOptions(self.currentSearchOptions.withUpdatedWegramMessagesOnly(true))
         })
         self.paneContainerNode.interaction = interaction
         
@@ -656,6 +679,9 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
              updatedOptions = updatedOptions?.withUpdatedFolder(nil)
             self.folder = nil
         }
+        if !tokensIdSet.contains(ChatListTokenId.wegramHistory.rawValue) {
+            updatedOptions = updatedOptions?.withUpdatedWegramMessagesOnly(false)
+        }
         self.updateSearchOptions(updatedOptions)
     }
     
@@ -689,6 +715,10 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
             tokens.append(SearchBarToken(id: ChatListTokenId.peer.rawValue, icon: image, title: peerName, permanent: false))
         }
         
+        if options?.wegramMessagesOnly == true {
+            tokens.append(SearchBarToken(id: ChatListTokenId.wegramHistory.rawValue, icon: UIImage(systemName: "bubble.left"), title: wegramSearchHistoryTitle(self.presentationData.strings), permanent: false))
+        }
+
         if let (_, _, dateTitle) = options?.date {
             tokens.append(SearchBarToken(id: ChatListTokenId.date.rawValue, icon: UIImage(bundleImageName: "Chat List/Search/Calendar"), title: dateTitle, permanent: false))
             
@@ -711,6 +741,9 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
     }
     
     override public func searchTextUpdated(text: String) {
+        if text.isEmpty && self.currentSearchOptions.wegramMessagesOnly {
+            self.updateSearchOptions(self.currentSearchOptions.withUpdatedWegramMessagesOnly(false), clearQuery: true)
+        }
         let searchQuery: String? = !text.isEmpty ? text : nil
 
         if !text.hasPrefix("#") && self.paneContainerNode.currentPaneKey == .publicPosts {
@@ -721,9 +754,42 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
         self.searchQueryValue = searchQuery
         
         self.suggestedDates.set(.single(suggestDates(for: text, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat)))
+        self.updateWegramCategoriesVisibility()
+    }
+
+    // WeChat's empty search shows "搜索指定内容" with a grid of categories instead of a floating
+    // pill; here the grid lists the existing search panes and the pill returns once one is chosen.
+    private var shouldShowWegramCategories: Bool {
+        guard self.usesWegramAppearance, self.displaySearchFilters, self.searchQueryValue == nil, self.stateValue.selectedMessageIds == nil else {
+            return false
+        }
+        if case .forum = self.location {
+            return false
+        }
+        let options = self.currentSearchOptions
+        if options.peer != nil || options.date != nil || options.wegramMessagesOnly {
+            return false
+        }
+        return self.paneContainerNode.currentPaneKey == nil || self.paneContainerNode.currentPaneKey == .chats
+    }
+
+    private func updateWegramCategoriesVisibility() {
+        guard self.usesWegramAppearance, self.shouldShowWegramCategories != self.wegramCategoriesVisible else {
+            return
+        }
+        // Pane changes can arrive from inside a layout pass, so relayout on the next turn.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let (layout, navigationBarHeight) = self.validLayout, self.shouldShowWegramCategories != self.wegramCategoriesVisible else {
+                return
+            }
+            self.containerLayoutUpdated(layout, navigationBarHeight: navigationBarHeight, transition: .immediate)
+        }
     }
     
     private func currentPaneUpdated(_ key: ChatListSearchPaneKey, transitionFraction: CGFloat = 0.0, transition: ContainedViewLayoutTransition) {
+        if key != .chats && self.currentSearchOptions.wegramMessagesOnly {
+            self.updateSearchOptions(self.currentSearchOptions.withUpdatedWegramMessagesOnly(false))
+        }
         var filterKey: ChatListSearchFilter
         switch key {
         case .chats:
@@ -760,6 +826,7 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
         if let (layout, _) = self.validLayout {
             self.updateFilterContainerNode(layout: layout, transition: transition)
         }
+        self.updateWegramCategoriesVisibility()
     }
     
     public func search(filter: ChatListSearchFilter, query: String?) {
@@ -838,7 +905,35 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
         let isFirstTime = self.validLayout == nil
         self.validLayout = (layout, navigationBarHeight)
         
-        let topInset = navigationBarHeight
+        var topInset = navigationBarHeight
+
+        let showsWegramCategories = self.shouldShowWegramCategories
+        self.wegramCategoriesVisible = showsWegramCategories
+        if showsWegramCategories {
+            let categoryView: WegramSearchCategoryView
+            if let current = self.wegramCategoryView {
+                categoryView = current
+            } else {
+                categoryView = WegramSearchCategoryView()
+                categoryView.selected = { [weak self] key in
+                    self?.paneContainerNode.requestSelectPane(key)
+                }
+                self.wegramCategoryView = categoryView
+                self.view.insertSubview(categoryView, aboveSubview: self.paneContainerNode.view)
+            }
+            var isForum = false
+            if case .forum = self.location {
+                isForum = true
+            }
+            let keys = defaultAvailableSearchPanes(isForum: isForum, hasDownloads: self.hasDownloads, hasPublicPosts: self.showPublicPostsTab).filter { $0 != .chats && $0 != .topics }
+            let width = layout.size.width - layout.safeInsets.left - layout.safeInsets.right
+            let height = categoryView.update(keys: keys, presentationData: self.presentationData, width: width)
+            categoryView.frame = CGRect(x: layout.safeInsets.left, y: topInset, width: width, height: height)
+            topInset += height
+        } else if let categoryView = self.wegramCategoryView {
+            self.wegramCategoryView = nil
+            categoryView.removeFromSuperview()
+        }
         
         var filtersInsets = UIEdgeInsets(top: 0.0, left: 12.0, bottom: layout.insets(options: [.input]).bottom, right: 12.0)
         if filtersInsets.bottom == 84.0 {
@@ -862,7 +957,7 @@ public final class ChatListSearchContainerNode: SearchDisplayControllerContentNo
         transition.updateFrame(node: self.filterContainerNode, frame: CGRect(origin: CGPoint(x: layout.safeInsets.left + filtersInsets.left, y: layout.size.height - filtersInsets.bottom - 40.0), size: CGSize(width: layout.size.width - (layout.safeInsets.left + filtersInsets.left) * 2.0, height: 40.0)))
         self.updateFilterContainerNode(layout: layout, transition: transition)
         
-        self.filterContainerNode.isHidden = !self.displaySearchFilters
+        self.filterContainerNode.isHidden = !self.displaySearchFilters || showsWegramCategories
         
         if isFirstTime {
             self.filterContainerNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
@@ -1904,5 +1999,107 @@ final class ActionSheetAnimationAndTextItemNode: ActionSheetItemNode {
         
         self.updateInternalLayout(size, constrainedSize: constrainedSize)
         return size
+    }
+}
+
+private final class WegramSearchCategoryView: UIView {
+    private let headerLabel = UILabel()
+    private var buttons: [UIButton] = []
+    private var separators: [UIView] = []
+    private var keys: [ChatListSearchPaneKey] = []
+    var selected: ((ChatListSearchPaneKey) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        self.headerLabel.textAlignment = .center
+        self.headerLabel.accessibilityTraits = .header
+        self.addSubview(self.headerLabel)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private static func title(_ key: ChatListSearchPaneKey, strings: PresentationStrings) -> String {
+        switch key.filter {
+        case .channels: return strings.ChatList_Search_FilterChannels
+        case .apps: return strings.ChatList_Search_FilterApps
+        case .globalPosts: return strings.ChatList_Search_FilterGlobalPosts
+        case .publicPosts: return strings.ChatList_Search_FilterPublicPosts
+        case .media: return strings.ChatList_Search_FilterMedia
+        case .downloads: return strings.ChatList_Search_FilterDownloads
+        case .links: return strings.ChatList_Search_FilterLinks
+        case .files: return strings.ChatList_Search_FilterFiles
+        case .music: return strings.ChatList_Search_FilterMusic
+        case .voice, .instantVideo: return strings.ChatList_Search_FilterVoice
+        default: return strings.ChatList_Search_FilterChats
+        }
+    }
+
+    func update(keys: [ChatListSearchPaneKey], presentationData: PresentationData, width: CGFloat) -> CGFloat {
+        let theme = presentationData.theme
+        let dark = theme.overallDarkAppearance
+        let scale = presentationData.listsFontSize.baseDisplaySize / 17.0
+        let linkColor = UIColor(rgb: dark ? 0x7d90a9 : 0x576b95)
+        let separatorColor = UIColor(rgb: dark ? 0x3a3a3a : 0xd9d9d9)
+        self.backgroundColor = theme.list.plainBackgroundColor
+
+        let chinese = presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        self.headerLabel.text = chinese ? "搜索指定内容" : "Search for specific content"
+        self.headerLabel.font = Font.regular(floor(14.0 * scale))
+        self.headerLabel.textColor = UIColor(rgb: dark ? 0x7f7f7f : 0xb2b2b2)
+        let headerHeight = ceil(self.headerLabel.font.lineHeight)
+        self.headerLabel.frame = CGRect(x: 16.0, y: 32.0, width: width - 32.0, height: headerHeight)
+
+        if keys != self.keys {
+            self.keys = keys
+            self.buttons.forEach { $0.removeFromSuperview() }
+            self.separators.forEach { $0.removeFromSuperview() }
+            self.buttons = keys.map { key in
+                let button = UIButton(type: .system)
+                button.titleLabel?.numberOfLines = 2
+                button.titleLabel?.textAlignment = .center
+                button.addAction(UIAction(handler: { [weak self] _ in self?.selected?(key) }), for: .touchUpInside)
+                self.addSubview(button)
+                return button
+            }
+            self.separators = []
+        }
+
+        let columns = 3
+        let sideInset: CGFloat = 40.0
+        let columnWidth = floor((width - sideInset * 2.0) / CGFloat(columns))
+        let rowHeight = max(44.0, ceil(Font.regular(floor(15.0 * scale)).lineHeight * 2.0))
+        let gridTop = self.headerLabel.frame.maxY + 20.0
+        for (index, button) in self.buttons.enumerated() {
+            let title = WegramSearchCategoryView.title(self.keys[index], strings: presentationData.strings)
+            button.setAttributedTitle(NSAttributedString(string: title, font: Font.regular(floor(15.0 * scale)), textColor: linkColor), for: .normal)
+            button.accessibilityLabel = title
+            let row = index / columns
+            let column = index % columns
+            button.frame = CGRect(x: sideInset + CGFloat(column) * columnWidth, y: gridTop + CGFloat(row) * rowHeight, width: columnWidth, height: rowHeight)
+        }
+
+        var separatorIndex = 0
+        for (index, button) in self.buttons.enumerated() where index % columns != columns - 1 && index + 1 < self.buttons.count {
+            let separator: UIView
+            if separatorIndex < self.separators.count {
+                separator = self.separators[separatorIndex]
+            } else {
+                separator = UIView()
+                separator.isUserInteractionEnabled = false
+                self.addSubview(separator)
+                self.separators.append(separator)
+            }
+            separator.backgroundColor = separatorColor
+            separator.frame = CGRect(x: button.frame.maxX - UIScreenPixel * 0.5, y: button.frame.midY - 7.0, width: UIScreenPixel, height: 14.0)
+            separatorIndex += 1
+        }
+        while self.separators.count > separatorIndex {
+            self.separators.removeLast().removeFromSuperview()
+        }
+
+        let rows = (self.buttons.count + columns - 1) / columns
+        return gridTop + CGFloat(rows) * rowHeight + 24.0
     }
 }

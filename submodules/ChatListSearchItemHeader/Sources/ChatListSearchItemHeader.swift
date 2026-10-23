@@ -215,21 +215,23 @@ public final class ChatListSearchItemHeader: ListViewItemHeader {
     public let strings: PresentationStrings
     public let actionTitle: String?
     public let action: ((ASDisplayNode) -> Void)?
+    public let usesWegramAppearance: Bool
     
-    public let height: CGFloat = 28.0
+    public var height: CGFloat { self.usesWegramAppearance ? (self.action != nil && self.actionTitle?.isEmpty == false ? 44 : 40) : 28 }
     public let isSticky: Bool = false
     
-    public init(type: ChatListSearchItemHeaderType, theme: PresentationTheme, strings: PresentationStrings, actionTitle: String? = nil, action: ((ASDisplayNode) -> Void)? = nil) {
+    public init(type: ChatListSearchItemHeaderType, theme: PresentationTheme, strings: PresentationStrings, usesWegramAppearance: Bool = false, actionTitle: String? = nil, action: ((ASDisplayNode) -> Void)? = nil) {
         self.type = type
         self.id = ListViewItemNode.HeaderId(space: 0, id: Int64(self.type.id.hashValue))
         self.theme = theme
         self.strings = strings
         self.actionTitle = actionTitle
         self.action = action
+        self.usesWegramAppearance = usesWegramAppearance
     }
 
     public func combinesWith(other: ListViewItemHeader) -> Bool {
-        if let other = other as? ChatListSearchItemHeader, other.id == self.id {
+        if let other = other as? ChatListSearchItemHeader, other.id == self.id, other.usesWegramAppearance == self.usesWegramAppearance {
             return true
         } else {
             return false
@@ -237,11 +239,14 @@ public final class ChatListSearchItemHeader: ListViewItemHeader {
     }
     
     public func node(synchronousLoad: Bool) -> ListViewItemHeaderNode {
-        return ChatListSearchItemHeaderNode(type: self.type, theme: self.theme, strings: self.strings, actionTitle: self.actionTitle, action: self.action)
+        return ChatListSearchItemHeaderNode(type: self.type, theme: self.theme, strings: self.strings, usesWegramAppearance: self.usesWegramAppearance, actionTitle: self.actionTitle, action: self.action)
     }
     
     public func updateNode(_ node: ListViewItemHeaderNode, previous: ListViewItemHeader?, next: ListViewItemHeader?) {
-        (node as? ChatListSearchItemHeaderNode)?.update(type: self.type, actionTitle: self.actionTitle, action: self.action)
+        if let node = node as? ChatListSearchItemHeaderNode {
+            node.updateTheme(theme: self.theme)
+            node.update(type: self.type, actionTitle: self.actionTitle, action: self.action, usesWegramAppearance: self.usesWegramAppearance, strings: self.strings)
+        }
     }
 }
 
@@ -251,18 +256,24 @@ public final class ChatListSearchItemHeaderNode: ListViewItemHeaderNode {
     private var strings: PresentationStrings
     private var actionTitle: String?
     private var action: ((ASDisplayNode) -> Void)?
+    private var usesWegramAppearance: Bool
+    private let wegramContent = UIView()
+    private let wegramTitle = UILabel()
+    private let wegramAction = UIButton(type: .custom)
+    private let wegramSeparator = UIView()
     
     private var validLayout: (size: CGSize, leftInset: CGFloat, rightInset: CGFloat)?
     
     private var edgeEffectView: EdgeEffectView?
     private let sectionHeaderNode: ListSectionHeaderNode
     
-    public init(type: ChatListSearchItemHeaderType, theme: PresentationTheme, strings: PresentationStrings, actionTitle: String?, action: ((ASDisplayNode) -> Void)?) {
+    public init(type: ChatListSearchItemHeaderType, theme: PresentationTheme, strings: PresentationStrings, usesWegramAppearance: Bool = false, actionTitle: String?, action: ((ASDisplayNode) -> Void)?) {
         self.type = type
         self.theme = theme
         self.strings = strings
         self.actionTitle = actionTitle
         self.action = action
+        self.usesWegramAppearance = usesWegramAppearance
         
         self.sectionHeaderNode = ListSectionHeaderNode(theme: theme)
         
@@ -270,28 +281,48 @@ public final class ChatListSearchItemHeaderNode: ListViewItemHeaderNode {
         
         //self.contributesToEdgeEffect = true
         
-        self.sectionHeaderNode.title = type.title(strings: strings).uppercased()
+        self.sectionHeaderNode.title = type.title(strings: self.strings).uppercased()
         self.sectionHeaderNode.action = actionTitle
         self.sectionHeaderNode.activateAction = action
         
         self.addSubnode(self.sectionHeaderNode)
+        self.wegramTitle.font = Font.regular(14)
+        self.wegramTitle.accessibilityTraits = .header
+        self.wegramTitle.accessibilityIdentifier = "Wegram.Search.SectionTitle"
+        self.wegramAction.titleLabel?.font = Font.regular(14)
+        self.wegramAction.accessibilityIdentifier = "Wegram.Search.SectionAction"
+        self.wegramSeparator.isUserInteractionEnabled = false
+        self.wegramAction.addAction(UIAction(handler: { [weak self] _ in
+            guard let self else { return }
+            self.action?(self)
+        }), for: .touchUpInside)
+        self.wegramContent.addSubview(self.wegramTitle)
+        self.wegramContent.addSubview(self.wegramAction)
+        self.wegramContent.addSubview(self.wegramSeparator)
+        self.view.addSubview(self.wegramContent)
+        self.updateWegramPresentation()
     }
     
     public func updateTheme(theme: PresentationTheme) {
         self.theme = theme
         self.sectionHeaderNode.updateTheme(theme: theme)
+        self.updateWegramPresentation()
     }
     
-    public func update(type: ChatListSearchItemHeaderType, actionTitle: String?, action: ((ASDisplayNode) -> Void)?) {
+    public func update(type: ChatListSearchItemHeaderType, actionTitle: String?, action: ((ASDisplayNode) -> Void)?, usesWegramAppearance: Bool = false, strings: PresentationStrings? = nil) {
+        self.type = type
+        if let strings { self.strings = strings }
         self.actionTitle = actionTitle
         self.action = action
+        self.usesWegramAppearance = usesWegramAppearance
         
-        self.sectionHeaderNode.title = type.title(strings: strings).uppercased()
+        self.sectionHeaderNode.title = type.title(strings: self.strings).uppercased()
         self.sectionHeaderNode.action = actionTitle
         self.sectionHeaderNode.activateAction = action
         
+        self.updateWegramPresentation()
         if let (size, leftInset, rightInset) = self.validLayout {
-            self.sectionHeaderNode.updateLayout(size: size, leftInset: leftInset, rightInset: rightInset)
+            self.updateLayout(size: size, leftInset: leftInset, rightInset: rightInset, transition: .immediate)
         }
     }
     
@@ -299,8 +330,30 @@ public final class ChatListSearchItemHeaderNode: ListViewItemHeaderNode {
         self.validLayout = (size, leftInset, rightInset)
         self.sectionHeaderNode.frame = CGRect(origin: CGPoint(), size: size)
         self.sectionHeaderNode.updateLayout(size: size, leftInset: leftInset, rightInset: rightInset)
+        self.wegramContent.frame = CGRect(origin: .zero, size: size)
+        let left = leftInset + 16
+        let right = size.width - rightInset - 16
+        let actionWidth = self.wegramAction.isHidden ? 0 : min(max(44, self.wegramAction.sizeThatFits(size).width + 16), max(0, (right - left) / 2))
+        self.wegramAction.frame = CGRect(x: right - actionWidth, y: 0, width: actionWidth, height: size.height)
+        self.wegramTitle.frame = CGRect(x: left, y: 0, width: max(0, right - left - actionWidth - (actionWidth == 0 ? 0 : 8)), height: size.height)
+        self.wegramSeparator.frame = CGRect(x: left, y: max(0, size.height - UIScreenPixel), width: max(0, right - left), height: UIScreenPixel)
     }
-    
+
+    private func updateWegramPresentation() {
+        self.sectionHeaderNode.isHidden = self.usesWegramAppearance
+        self.wegramContent.isHidden = !self.usesWegramAppearance
+        self.wegramContent.backgroundColor = UIColor(rgb: self.theme.overallDarkAppearance ? 0x191919 : 0xffffff)
+        self.wegramTitle.text = self.type.title(strings: self.strings)
+        self.wegramTitle.textColor = self.theme.list.itemSecondaryTextColor
+        self.wegramAction.setTitle(self.actionTitle, for: .normal)
+        self.wegramAction.accessibilityLabel = self.actionTitle
+        let color = UIColor(rgb: self.theme.overallDarkAppearance ? 0x7d90a9 : 0x576b95)
+        self.wegramAction.setTitleColor(color, for: .normal)
+        self.wegramAction.setTitleColor(color.withAlphaComponent(0.5), for: .highlighted)
+        self.wegramAction.isHidden = self.action == nil || self.actionTitle?.isEmpty != false
+        self.wegramSeparator.backgroundColor = self.theme.list.itemPlainSeparatorColor
+    }
+
     override public func animateAdded(duration: Double) {
         self.layer.animateAlpha(from: 0.0, to: self.alpha, duration: 0.2)
     }

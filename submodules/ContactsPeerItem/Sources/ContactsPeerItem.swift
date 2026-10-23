@@ -197,6 +197,8 @@ public class ContactsPeerItem: ItemListItem, ListViewItemWithHeader {
     let aliasHandling: ContactsPeerItemAliasHandling
     public let peer: ContactsPeerItemPeer
     let status: ContactsPeerItemStatus
+    let usesWegramLayout: Bool
+    let isWegramSearchResult: Bool
     let badge: ContactsPeerItemBadge?
     let rightLabelText: LabelText?
     let requiresPremiumForMessaging: Bool
@@ -278,6 +280,8 @@ public class ContactsPeerItem: ItemListItem, ListViewItemWithHeader {
         setPeerIdWithRevealedOptions: ((EnginePeer.Id?, EnginePeer.Id?) -> Void)? = nil,
         deletePeer: ((EnginePeer.Id) -> Void)? = nil,
         itemHighlighting: ContactItemHighlighting? = nil,
+        usesWegramLayout: Bool = false,
+        isWegramSearchResult: Bool = false,
         contextAction: ((ASDisplayNode, ContextGesture?, CGPoint?) -> Void)? = nil, arrowAction: (() -> Void)? = nil,
         animationCache: AnimationCache? = nil,
         animationRenderer: MultiAnimationRenderer? = nil,
@@ -297,6 +301,8 @@ public class ContactsPeerItem: ItemListItem, ListViewItemWithHeader {
         self.aliasHandling = aliasHandling
         self.peer = peer
         self.status = status
+        self.usesWegramLayout = usesWegramLayout || isWegramSearchResult
+        self.isWegramSearchResult = isWegramSearchResult
         self.badge = badge
         self.rightLabelText = rightLabelText
         self.requiresPremiumForMessaging = requiresPremiumForMessaging
@@ -805,7 +811,7 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
             var updatedTheme: PresentationTheme?
             
             let titleFont = Font.regular(item.presentationData.fontSize.itemListBaseFontSize)
-            let titleBoldFont = Font.medium(item.presentationData.fontSize.itemListBaseFontSize)
+            let titleBoldFont = item.usesWegramLayout ? titleFont : Font.medium(item.presentationData.fontSize.itemListBaseFontSize)
             
             let statusFontSize: CGFloat
             if case .app = item.peerMode {
@@ -821,7 +827,7 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
             if currentItem?.presentationData.theme !== item.presentationData.theme {
                 updatedTheme = item.presentationData.theme
             }
-            var leftInset: CGFloat = 65.0 + params.leftInset
+            var leftInset: CGFloat = (item.isWegramSearchResult ? 68.0 : item.usesWegramLayout ? 68.0 : 65.0) + params.leftInset
             var rightInset: CGFloat = 10.0 + params.rightInset
             
             if case .thread = item.peer {
@@ -1022,7 +1028,7 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
                             }
                         }
                         if let addressName {
-                            let addressNameString = NSAttributedString(string: "@" + addressName, font: statusFont, textColor: item.presentationData.theme.list.itemAccentColor)
+                            let addressNameString = NSAttributedString(string: "@" + addressName, font: statusFont, textColor: item.usesWegramLayout ? item.presentationData.theme.list.itemSecondaryTextColor : item.presentationData.theme.list.itemAccentColor)
                             if !suffix.isEmpty {
                                 let suffixString = NSAttributedString(string: suffix, font: statusFont, textColor: item.presentationData.theme.list.itemSecondaryTextColor)
                                 let finalString = NSMutableAttributedString()
@@ -1103,6 +1109,20 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
                 }
             }
             
+            if item.usesWegramLayout, let query = item.searchQuery {
+                let highlightColor = UIColor(rgb: 0x07c160)
+                if let title = titleAttributedString {
+                    let highlighted = NSMutableAttributedString(attributedString: title)
+                    for range in wegramPeerSearchRanges(text: title.string, query: query) { highlighted.addAttribute(.foregroundColor, value: highlightColor, range: range) }
+                    titleAttributedString = highlighted
+                }
+                if let status = statusAttributedString {
+                    let highlighted = NSMutableAttributedString(attributedString: status)
+                    for range in wegramPeerSearchRanges(text: status.string, query: query) { highlighted.addAttribute(.foregroundColor, value: highlightColor, range: range) }
+                    statusAttributedString = highlighted
+                }
+            }
+
             var badgeTextLayoutAndApply: (TextNodeLayout, () -> TextNode)?
             var currentBadgeBackgroundImage: UIImage?
             if let badge = item.badge {
@@ -1225,10 +1245,13 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
                 statusHeightComponent = -1.0 + statusLayout.size.height
             }
             
-            let nodeLayout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: verticalInset * 2.0 + titleLayout.size.height + statusHeightComponent), insets: UIEdgeInsets(top: firstWithHeader ? 29.0 : 0.0, left: 0.0, bottom: 0.0, right: 0.0))
+            let wegramLayout = WegramPeerRowLayout(titleHeight: titleLayout.size.height, statusHeight: statusAttributedString == nil ? 0 : statusLayout.size.height, minimumHeight: item.isWegramSearchResult ? 64 : 56)
+            let nodeLayout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: item.usesWegramLayout ? wegramLayout.height : verticalInset * 2.0 + titleLayout.size.height + statusHeightComponent), insets: UIEdgeInsets(top: firstWithHeader ? (item.usesWegramLayout ? (item.header?.height ?? 22.0) : max(29, item.header?.height ?? 29)) : 0.0, left: 0.0, bottom: 0.0, right: 0.0))
             
             let titleFrame: CGRect
-            if statusAttributedString != nil {
+            if item.usesWegramLayout {
+                titleFrame = CGRect(origin: CGPoint(x: leftInset, y: wegramLayout.titleY), size: titleLayout.size)
+            } else if statusAttributedString != nil {
                 titleFrame = CGRect(origin: CGPoint(x: leftInset, y: verticalInset), size: titleLayout.size)
             } else {
                 titleFrame = CGRect(origin: CGPoint(x: leftInset, y: floor((nodeLayout.contentSize.height - titleLayout.size.height) / 2.0)), size: titleLayout.size)
@@ -1325,7 +1348,10 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
                                         
                                         var displayDimensions = CGSize(width: 60.0, height: 60.0)
                                         let clipStyle: AvatarNodeClipStyle
-                                        if case .app(true) = item.peerMode {
+                                        if item.usesWegramLayout {
+                                            clipStyle = .none
+                                            displayDimensions = CGSize(width: avatarDiameter, height: avatarDiameter)
+                                        } else if case .app(true) = item.peerMode {
                                             clipStyle = .roundedRect
                                             displayDimensions = CGSize(width: displayDimensions.width, height: displayDimensions.width * 1.2)
                                         } else if case let .channel(channel) = peer {
@@ -1443,8 +1469,10 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
                                 avatarSize = CGSize(width: avatarDiameter, height: avatarDiameter)
                             }
                             
-                            let avatarFrame = CGRect(origin: CGPoint(x: revealOffset + leftInset - 50.0, y: floor((nodeLayout.contentSize.height - avatarSize.height) / 2.0)), size: avatarSize)
+                            let avatarFrame = CGRect(origin: CGPoint(x: revealOffset + leftInset - (item.usesWegramLayout ? 52.0 : 50.0), y: floor((nodeLayout.contentSize.height - avatarSize.height) / 2.0)), size: avatarSize)
                             
+                            strongSelf.avatarNode.cornerRadius = item.usesWegramLayout ? 4.0 : 0.0
+                            strongSelf.avatarNode.clipsToBounds = item.usesWegramLayout
                             strongSelf.avatarNode.frame = CGRect(origin: CGPoint(), size: avatarFrame.size)
                             
                             if case let .peer(peer?, _) = item.peer, case .community = peer, let shadowImage = UIImage(bundleImageName: "Components/CommunityShadow") {
@@ -1609,7 +1637,7 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
                                 placeholderColor: item.presentationData.theme.list.mediaPlaceholderColor,
                                 attemptSynchronous: false
                             ))
-                            var statusFrame = CGRect(origin: CGPoint(x: revealOffset + leftInset, y: strongSelf.titleNode.frame.maxY - 1.0), size: statusLayout.size)
+                            var statusFrame = CGRect(origin: CGPoint(x: revealOffset + leftInset, y: item.usesWegramLayout ? wegramLayout.statusY : strongSelf.titleNode.frame.maxY - 1.0), size: statusLayout.size)
                             if let statusIconImage {
                                 statusFrame.origin.x += statusIconImage.size.width + 1.0
                             }
@@ -2022,8 +2050,9 @@ public class ContactsPeerItemNode: ItemListRevealOptionsItemNode {
                             strongSelf.maskNode.frame = strongSelf.backgroundNode.frame.insetBy(dx: params.leftInset, dy: 0.0)
                             strongSelf.highlightedBackgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -nodeLayout.insets.top - topHighlightInset), size: CGSize(width: nodeLayout.size.width, height: nodeLayout.size.height + topHighlightInset))
                             strongSelf.topSeparatorNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -min(nodeLayout.insets.top, separatorHeight)), size: CGSize(width: nodeLayout.contentSize.width, height: separatorHeight))
-                            strongSelf.separatorNode.frame = CGRect(origin: CGPoint(x: leftInset, y: nodeLayout.contentSize.height - separatorHeight), size: CGSize(width: max(0.0, nodeLayout.size.width - leftInset - separatorRightInset), height: separatorHeight))
-                            if !item.alwaysShowLastSeparator && item.style != .blocks {
+                            let separatorLeftInset = (item.usesWegramLayout && last && !item.isWegramSearchResult) ? params.leftInset + 16.0 : leftInset
+                            strongSelf.separatorNode.frame = CGRect(origin: CGPoint(x: separatorLeftInset, y: nodeLayout.contentSize.height - separatorHeight), size: CGSize(width: max(0.0, nodeLayout.size.width - separatorLeftInset - separatorRightInset), height: separatorHeight))
+                            if !item.alwaysShowLastSeparator && item.style != .blocks && !(item.usesWegramLayout && !item.isWegramSearchResult) {
                                 strongSelf.separatorNode.isHidden = last
                             }
                             

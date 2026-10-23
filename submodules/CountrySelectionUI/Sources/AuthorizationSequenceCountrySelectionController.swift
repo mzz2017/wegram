@@ -315,6 +315,8 @@ public final class AuthorizationSequenceCountrySelectionController: ViewControll
     private let strings: PresentationStrings
     private let displayCodes: Bool
     private let glass: Bool
+    private let usesWegramAppearance: Bool
+    private let preferredCountryId: String?
     
     
     private var closeButtonNode: BarComponentHostNode?
@@ -328,21 +330,46 @@ public final class AuthorizationSequenceCountrySelectionController: ViewControll
     public var completeWithCountryCode: ((Int, String) -> Void)?
     public var dismissed: (() -> Void)?
     
-    public init(strings: PresentationStrings, theme: PresentationTheme, displayCodes: Bool = true, glass: Bool = false) {
+    public init(strings: PresentationStrings, theme: PresentationTheme, displayCodes: Bool = true, glass: Bool = false, usesWegramAppearance: Bool = false, preferredCountryId: String? = nil) {
         self.theme = theme
         self.strings = strings
         self.displayCodes = displayCodes
-        self.glass = glass
+        self.glass = glass && !usesWegramAppearance
+        self.usesWegramAppearance = usesWegramAppearance
+        self.preferredCountryId = preferredCountryId
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(rootControllerTheme: theme, hideBackground: glass, hideSeparator: glass, style: glass ? .glass : .legacy), strings: NavigationBarStrings(presentationStrings: strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: usesWegramAppearance ? NavigationBarTheme(wegramTheme: theme) : NavigationBarTheme(rootControllerTheme: theme, hideBackground: glass, hideSeparator: glass, style: glass ? .glass : .legacy), strings: NavigationBarStrings(presentationStrings: strings)))
         
-        self._hasGlassStyle = glass
+        self._hasGlassStyle = self.glass
         
-        self.navigationPresentation = .modal
+        self.navigationPresentation = usesWegramAppearance ? .default : .modal
         
         self.statusBar.statusBarStyle = theme.rootController.statusBarStyle.style
         
-        if glass {
+        if usesWegramAppearance {
+            let title = strings.baseLanguageCode.hasPrefix("zh") ? "选择国家和地区" : "Select region"
+            let titleLabel = UILabel()
+            titleLabel.font = wegramNavigationTitleFont
+            titleLabel.textAlignment = .center
+            titleLabel.textColor = WegramNavigationColors(isDark: theme.overallDarkAppearance).control
+            titleLabel.text = title
+            titleLabel.accessibilityTraits = .header
+            self.navigationItem.titleView = titleLabel
+            let back = ASButtonNode()
+            let backImage = wegramNavigationBackArrowImage(color: titleLabel.textColor)
+            back.setImage(backImage, for: .normal)
+            let imageSize = backImage?.size ?? .zero
+            back.contentEdgeInsets = UIEdgeInsets(top: (44 - imageSize.height) / 2, left: 0, bottom: (44 - imageSize.height) / 2, right: 44 - imageSize.width)
+            back.accessibilityLabel = strings.Common_Back
+            back.accessibilityTraits = .button
+            back.addTarget(self, action: #selector(self.cancelPressed), forControlEvents: .touchUpInside)
+            let backItem = UIBarButtonItem(customDisplayNode: back)
+            backItem?.accessibilityLabel = strings.Common_Back
+            backItem?.target = self
+            backItem?.action = #selector(self.cancelPressed)
+            self.navigationItem.leftBarButtonItem = backItem
+            self.navigationBar?.customBackButtonText = ""
+        } else if glass {
             self.title = strings.Login_SelectCountry
         } else {
             let navigationContentNode = AuthorizationSequenceCountrySelectionNavigationContentNode(theme: theme, strings: strings, cancel: { [weak self] in
@@ -365,7 +392,7 @@ public final class AuthorizationSequenceCountrySelectionController: ViewControll
     }
     
     override public func loadDisplayNode() {
-        self.displayNode = AuthorizationSequenceCountrySelectionControllerNode(theme: self.theme, strings: self.strings, displayCodes: self.displayCodes, glass: self.glass, itemSelected: { [weak self] args in
+        self.displayNode = AuthorizationSequenceCountrySelectionControllerNode(theme: self.theme, strings: self.strings, displayCodes: self.displayCodes, glass: self.glass, usesWegramAppearance: self.usesWegramAppearance, preferredCountryId: self.preferredCountryId, itemSelected: { [weak self] args in
             let (_, countryId, code) = args
             self?.completeWithCountryCode?(code, countryId)
             self?.dismiss()
@@ -464,7 +491,7 @@ public final class AuthorizationSequenceCountrySelectionController: ViewControll
         self.controllerNode.containerLayoutUpdated(layout, navigationBarHeight: self.navigationLayout(layout: layout).navigationFrame.maxY, transition: transition)
     }
     
-    private func cancelPressed() {
+    @objc private func cancelPressed() {
         self.dismissed?()
         self.dismiss(completion: nil)
     }

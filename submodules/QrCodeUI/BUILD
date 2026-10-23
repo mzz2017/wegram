@@ -50,3 +50,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramScannerControls.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

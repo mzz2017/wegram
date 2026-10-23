@@ -222,6 +222,7 @@ public enum ChatListItemContent {
         public var groupId: EngineChatList.Group
         public var peers: [EngineChatList.GroupItem.Item]
         public var message: EngineMessage?
+        public var latestMessage: EngineMessage?
         public var unreadCount: Int
         public var hiddenByDefault: Bool
         public var appearsPinned: Bool
@@ -231,6 +232,7 @@ public enum ChatListItemContent {
             groupId: EngineChatList.Group,
             peers: [EngineChatList.GroupItem.Item],
             message: EngineMessage?,
+            latestMessage: EngineMessage? = nil,
             unreadCount: Int,
             hiddenByDefault: Bool,
             appearsPinned: Bool,
@@ -239,6 +241,7 @@ public enum ChatListItemContent {
             self.groupId = groupId
             self.peers = peers
             self.message = message
+            self.latestMessage = latestMessage
             self.unreadCount = unreadCount
             self.hiddenByDefault = hiddenByDefault
             self.appearsPinned = appearsPinned
@@ -497,7 +500,23 @@ public class ChatListItem: ListViewItem {
     let useCommunityViewLayout: Bool
     let hideCommunityAvatarBadge: Bool
     let displayHiddenPeerIcon: Bool
+    let isWegramSearchResult: Bool
+    let isWegramMessageGroup: Bool
+    let customSelectionAction: (() -> Void)?
+
+    var usesWegramSearchLayout: Bool { self.isWegramSearchResult && self.usesWegramLayout }
     
+    var usesWegramLayout: Bool {
+        guard !self.useCommunityViewLayout else { return false }
+        if !self.isWegramSearchResult {
+            guard case .chatList = self.chatListLocation else { return false }
+        }
+        if case let .peer(data) = self.content, data.customMessageListData?.commandPrefix != nil {
+            return false
+        }
+        return true
+    }
+
     public let selectable: Bool = true
     
     public var approximateHeight: CGFloat {
@@ -527,7 +546,7 @@ public class ChatListItem: ListViewItem {
         }
     }
     
-    public init(presentationData: ChatListPresentationData, context: AccountContext, chatListLocation: ChatListControllerLocation, filterData: ChatListItemFilterData?, index: EngineChatList.Item.Index, content: ChatListItemContent, editing: Bool, hasActiveRevealControls: Bool, selected: Bool, header: ListViewItemHeader?, enabledContextActions: EnabledContextActions?, hiddenOffset: Bool, interaction: ChatListNodeInteraction, useCommunityViewLayout: Bool = false, hideCommunityAvatarBadge: Bool = false, displayHiddenPeerIcon: Bool = false) {
+    public init(presentationData: ChatListPresentationData, context: AccountContext, chatListLocation: ChatListControllerLocation, filterData: ChatListItemFilterData?, index: EngineChatList.Item.Index, content: ChatListItemContent, editing: Bool, hasActiveRevealControls: Bool, selected: Bool, header: ListViewItemHeader?, enabledContextActions: EnabledContextActions?, hiddenOffset: Bool, interaction: ChatListNodeInteraction, useCommunityViewLayout: Bool = false, hideCommunityAvatarBadge: Bool = false, displayHiddenPeerIcon: Bool = false, isWegramSearchResult: Bool = false, isWegramMessageGroup: Bool = false, customSelectionAction: (() -> Void)? = nil) {
         self.presentationData = presentationData
         self.chatListLocation = chatListLocation
         self.filterData = filterData
@@ -544,6 +563,9 @@ public class ChatListItem: ListViewItem {
         self.useCommunityViewLayout = useCommunityViewLayout
         self.hideCommunityAvatarBadge = hideCommunityAvatarBadge
         self.displayHiddenPeerIcon = displayHiddenPeerIcon
+        self.isWegramSearchResult = isWegramSearchResult
+        self.isWegramMessageGroup = isWegramMessageGroup && isWegramSearchResult
+        self.customSelectionAction = customSelectionAction
     }
     
     public func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
@@ -610,6 +632,11 @@ public class ChatListItem: ListViewItem {
     }
     
     public func selected(listView: ListView) {
+        if let customSelectionAction = self.customSelectionAction {
+            listView.clearHighlightAnimated(true)
+            customSelectionAction()
+            return
+        }
         switch self.content {
         case .loading:
             break
@@ -709,6 +736,38 @@ private enum RevealOptionKey: Int32 {
     case edit
 }
 
+// WeChat swipes a chat left to 标为未读 | 不显示 | 删除 (blue, orange, red; IMG_2438 dark, IMG_2439 light).
+// Telegram's matching actions go on that side in that order; the rest (pin, mute, …) stay reachable on the
+// left swipe.
+private func wegramFlatRevealOptions(left: [ItemListRevealOption], right: [ItemListRevealOption], dark: Bool) -> (left: [ItemListRevealOption], right: [ItemListRevealOption]) {
+    func rank(_ option: ItemListRevealOption) -> Int? {
+        switch RevealOptionKey(rawValue: option.key) {
+        case .toggleMarkedUnread: return 0
+        case .archive, .unarchive, .hide, .unhide, .hidePsa, .close, .open: return 1
+        case .delete: return 2
+        default: return nil
+        }
+    }
+    func flat(_ option: ItemListRevealOption) -> ItemListRevealOption {
+        let color: UIColor
+        switch rank(option) {
+        // sRGB values from WeChat's swipe-action colours (dark blue: its Indigo); the
+        // user's screenshots are Display P3, so their raw pixels read desaturated and must not be copied.
+        case 0: color = UIColor(rgb: dark ? 0x0d78cc : 0x1485ee)
+        case 1: color = UIColor(rgb: dark ? 0xc87d2f : 0xfa9d3b)
+        case 2: color = UIColor(rgb: 0xfa5151)
+        default: color = UIColor(rgb: dark ? 0x4c4c4c : 0xc7c7cc)
+        }
+        // WeChat words the read toggle as an action (标为未读/标为已读); Telegram's zh strings are bare 未读/已读.
+        let title = rank(option) == 0 && (option.title == "未读" || option.title == "已读") ? "标为" + option.title : option.title
+        return ItemListRevealOption(key: option.key, title: title, icon: .none, color: color, iconColor: .white, textColor: .white)
+    }
+    let all = left + right
+    let wechat = all.filter { rank($0) != nil }.sorted { rank($0)! < rank($1)! }
+    let rest = all.filter { rank($0) == nil }
+    return (rest.map(flat), wechat.map(flat))
+}
+
 private func canArchivePeer(id: EnginePeer.Id, accountPeerId: EnginePeer.Id) -> Bool {
     if id.isTelegramNotifications {
         return false
@@ -748,28 +807,28 @@ private func revealOptions(strings: PresentationStrings, theme: PresentationThem
     if !isEditing {
         if case .savedMessagesChats = location {
             if isPinned {
-                options.append(ItemListRevealOption(key: RevealOptionKey.unpin.rawValue, title: strings.DialogList_Unpin, icon: unpinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.unpin.rawValue, title: strings.DialogList_Unpin, icon: unpinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             } else {
-                options.append(ItemListRevealOption(key: RevealOptionKey.pin.rawValue, title: strings.DialogList_Pin, icon: pinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.pin.rawValue, title: strings.DialogList_Pin, icon: pinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         } else if case .chatList(.archive) = location {
             if isPinned {
-                options.append(ItemListRevealOption(key: RevealOptionKey.unpin.rawValue, title: strings.DialogList_Unpin, icon: unpinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.unpin.rawValue, title: strings.DialogList_Unpin, icon: unpinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             } else {
-                options.append(ItemListRevealOption(key: RevealOptionKey.pin.rawValue, title: strings.DialogList_Pin, icon: pinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.pin.rawValue, title: strings.DialogList_Pin, icon: pinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         } else {
             if let isMuted = isMuted {
                 if isMuted {
-                    options.append(ItemListRevealOption(key: RevealOptionKey.unmute.rawValue, title: strings.ChatList_Unmute, icon: unmuteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.chatList.dateTextColor))
+                    options.append(ItemListRevealOption(key: RevealOptionKey.unmute.rawValue, title: strings.ChatList_Unmute, icon: unmuteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
                 } else {
-                    options.append(ItemListRevealOption(key: RevealOptionKey.mute.rawValue, title: strings.ChatList_Mute, icon: muteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.chatList.dateTextColor))
+                    options.append(ItemListRevealOption(key: RevealOptionKey.mute.rawValue, title: strings.ChatList_Mute, icon: muteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
                 }
             }
         }
     }
     if canDelete {
-        options.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: strings.Common_Delete, icon: deleteIcon, color: theme.list.itemDisclosureActions.destructive.fillColor, iconColor: theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+        options.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: strings.Common_Delete, icon: deleteIcon, color: theme.list.itemDisclosureActions.destructive.fillColor, iconColor: theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
     }
     if case .savedMessagesChats = location {
     } else {
@@ -791,10 +850,10 @@ private func revealOptions(strings: PresentationStrings, theme: PresentationThem
             }
             if canArchive {
                 if canArchivePeer(id: peerId, accountPeerId: accountPeerId) {
-                    options.append(ItemListRevealOption(key: RevealOptionKey.archive.rawValue, title: strings.ChatList_ArchiveAction, icon: archiveIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.inactive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                    options.append(ItemListRevealOption(key: RevealOptionKey.archive.rawValue, title: strings.ChatList_ArchiveAction, icon: archiveIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.inactive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
                 }
             } else if canUnarchive {
-                options.append(ItemListRevealOption(key: RevealOptionKey.unarchive.rawValue, title: strings.ChatList_UnarchiveAction, icon: unarchiveIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.inactive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.unarchive.rawValue, title: strings.ChatList_UnarchiveAction, icon: unarchiveIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.inactive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         }
     }
@@ -805,9 +864,9 @@ private func groupReferenceRevealOptions(strings: PresentationStrings, theme: Pr
     var options: [ItemListRevealOption] = []
     if !isEditing {
         if hiddenByDefault {
-            options.append(ItemListRevealOption(key: RevealOptionKey.unhide.rawValue, title: strings.ChatList_UnhideAction, icon: unhideIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+            options.append(ItemListRevealOption(key: RevealOptionKey.unhide.rawValue, title: strings.ChatList_UnhideAction, icon: unhideIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
         } else {
-            options.append(ItemListRevealOption(key: RevealOptionKey.hide.rawValue, title: strings.ChatList_HideAction, icon: hideIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: theme.chatList.dateTextColor))
+            options.append(ItemListRevealOption(key: RevealOptionKey.hide.rawValue, title: strings.ChatList_HideAction, icon: hideIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
         }
     }
     return options
@@ -818,9 +877,9 @@ private func forumGeneralRevealOptions(strings: PresentationStrings, theme: Pres
     if !isEditing {
         if let isMuted = isMuted {
             if isMuted {
-                options.append(ItemListRevealOption(key: RevealOptionKey.unmute.rawValue, title: strings.ChatList_Unmute, icon: unmuteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.unmute.rawValue, title: strings.ChatList_Unmute, icon: unmuteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             } else {
-                options.append(ItemListRevealOption(key: RevealOptionKey.mute.rawValue, title: strings.ChatList_Mute, icon: muteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.mute.rawValue, title: strings.ChatList_Mute, icon: muteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         }
     }
@@ -829,16 +888,16 @@ private func forumGeneralRevealOptions(strings: PresentationStrings, theme: Pres
             if !isClosed {
 
             } else {
-                options.append(ItemListRevealOption(key: RevealOptionKey.open.rawValue, title: strings.ChatList_StartAction, icon: startIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.open.rawValue, title: strings.ChatList_StartAction, icon: startIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         }
     }
     if canHide {
         if !isEditing {
             if hiddenByDefault {
-                options.append(ItemListRevealOption(key: RevealOptionKey.unhide.rawValue, title: strings.ChatList_ThreadUnhideAction, icon: unhideIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.unhide.rawValue, title: strings.ChatList_ThreadUnhideAction, icon: unhideIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             } else {
-                options.append(ItemListRevealOption(key: RevealOptionKey.hide.rawValue, title: strings.ChatList_ThreadHideAction, icon: hideIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.hide.rawValue, title: strings.ChatList_ThreadHideAction, icon: hideIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         }
     }
@@ -850,21 +909,21 @@ private func forumThreadRevealOptions(strings: PresentationStrings, theme: Prese
     if !isEditing {
         if let isMuted = isMuted {
             if isMuted {
-                options.append(ItemListRevealOption(key: RevealOptionKey.unmute.rawValue, title: strings.ChatList_Unmute, icon: unmuteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.unmute.rawValue, title: strings.ChatList_Unmute, icon: unmuteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             } else {
-                options.append(ItemListRevealOption(key: RevealOptionKey.mute.rawValue, title: strings.ChatList_Mute, icon: muteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.mute.rawValue, title: strings.ChatList_Mute, icon: muteIcon, color: theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         }
     }
     if canDelete {
-        options.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: strings.Common_Delete, icon: deleteIcon, color: theme.list.itemDisclosureActions.destructive.fillColor, iconColor: theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+        options.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: strings.Common_Delete, icon: deleteIcon, color: theme.list.itemDisclosureActions.destructive.fillColor, iconColor: theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
     }
     if canOpenClose {
         if !isEditing {
             if !isClosed {
-                options.append(ItemListRevealOption(key: RevealOptionKey.close.rawValue, title: strings.ChatList_CloseAction, icon: closeIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.inactive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.close.rawValue, title: strings.ChatList_CloseAction, icon: closeIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.inactive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             } else {
-                options.append(ItemListRevealOption(key: RevealOptionKey.open.rawValue, title: strings.ChatList_StartAction, icon: startIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                options.append(ItemListRevealOption(key: RevealOptionKey.open.rawValue, title: strings.ChatList_StartAction, icon: startIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
             }
         }
     }
@@ -884,7 +943,7 @@ private func leftRevealOptions(strings: PresentationStrings, theme: Presentation
             }
             if canToggleReadState {
                 if isUnread {
-                    options.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Read, icon: readIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: theme.chatList.dateTextColor))
+                    options.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Read, icon: readIcon, color: theme.list.itemDisclosureActions.inactive.fillColor, iconColor: theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
                 } else {
                     var canMarkUnread = true
                     if case let .channel(channel) = peer, channel.isForumOrMonoForum {
@@ -892,15 +951,15 @@ private func leftRevealOptions(strings: PresentationStrings, theme: Presentation
                     }
 
                     if canMarkUnread {
-                        options.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Unread, icon: unreadIcon, color: theme.list.itemDisclosureActions.accent.fillColor, iconColor: theme.list.itemDisclosureActions.accent.foregroundColor, textColor: theme.chatList.dateTextColor))
+                        options.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: strings.DialogList_Unread, icon: unreadIcon, color: theme.list.itemDisclosureActions.accent.fillColor, iconColor: theme.list.itemDisclosureActions.accent.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
                     }
                 }
             }
             if !isEditing {
                 if isPinned {
-                    options.append(ItemListRevealOption(key: RevealOptionKey.unpin.rawValue, title: strings.DialogList_Unpin, icon: unpinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                    options.append(ItemListRevealOption(key: RevealOptionKey.unpin.rawValue, title: strings.DialogList_Unpin, icon: unpinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
                 } else {
-                    options.append(ItemListRevealOption(key: RevealOptionKey.pin.rawValue, title: strings.DialogList_Pin, icon: pinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.chatList.dateTextColor))
+                    options.append(ItemListRevealOption(key: RevealOptionKey.pin.rawValue, title: strings.DialogList_Pin, icon: pinIcon, color: theme.list.itemDisclosureActions.constructive.fillColor, iconColor: theme.list.itemDisclosureActions.constructive.foregroundColor, textColor: theme.list.itemSecondaryTextColor))
                 }
             }
             return options
@@ -1397,6 +1456,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
     var avatarIconComponent: EmojiStatusComponent?
     var avatarVideoNode: AvatarVideoNode?
     var avatarTapRecognizer: UITapGestureRecognizer?
+    private var wegramFoldedIconNode: ASImageNode?
+    private var wegramFoldedIconKey: (size: CGFloat, dark: Bool)?
     private var avatarMediaNode: ChatListMediaPreviewNode?
     
     private var inlineNavigationMarkLayer: SimpleLayer?
@@ -1509,7 +1570,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 case .loading:
                     return nil
                 case let .groupReference(groupReferenceData):
-                    var result = item.presentationData.strings.ChatList_ArchivedChatsTitle
+                    var result = item.usesWegramLayout ? wegramFoldedChatsTitle(item.presentationData.strings) : item.presentationData.strings.ChatList_ArchivedChatsTitle
                 let allCount = groupReferenceData.unreadCount
                     if allCount > 0 {
                         result += "\n\(item.presentationData.strings.VoiceOver_Chat_UnreadMessages(Int32(allCount)))"
@@ -1832,6 +1893,14 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.cachedDataDisposable.dispose()
     }
     
+    func refreshWegramDate() {
+        guard let params = self.layoutParams, self.item === params.0,
+              params.0.usesWegramLayout, !params.0.usesWegramSearchLayout,
+              params.0.presentationData.strings.baseLanguageCode.hasPrefix("zh") else { return }
+        let (_, apply) = self.asyncLayout()(params.0, params.6, params.1, params.2, params.3, params.4, params.5)
+        let _ = apply(false, false)
+    }
+
     override public func secondaryAction(at point: CGPoint) {
         guard let item = self.item else {
             return
@@ -1879,7 +1948,11 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 UIView.transition(with: self.avatarNode.view, duration: 0.3, options: [.transitionCrossDissolve], animations: {
                 }, completion: nil)
             }
-            self.avatarNode.setPeer(context: item.context, theme: item.presentationData.theme, peer: peer, overrideImage: .archivedChatsIcon(hiddenByDefault: groupReferenceData.hiddenByDefault), emptyColor: item.presentationData.theme.list.mediaPlaceholderColor, synchronousLoad: synchronousLoads)
+            // WeGram rows draw every avatar, the archive icon included, as a square rounded to a tenth of its
+            // side: 4.8pt at 48pt, traced on 服务通知's solid avatar (IMG_2438).
+            self.avatarNode.cornerRadius = item.usesWegramLayout ? min(48.0, floor(item.presentationData.fontSize.baseDisplaySize * 48.0 / 17.0)) / 10.0 : 0.0
+            self.avatarNode.clipsToBounds = item.usesWegramLayout
+            self.avatarNode.setPeer(context: item.context, theme: item.presentationData.theme, peer: peer, overrideImage: .archivedChatsIcon(hiddenByDefault: groupReferenceData.hiddenByDefault), emptyColor: item.presentationData.theme.list.mediaPlaceholderColor, clipStyle: item.usesWegramLayout ? .none : .round, synchronousLoad: synchronousLoads)
         }
         
         if item.interaction.activateChatPreview == nil {
@@ -2023,20 +2096,21 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 }
             }
             
-            var avatarDiameter = min(60.0, floor(item.presentationData.fontSize.baseDisplaySize * 60.0 / 17.0))
+            let baseAvatarDiameter: CGFloat = item.usesWegramSearchLayout ? 40.0 : (item.usesWegramLayout ? 48.0 : 60.0)
+            var avatarDiameter = min(baseAvatarDiameter, floor(item.presentationData.fontSize.baseDisplaySize * baseAvatarDiameter / 17.0))
             
             if case let .peer(peerData) = item.content, let customMessageListData = peerData.customMessageListData, customMessageListData.commandPrefix != nil {
                 avatarDiameter = 40.0
             }
                 
-            if avatarDiameter != 60.0 {
-                let avatarFontSize = floor(avatarDiameter * 26.0 / 60.0)
-                if self.avatarNode.font.pointSize != avatarFontSize {
-                    self.avatarNode.font = avatarPlaceholderFont(size: avatarFontSize)
-                }
+            let avatarFontSize = floor(avatarDiameter * 26.0 / 60.0)
+            if self.avatarNode.font.pointSize != avatarFontSize {
+                self.avatarNode.font = avatarPlaceholderFont(size: avatarFontSize)
             }
             let avatarClipStyle: AvatarNodeClipStyle
-            if peerIsMonoforum {
+            if item.usesWegramLayout {
+                avatarClipStyle = .none
+            } else if peerIsMonoforum {
                 avatarClipStyle = .bubble
             } else if isForumAvatar {
                 avatarClipStyle = .roundedRect
@@ -2044,12 +2118,14 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 avatarClipStyle = .round
             }
 
+            self.avatarNode.cornerRadius = item.usesWegramLayout ? avatarDiameter / 10.0 : 0.0
+            self.avatarNode.clipsToBounds = item.usesWegramLayout
             if item.useCommunityViewLayout {
                 self.avatarNode.setPeer(context: item.context, theme: item.presentationData.theme, peer: avatarPeer, overrideImage: overrideImage, emptyColor: item.presentationData.theme.list.mediaPlaceholderColor, clipStyle: avatarClipStyle, synchronousLoad: synchronousLoads, displayDimensions: CGSize(width: avatarDiameter, height: avatarDiameter), cutoutRect: nil)
             } else if avatarPeer.smallProfileImage != nil && overrideImage == nil {
                 self.avatarNode.setPeerV2(context: item.context, theme: item.presentationData.theme, peer: avatarPeer, overrideImage: overrideImage, emptyColor: item.presentationData.theme.list.mediaPlaceholderColor, clipStyle: avatarClipStyle, synchronousLoad: synchronousLoads, displayDimensions: CGSize(width: avatarDiameter, height: avatarDiameter))
             } else {
-                self.avatarNode.setPeer(context: item.context, theme: item.presentationData.theme, peer: avatarPeer, overrideImage: overrideImage, emptyColor: item.presentationData.theme.list.mediaPlaceholderColor, clipStyle: avatarClipStyle, synchronousLoad: synchronousLoads, displayDimensions: CGSize(width: 60.0, height: 60.0))
+                self.avatarNode.setPeer(context: item.context, theme: item.presentationData.theme, peer: avatarPeer, overrideImage: overrideImage, emptyColor: item.presentationData.theme.list.mediaPlaceholderColor, clipStyle: avatarClipStyle, synchronousLoad: synchronousLoads, displayDimensions: CGSize(width: avatarDiameter, height: avatarDiameter))
             }
             
             if peer.isPremium && peer.id != item.context.account.peerId {
@@ -2148,8 +2224,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.insets = nodeLayout.insets
     }
     
-    class func insets(first: Bool, last: Bool, firstWithHeader: Bool) -> UIEdgeInsets {
-        return UIEdgeInsets(top: firstWithHeader ? 29.0 : 0.0, left: 0.0, bottom: 0.0, right: 0.0)
+    class func insets(first: Bool, last: Bool, firstWithHeader: Bool, headerHeight: CGFloat = 29) -> UIEdgeInsets {
+        return UIEdgeInsets(top: firstWithHeader ? max(29, headerHeight) : 0.0, left: 0.0, bottom: 0.0, right: 0.0)
     }
     
     override public func setHighlighted(_ highlighted: Bool, at point: CGPoint, animated: Bool) {
@@ -2160,8 +2236,16 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.updateIsHighlighted(transition: (animated && !highlighted) ? .animated(duration: 0.3, curve: .easeInOut) : .immediate)
     }
     
+    private var usesWegramRevealStyle: Bool {
+        return self.item?.usesWegramLayout ?? false
+    }
+
+    private var revealHighlightCornerRadius: CGFloat {
+        return self.isRevealOptionsActive && !self.usesWegramRevealStyle ? 26.0 : 0.0
+    }
+
     var reallyHighlighted: Bool {
-        var reallyHighlighted = self.isHighlighted || self.isRevealOptionsActive
+        var reallyHighlighted = self.isHighlighted || (self.isRevealOptionsActive && !self.usesWegramRevealStyle)
         if let item = self.item {
             if let itemChatLocation = item.content.chatLocation {
                 if itemChatLocation == item.interaction.highlightedChatLocation?.location {
@@ -2179,7 +2263,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
     
     func updateIsHighlighted(transition: ContainedViewLayoutTransition) {
         let highlightProgress: CGFloat = self.item?.interaction.highlightedChatLocation?.progress ?? 1.0
-        transition.updateCornerRadius(node: self.highlightedBackgroundNode, cornerRadius: self.isRevealOptionsActive ? 26.0 : 0.0)
+        transition.updateCornerRadius(node: self.highlightedBackgroundNode, cornerRadius: self.revealHighlightCornerRadius)
         self.updateSeparatorAlpha(transition: transition)
         
         if self.reallyHighlighted {
@@ -2245,7 +2329,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
     }
 
     private func updateSeparatorAlpha(transition: ContainedViewLayoutTransition, inlineNavigationProgress: CGFloat? = nil) {
-        let revealSeparatorAlpha: CGFloat = (self.isRevealOptionsActive || self.isNextRevealOptionsActive || self.nextHasActiveRevealControls) ? 0.0 : 1.0
+        let revealSeparatorAlpha: CGFloat = (!self.usesWegramRevealStyle && (self.isRevealOptionsActive || self.isNextRevealOptionsActive || self.nextHasActiveRevealControls)) ? 0.0 : 1.0
         if let inlineNavigationProgress = inlineNavigationProgress ?? self.item?.interaction.inlineNavigationLocation?.progress {
             transition.updateAlpha(node: self.separatorNode, alpha: (1.0 - inlineNavigationProgress) * revealSeparatorAlpha)
         } else {
@@ -2292,10 +2376,11 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
         let currentCustomTextEntities = self.cachedCustomTextEntities
         
         return { [weak self] item, params, first, last, firstWithHeader, nextIsPinned, nextHasActiveRevealControls in
-            let titleFont = Font.semibold(floor(item.presentationData.fontSize.itemListBaseFontSize * 16.0 / 17.0))
-            let textFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 15.0 / 17.0))
-            let italicTextFont = Font.italic(floor(item.presentationData.fontSize.itemListBaseFontSize * 15.0 / 17.0))
-            let dateFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 14.0 / 17.0))
+            let fontSize = item.presentationData.fontSize.itemListBaseFontSize
+            let titleFont = item.usesWegramLayout ? Font.regular(fontSize) : Font.semibold(floor(fontSize * 16.0 / 17.0))
+            let textFont = Font.regular(floor(fontSize * (item.usesWegramLayout ? 14.0 : 15.0) / 17.0))
+            let italicTextFont = Font.italic(floor(fontSize * (item.usesWegramLayout ? 14.0 : 15.0) / 17.0))
+            let dateFont = Font.regular(floor(fontSize * (item.usesWegramLayout ? 12.0 : 14.0) / 17.0))
             let badgeFont = Font.with(size: floor(item.presentationData.fontSize.itemListBaseFontSize * 12.0 / 17.0), design: .regular, weight: .semibold, traits: [.monospacedNumbers])
             let avatarBadgeFont = Font.with(size: floor(item.presentationData.fontSize.itemListBaseFontSize * 16.0 / 17.0), design: .regular, weight: .regular, traits: [.monospacedNumbers])
             
@@ -2431,12 +2516,14 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     hasFailedMessages = messagesValue.last?.flags.contains(.Failed) ?? false // hasFailedMessagesValue
                 case let .groupReference(groupReferenceData):
                     let peers = groupReferenceData.peers
-                    let messageValue = groupReferenceData.message
+                    // WeChat's 折叠的聊天 row previews the newest message as "chat: text" (IMG_2440) however
+                    // many chats are folded, where upstream lists the chat names unless there is only one.
+                    let messageValue = item.usesWegramLayout ? (groupReferenceData.latestMessage ?? groupReferenceData.message) : groupReferenceData.message
                     let unreadCountValue = groupReferenceData.unreadCount
                     let hiddenByDefault = groupReferenceData.hiddenByDefault
-                
-                    if let _ = messageValue, !peers.isEmpty {
-                        contentPeer = .chat(peers[0].peer)
+
+                    if let messageValue, let peer = peers.first(where: { $0.peer.peerId == messageValue.id.peerId }) ?? peers.first {
+                        contentPeer = .chat(peer.peer)
                     } else {
                         contentPeer = .group(peers)
                     }
@@ -2562,7 +2649,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             let enableChatListPhotos = true
             
             // if changed, adjust setupItem accordingly
-            var avatarDiameter = min(60.0, floor(item.presentationData.fontSize.baseDisplaySize * 60.0 / 17.0))
+            let baseAvatarDiameter: CGFloat = item.usesWegramSearchLayout ? 40.0 : (item.usesWegramLayout ? 48.0 : 60.0)
+            var avatarDiameter = min(baseAvatarDiameter, floor(item.presentationData.fontSize.baseDisplaySize * baseAvatarDiameter / 17.0))
             let avatarLeftEdgeInset: CGFloat = item.useCommunityViewLayout ? 10.0 : 16.0
             let avatarLeftInset: CGFloat
             
@@ -2577,11 +2665,12 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 } else if !useChatListLayout {
                     avatarLeftInset = 50.0
                 } else {
-                    avatarLeftInset = 24.0 + avatarDiameter
+                    avatarLeftInset = (item.usesWegramLayout ? 26.0 : 24.0) + avatarDiameter
                 }
             }
             
             let badgeDiameter = floor(item.presentationData.fontSize.baseDisplaySize * 20.0 / 17.0)
+            let unreadBadgeDiameter = item.usesWegramLayout && unreadCount.muted ? 10.0 : badgeDiameter
             let avatarBadgeDiameter: CGFloat = floor(floor(item.presentationData.fontSize.itemListBaseFontSize * 22.0 / 17.0))
             let avatarTimerBadgeDiameter: CGFloat = floor(floor(item.presentationData.fontSize.itemListBaseFontSize * 24.0 / 17.0))
             
@@ -2639,12 +2728,15 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             var attributedText: NSAttributedString
             var hasDraft = false
             
+            let hidesWegramListAccessories = item.usesWegramLayout && !item.usesWegramSearchLayout
+            let displaysItemTags = !hidesWegramListAccessories && !itemTags.isEmpty
             var inlineAuthorPrefix: String?
             var useInlineAuthorPrefix = false
-            if case .groupReference = item.content {
+            // WeChat's 折叠的聊天 preview is "chat: content" with no sender inside that chat (IMG_2440).
+            if case .groupReference = item.content, !item.usesWegramLayout {
                 useInlineAuthorPrefix = true
             }
-            if !itemTags.isEmpty {
+            if displaysItemTags {
                 forumTopicData = nil
                 topForumTopicItems = []
                 
@@ -2824,7 +2916,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         hasDraft = true
                         let draftText = stringWithAppliedEntities(draftState.text, entities: draftState.entities, baseColor: theme.messageTextColor, linkColor: theme.messageTextColor, baseFont: textFont, linkFont: textFont, boldFont: textFont, italicFont: textFont, boldItalicFont: textFont, fixedFont: textFont, blockQuoteFont: textFont, message: nil)
                         
-                        if !itemTags.isEmpty {
+                        if displaysItemTags {
                             let tempAttributedText = foldLineBreaks(draftText)
                             let attributedTextWithDraft = NSMutableAttributedString()
                             attributedTextWithDraft.append(NSAttributedString(string: item.presentationData.strings.DialogList_Draft + ": ", font: textFont, textColor: theme.messageDraftTextColor))
@@ -2847,7 +2939,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                             case .Spoiler, .CustomEmoji, .FormattedDate:
                                 return true
                             case .Strikethrough, .Underline, .Italic, .Bold:
-                                return true
+                                return !item.usesWegramLayout
                             default:
                                 return false
                             }
@@ -2975,7 +3067,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                                     } else if stringRange.location + stringRange.length > composedString.length {
                                         stringRange.length = composedString.length - stringRange.location
                                     }
-                                    composedString.addAttribute(.foregroundColor, value: theme.messageHighlightedTextColor, range: stringRange)
+                                    composedString.addAttribute(.foregroundColor, value: item.usesWegramSearchLayout ? UIColor(rgb: 0x07c160) : theme.messageHighlightedTextColor, range: stringRange)
                                 }
                             }
                             
@@ -3001,7 +3093,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                                     } else if stringRange.location + stringRange.length > composedReplyString.length {
                                         stringRange.length = composedReplyString.length - stringRange.location
                                     }
-                                    composedReplyString.addAttribute(.foregroundColor, value: theme.messageHighlightedTextColor, range: stringRange)
+                                    composedReplyString.addAttribute(.foregroundColor, value: item.usesWegramSearchLayout ? UIColor(rgb: 0x07c160) : theme.messageHighlightedTextColor, range: stringRange)
                                 }
                             }
                             
@@ -3212,7 +3304,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                                 } else {
                                     textString.append(NSAttributedString(string: ", ", font: textFont, textColor: theme.messageTextColor))
                                 }
-                                textString.append(NSAttributedString(string: peerTitle, font: textFont, textColor: peer.isUnread ? theme.authorNameColor : theme.messageTextColor))
+                                textString.append(NSAttributedString(string: peerTitle, font: textFont, textColor: peer.isUnread && !item.usesWegramLayout ? theme.authorNameColor : theme.messageTextColor))
                             }
                         }
                     }
@@ -3316,7 +3408,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     } else if let message = messages.last, case let .user(author) = message.author, displayAsMessage {
                         titleAttributedString = NSAttributedString(string: author.id == account.peerId ? item.presentationData.strings.DialogList_You : EnginePeer.user(author).displayTitle(strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder), font: titleFont, textColor: theme.titleColor)
                     } else if isPeerGroup {
-                        titleAttributedString = NSAttributedString(string: item.presentationData.strings.ChatList_ArchivedChatsTitle, font: titleFont, textColor: theme.titleColor)
+                        titleAttributedString = NSAttributedString(string: item.usesWegramLayout ? wegramFoldedChatsTitle(item.presentationData.strings) : item.presentationData.strings.ChatList_ArchivedChatsTitle, font: titleFont, textColor: theme.titleColor)
                     } else if itemPeer.chatMainPeer?.id == item.context.account.peerId {
                         if case .savedMessagesChats = item.chatListLocation {
                             titleAttributedString = NSAttributedString(string: item.presentationData.strings.DialogList_MyNotes, font: titleFont, textColor: theme.titleColor)
@@ -3340,7 +3432,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         titleAttributedString = NSAttributedString(string: displayTitle, font: titleFont, textColor: textColor)
                     }
                 case .group:
-                    titleAttributedString = NSAttributedString(string: item.presentationData.strings.ChatList_ArchivedChatsTitle, font: titleFont, textColor: theme.titleColor)
+                    titleAttributedString = NSAttributedString(string: item.usesWegramLayout ? wegramFoldedChatsTitle(item.presentationData.strings) : item.presentationData.strings.ChatList_ArchivedChatsTitle, font: titleFont, textColor: theme.titleColor)
             }
             
             attributedText = renderInstantPagePreviewIcons(attributedText, font: textFont, textColor: theme.messageTextColor)
@@ -3356,18 +3448,19 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             case let .peer(peerData):
                 topIndex = peerData.messages.first?.index
             }
-            if case let .peer(peerData) = item.content, let customMessageListData = peerData.customMessageListData, let messageCount = customMessageListData.messageCount, customMessageListData.commandPrefix == nil {
+            if item.isWegramMessageGroup {
+                dateText = ""
+            } else if case let .peer(peerData) = item.content, let customMessageListData = peerData.customMessageListData, let messageCount = customMessageListData.messageCount, customMessageListData.commandPrefix == nil {
                 dateText = "\(messageCount)"
             } else if case let .peer(peerData) = item.content, let customMessageListData = peerData.customMessageListData, customMessageListData.hideDate {
                 dateText = " "
             } else if let topIndex {
-                var t = Int(topIndex.timestamp)
-                var timeinfo = tm()
-                localtime_r(&t, &timeinfo)
-                
                 let timestamp = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
-                
-                dateText = stringForRelativeTimestamp(strings: item.presentationData.strings, relativeTimestamp: topIndex.timestamp, relativeTo: timestamp, dateTimeFormat: item.presentationData.dateTimeFormat)
+                if item.usesWegramLayout && !item.usesWegramSearchLayout && item.presentationData.strings.baseLanguageCode.hasPrefix("zh") {
+                    dateText = WegramChatListTime.label(timestamp: topIndex.timestamp, now: Date(timeIntervalSince1970: TimeInterval(timestamp)))
+                } else {
+                    dateText = stringForRelativeTimestamp(strings: item.presentationData.strings, relativeTimestamp: topIndex.timestamp, relativeTo: timestamp, dateTimeFormat: item.presentationData.dateTimeFormat)
+                }
             } else {
                 dateText = ""
             }
@@ -3398,7 +3491,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 } else if message.id.peerId != account.peerId {
                     if hasFailedMessages {
                         statusState = .failed(item.presentationData.theme.chatList.failedFillColor, item.presentationData.theme.chatList.failedForegroundColor)
-                    } else {
+                    } else if !item.usesWegramLayout {
                         if let forumTopicData = forumTopicData {
                             if message.id.namespace == forumTopicData.maxOutgoingReadMessageId.namespace, message.id.id >= forumTopicData.maxOutgoingReadMessageId.id {
                                 statusState = .read(item.presentationData.theme.chatList.checkmarkColor)
@@ -3416,6 +3509,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 }
             }
             
+            if item.isWegramMessageGroup { statusState = .none }
+
             if unreadCount.unread {
                 let badgeTextColor: UIColor
                 if unreadCount.muted {
@@ -3439,7 +3534,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         currentAvatarBadgeBackgroundImage = PresentationResourcesChatList.badgeBackgroundActive(item.presentationData.theme, diameter: avatarBadgeDiameter)
                     }
                 }
-                let unreadCountText = compactNumericCountString(Int(unreadCount.count), decimalSeparator: item.presentationData.dateTimeFormat.decimalSeparator)
+                let unreadCountText = item.usesWegramLayout ? wegramUnreadCountString(Int(unreadCount.count)) : compactNumericCountString(Int(unreadCount.count), decimalSeparator: item.presentationData.dateTimeFormat.decimalSeparator)
                 if unreadCount.count > 0 {
                     badgeContent = .text(NSAttributedString(string: unreadCountText, font: badgeFont, textColor: badgeTextColor))
                 } else if isPeerGroup {
@@ -3448,6 +3543,15 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     badgeContent = .blank
                 }
                 
+                if item.usesWegramLayout, badgeContent != .none {
+                    if unreadCount.muted {
+                        badgeContent = .blank
+                    } else if unreadCount.count > 0 {
+                        badgeContent = .text(NSAttributedString(string: unreadCountText, font: badgeFont, textColor: .white))
+                    }
+                    currentBadgeBackgroundImage = PresentationResourcesChatList.wegramBadgeBackground(item.presentationData.theme, diameter: unreadBadgeDiameter)
+                }
+
                 if let mutedCount = unreadCount.mutedCount, mutedCount > 0 {
                     let mutedUnreadCountText = compactNumericCountString(Int(mutedCount), decimalSeparator: item.presentationData.dateTimeFormat.decimalSeparator)
                     currentMentionBadgeImage = PresentationResourcesChatList.badgeBackgroundInactive(item.presentationData.theme, diameter: badgeDiameter)
@@ -3496,14 +3600,14 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         currentMentionBadgeImage = PresentationResourcesChatList.badgeBackgroundPollVotes(item.presentationData.theme, diameter: badgeDiameter)
                     }
                     mentionBadgeContent = .mention
-                } else if item.isPinned, promoInfo == nil, currentBadgeBackgroundImage == nil {
+                } else if !item.usesWegramLayout, item.isPinned, promoInfo == nil, currentBadgeBackgroundImage == nil {
                     currentPinnedIconImage = PresentationResourcesChatList.badgeBackgroundPinned(item.presentationData.theme, diameter: badgeDiameter)
                 }
             }
             
             let isMuted = isRemovedFromTotalUnreadCount
             if isMuted {
-                currentMutedIconImage = PresentationResourcesChatList.mutedIcon(item.presentationData.theme)
+                currentMutedIconImage = item.usesWegramLayout ? wegramMutedIcon(dark: item.presentationData.theme.overallDarkAppearance) : PresentationResourcesChatList.mutedIcon(item.presentationData.theme)
             }
             if item.displayHiddenPeerIcon {
                 currentHiddenIconImage = PresentationResourcesChatList.hiddenIcon(item.presentationData.theme)
@@ -3532,7 +3636,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 }
                 titleIconsWidth += currentHiddenIconImage.size.width
             }
-            if let currentMutedIconImage = currentMutedIconImage {
+            if !item.usesWegramLayout, let currentMutedIconImage = currentMutedIconImage {
                 if titleIconsWidth.isZero {
                     titleIconsWidth += 4.0
                 } else if currentHiddenIconImage != nil {
@@ -3689,17 +3793,17 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             
             let (dateLayout, dateApply) = dateLayout(TextNodeLayoutArguments(attributedString: dateAttributedString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: rawContentWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
             
-            let (badgeLayout, badgeApply) = badgeLayout(CGSize(width: rawContentWidth, height: CGFloat.greatestFiniteMagnitude), badgeDiameter, badgeFont, currentBadgeBackgroundImage, badgeContent)
+            let (badgeLayout, badgeApply) = badgeLayout(CGSize(width: rawContentWidth, height: CGFloat.greatestFiniteMagnitude), unreadBadgeDiameter, badgeFont, currentBadgeBackgroundImage, badgeContent)
             
             let (mentionBadgeLayout, mentionBadgeApply) = mentionBadgeLayout(CGSize(width: rawContentWidth, height: CGFloat.greatestFiniteMagnitude), badgeDiameter, badgeFont, currentMentionBadgeImage, mentionBadgeContent)
             
             var actionButtonTitleNodeLayoutAndApply: (TextNodeLayout, () -> TextNode)?
-            if !item.editing, case .none = badgeContent, case .none = mentionBadgeContent, case let .chat(itemPeer) = contentPeer, case let .user(user) = itemPeer.chatMainPeer, let botInfo = user.botInfo, botInfo.flags.contains(.hasWebApp) {
+            if !hidesWegramListAccessories, !item.editing, case .none = badgeContent, case .none = mentionBadgeContent, case let .chat(itemPeer) = contentPeer, case let .user(user) = itemPeer.chatMainPeer, let botInfo = user.botInfo, botInfo.flags.contains(.hasWebApp) {
                 actionButtonTitleNodeLayoutAndApply = makeActionButtonTitleNodeLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: item.presentationData.strings.ChatList_InlineButtonOpenApp, font: Font.semibold(floor(item.presentationData.fontSize.itemListBaseFontSize * 15.0 / 17.0)), textColor: theme.unreadBadgeActiveTextColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: rawContentWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
             }
             
             var badgeSize: CGFloat = 0.0
-            if !badgeLayout.width.isZero {
+            if !item.usesWegramLayout, !badgeLayout.width.isZero {
                 badgeSize += badgeLayout.width + 5.0
             }
             if !mentionBadgeLayout.width.isZero {
@@ -3726,9 +3830,14 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 }
                 badgeSize += actionButtonTitleNodeLayout.size.width + 12.0 * 2.0
             }
+            if item.usesWegramLayout, let currentMutedIconImage {
+                // The icon sits 2pt inside the edge; WeChat truncates a muted preview about 20pt short of it
+                // (both muted rows of the chat-list reference end their ellipsis at ~352pt, the bell starts at ~374pt).
+                badgeSize += 2.0 + currentMutedIconImage.size.width + 20.0
+            }
             badgeSize = max(badgeSize, reorderInset)
             
-            if !itemTags.isEmpty {
+            if displaysItemTags {
                 authorAttributedString = nil
             }
             
@@ -3752,15 +3861,9 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         }
                     }
                     
-                    if let effectiveAuthorTitle, let textAttributedStringValue = textAttributedString {
-                        let mutableTextAttributedString = NSMutableAttributedString()
-                        mutableTextAttributedString.append(NSAttributedString(string: effectiveAuthorTitle.string + ": ", font: textFont, textColor: theme.authorNameColor))
-                        mutableTextAttributedString.append(textAttributedStringValue)
-                        
-                        textAttributedString = mutableTextAttributedString
-                    }
-                    
-                    effectiveAuthorTitle = nil
+                    let preview = chatListForumPreview(text: textAttributedString, author: effectiveAuthorTitle, keepsAuthorSeparate: hidesWegramListAccessories, font: textFont, textColor: theme.authorNameColor)
+                    textAttributedString = preview.text
+                    effectiveAuthorTitle = preview.author
                 }
             } else if forumThread != nil || !topForumTopicItems.isEmpty {
                 if let forumThread = forumThread {
@@ -3780,15 +3883,9 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     }
                 }
                 
-                if let effectiveAuthorTitle, let textAttributedStringValue = textAttributedString {
-                    let mutableTextAttributedString = NSMutableAttributedString()
-                    mutableTextAttributedString.append(NSAttributedString(string: effectiveAuthorTitle.string + ": ", font: textFont, textColor: theme.authorNameColor))
-                    mutableTextAttributedString.append(textAttributedStringValue)
-                    
-                    textAttributedString = mutableTextAttributedString
-                }
-                
-                effectiveAuthorTitle = nil
+                let preview = chatListForumPreview(text: textAttributedString, author: effectiveAuthorTitle, keepsAuthorSeparate: hidesWegramListAccessories, font: textFont, textColor: theme.authorNameColor)
+                textAttributedString = preview.text
+                effectiveAuthorTitle = preview.author
             }
             
             if authorIsCurrentChat {
@@ -3800,6 +3897,16 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 if !sourceTitle.isEmpty {
                     forumThreads.append((id: sourcePeer.id.toInt64(), threadPeer: nil, title: NSAttributedString(string: sourceTitle, font: textFont, textColor: theme.titleColor), iconId: nil, iconColor: nil))
                     authorTopicArrowColor = theme.messageTextColor
+                }
+            }
+
+            let usesCompactWegramLayout = item.usesWegramLayout && (hidesWegramListAccessories || (forumThreads.isEmpty && !displaysItemTags))
+            if usesCompactWegramLayout {
+                textAttributedString = wegramChatListPreview(text: textAttributedString, author: effectiveAuthorTitle, topic: hidesWegramListAccessories ? forumThreads.first?.title : nil, isDraft: hasDraft, mutedUnreadPrefix: !isPeerGroup && unreadCount.muted && unreadCount.count > 0 ? "[\(unreadCount.count > 999 ? "999+" : "\(unreadCount.count)")条] " : nil, font: textFont, textColor: theme.messageTextColor, draftColor: theme.messageDraftTextColor)
+                effectiveAuthorTitle = nil
+                if hidesWegramListAccessories {
+                    forumThreads = []
+                    isFirstForumThreadSelectable = false
                 }
             }
 
@@ -3835,7 +3942,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
             let (textLayout, textApply) = textLayout(TextNodeLayoutArguments(
                 attributedString: textAttributedString,
                 backgroundColor: nil,
-                maximumNumberOfLines: (authorAttributedString == nil && itemTags.isEmpty && forumThread == nil && topForumTopicItems.isEmpty) ? 2 : 1,
+                maximumNumberOfLines: usesCompactWegramLayout ? 1 : ((authorAttributedString == nil && !displaysItemTags && forumThread == nil && topForumTopicItems.isEmpty) ? 2 : 1),
                 truncationType: .end,
                 constrainedSize: CGSize(width: textMaxWidth, height: .greatestFiniteMagnitude),
                 alignment: .natural,
@@ -3972,15 +4079,15 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                                 }
                             } else if case .psa = promoInfo {
                                 peerRevealOptions = [
-                                    ItemListRevealOption(key: RevealOptionKey.hidePsa.rawValue, title: item.presentationData.strings.ChatList_HideAction, icon: deleteIcon, color: item.presentationData.theme.list.itemDisclosureActions.inactive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor)
+                                    ItemListRevealOption(key: RevealOptionKey.hidePsa.rawValue, title: item.presentationData.strings.ChatList_HideAction, icon: deleteIcon, color: item.presentationData.theme.list.itemDisclosureActions.inactive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor)
                                 ]
                                 peerLeftRevealOptions = []
                             } else if case let .peer(peerData) = item.content, let customMessageListData = peerData.customMessageListData {
                                 peerLeftRevealOptions = []
                                 if customMessageListData.commandPrefix != nil {
                                     peerRevealOptions = [
-                                        ItemListRevealOption(key: RevealOptionKey.edit.rawValue, title: item.presentationData.strings.ChatList_ItemMenuEdit, icon: .none, color: item.presentationData.theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor),
-                                        ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: item.presentationData.strings.ChatList_ItemMenuDelete, icon: .none, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor)
+                                        ItemListRevealOption(key: RevealOptionKey.edit.rawValue, title: item.presentationData.strings.ChatList_ItemMenuEdit, icon: .none, color: item.presentationData.theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor),
+                                        ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: item.presentationData.strings.ChatList_ItemMenuDelete, icon: .none, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor)
                                     ]
                                 } else {
                                     peerRevealOptions = []
@@ -3988,8 +4095,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                             } else if promoInfo == nil {
                                 if case let .peer(peerData) = item.content, case .community = peerData.peer.peer {
                                     peerRevealOptions = [
-                                        ItemListRevealOption(key: isMuted ? RevealOptionKey.unmute.rawValue : RevealOptionKey.mute.rawValue, title: isMuted ? item.presentationData.strings.ChatList_Unmute : item.presentationData.strings.ChatList_Mute, icon: isMuted ? unmuteIcon : muteIcon, color: item.presentationData.theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor),
-                                        ItemListRevealOption(key: RevealOptionKey.ungroup.rawValue, title: item.presentationData.strings.ChatList_Context_Ungroup, icon: ungroupCommunityIcon, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor)
+                                        ItemListRevealOption(key: isMuted ? RevealOptionKey.unmute.rawValue : RevealOptionKey.mute.rawValue, title: isMuted ? item.presentationData.strings.ChatList_Unmute : item.presentationData.strings.ChatList_Mute, icon: isMuted ? unmuteIcon : muteIcon, color: item.presentationData.theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor),
+                                        ItemListRevealOption(key: RevealOptionKey.ungroup.rawValue, title: item.presentationData.strings.ChatList_Context_Ungroup, icon: ungroupCommunityIcon, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor)
                                     ]
                                 } else {
                                     peerRevealOptions = revealOptions(strings: item.presentationData.strings, theme: item.presentationData.theme, isPinned: isPinned, isMuted: !isAccountPeer ? isMuted : nil, location: item.chatListLocation, peerId: renderedPeer.peerId, accountPeerId: item.context.account.peerId, canDelete: true, isEditing: item.editing, filterData: item.filterData)
@@ -4016,18 +4123,18 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
 
                             if actions.contains(.toggleUnread) && !isCommunityPeer {
                                 if unreadCount.unread {
-                                    peerLeftRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: item.presentationData.strings.DialogList_Read, icon: readIcon, color: item.presentationData.theme.list.itemDisclosureActions.inactive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor))
+                                    peerLeftRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: item.presentationData.strings.DialogList_Read, icon: readIcon, color: item.presentationData.theme.list.itemDisclosureActions.inactive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral1.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor))
                                 } else {
-                                    peerLeftRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: item.presentationData.strings.DialogList_Unread, icon: unreadIcon, color: item.presentationData.theme.list.itemDisclosureActions.accent.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.accent.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor))
+                                    peerLeftRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.toggleMarkedUnread.rawValue, title: item.presentationData.strings.DialogList_Unread, icon: unreadIcon, color: item.presentationData.theme.list.itemDisclosureActions.accent.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.accent.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor))
                                 }
                             }
                             if actions.contains(.toggleMuted) {
-                                peerRevealOptions.append(ItemListRevealOption(key: isMuted ? RevealOptionKey.unmute.rawValue : RevealOptionKey.mute.rawValue, title: isMuted ? item.presentationData.strings.ChatList_Unmute : item.presentationData.strings.ChatList_Mute, icon: isMuted ? unmuteIcon : muteIcon, color: item.presentationData.theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor))
+                                peerRevealOptions.append(ItemListRevealOption(key: isMuted ? RevealOptionKey.unmute.rawValue : RevealOptionKey.mute.rawValue, title: isMuted ? item.presentationData.strings.ChatList_Unmute : item.presentationData.strings.ChatList_Mute, icon: isMuted ? unmuteIcon : muteIcon, color: item.presentationData.theme.list.itemDisclosureActions.neutral2.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.neutral2.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor))
                             }
                             if actions.contains(.delete) {
-                                peerRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: item.presentationData.strings.Common_Delete, icon: deleteIcon, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor))
+                                peerRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: item.presentationData.strings.Common_Delete, icon: deleteIcon, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor))
                             } else if actions.contains(.remove) {
-                                peerRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: item.presentationData.strings.ChatList_Remove, icon: deleteIcon, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.chatList.dateTextColor))
+                                peerRevealOptions.append(ItemListRevealOption(key: RevealOptionKey.delete.rawValue, title: item.presentationData.strings.ChatList_Remove, icon: deleteIcon, color: item.presentationData.theme.list.itemDisclosureActions.destructive.fillColor, iconColor: item.presentationData.theme.list.itemDisclosureActions.destructive.foregroundColor, textColor: item.presentationData.theme.list.itemSecondaryTextColor))
                             }
                         }
                     } else {
@@ -4035,7 +4142,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         peerLeftRevealOptions = []
                     }
                 case .groupReference:
-                    peerRevealOptions = groupReferenceRevealOptions(strings: item.presentationData.strings, theme: item.presentationData.theme, isEditing: item.editing, hiddenByDefault: groupHiddenByDefault)
+                    // The only option is Hide/Unhide Archive, and the Folded Chats row is never hidden.
+                    peerRevealOptions = item.usesWegramLayout ? [] : groupReferenceRevealOptions(strings: item.presentationData.strings, theme: item.presentationData.theme, isEditing: item.editing, hiddenByDefault: groupHiddenByDefault)
                     peerLeftRevealOptions = []
             }
             
@@ -4066,9 +4174,12 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                 itemHeight += authorSpacing
             }
                         
-            let rawContentRect = CGRect(origin: CGPoint(x: 2.0, y: layoutOffset + floor(item.presentationData.fontSize.itemListBaseFontSize * 8.0 / 17.0)), size: CGSize(width: rawContentWidth, height: itemHeight - 12.0 - 9.0))
+            if usesCompactWegramLayout {
+                itemHeight = max(item.usesWegramSearchLayout ? 64.0 : 72.0, titleLayout.size.height + textLayout.size.height + 24.0)
+            }
+            let rawContentRect = CGRect(origin: CGPoint(x: 2.0, y: layoutOffset + (usesCompactWegramLayout ? 12.0 : floor(item.presentationData.fontSize.itemListBaseFontSize * 8.0 / 17.0))), size: CGSize(width: rawContentWidth, height: itemHeight - 12.0 - 9.0))
             
-            let insets = ChatListItemNode.insets(first: first, last: last, firstWithHeader: firstWithHeader)
+            let insets = ChatListItemNode.insets(first: first, last: last, firstWithHeader: firstWithHeader, headerHeight: item.header?.height ?? 29)
             var heightOffset: CGFloat = 0.0
             if item.hiddenOffset {
                 heightOffset = -itemHeight
@@ -4292,6 +4403,33 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     transition.updateTransformScale(node: strongSelf.avatarNode, scale: avatarScale)
                     strongSelf.avatarNode.updateSize(size: avatarFrame.size)
                     strongSelf.updateVideoVisibility()
+                    
+                    if item.usesWegramLayout, case .groupReference = item.content {
+                        let iconNode: ASImageNode
+                        if let current = strongSelf.wegramFoldedIconNode {
+                            iconNode = current
+                        } else {
+                            iconNode = ASImageNode()
+                            iconNode.isUserInteractionEnabled = false
+                            iconNode.displaysAsynchronously = false
+                            strongSelf.avatarNode.insertSubnode(iconNode, belowSubnode: strongSelf.onlineNode)
+                            strongSelf.wegramFoldedIconNode = iconNode
+                        }
+                        let dark = item.presentationData.theme.overallDarkAppearance
+                        if strongSelf.wegramFoldedIconKey?.size != avatarFrame.width || strongSelf.wegramFoldedIconKey?.dark != dark {
+                            strongSelf.wegramFoldedIconKey = (avatarFrame.width, dark)
+                            iconNode.image = wegramFoldedChatsIcon(size: avatarFrame.width, dark: dark)
+                        }
+                        iconNode.frame = CGRect(origin: CGPoint(), size: avatarFrame.size)
+                        // The archive avatar underneath would show its blue through the icon's
+                        // antialiased corners.
+                        strongSelf.avatarNode.contentNode.isHidden = true
+                    } else if let iconNode = strongSelf.wegramFoldedIconNode {
+                        strongSelf.avatarNode.contentNode.isHidden = false
+                        iconNode.removeFromSupernode()
+                        strongSelf.wegramFoldedIconNode = nil
+                        strongSelf.wegramFoldedIconKey = nil
+                    }
                     
                     var itemPeerId: EnginePeer.Id?
                     if case let .chatList(index) = item.index {
@@ -4634,11 +4772,34 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     
                     let rightAccessoryVerticalOffset: CGFloat = floorToScreenPixels(-4.0 * min(1.0, item.presentationData.fontSize.itemListBaseFontSize / 17.0))
                     var nextBadgeX: CGFloat = contentRect.maxX
+                    let wegramMutedIconOriginX: CGFloat?
+                    if item.usesWegramLayout, let currentMutedIconImage {
+                        // The reference's bell ends 1pt inside the content edge, 1pt past the time's glyphs.
+                        wegramMutedIconOriginX = nextBadgeX - 1.0 - currentMutedIconImage.size.width
+                        nextBadgeX -= 2.0 + currentMutedIconImage.size.width + 6.0
+                    } else {
+                        wegramMutedIconOriginX = nil
+                    }
+                    // The WeGram badge overhangs the avatar's corner, which lies outside the clipping main
+                    // content container, so it is hosted by the avatar container (above the avatar).
+                    if item.usesWegramLayout {
+                        if strongSelf.badgeNode.supernode !== strongSelf.avatarContainerNode {
+                            strongSelf.avatarContainerNode.addSubnode(strongSelf.badgeNode)
+                        }
+                    } else if strongSelf.badgeNode.supernode !== strongSelf.mainContentContainerNode {
+                        strongSelf.mainContentContainerNode.insertSubnode(strongSelf.badgeNode, belowSubnode: strongSelf.mentionBadgeNode)
+                    }
                     if let _ = currentBadgeBackgroundImage {
-                        let badgeFrame = CGRect(x: nextBadgeX - badgeLayout.width, y: contentRect.maxY - badgeLayout.height + rightAccessoryVerticalOffset, width: badgeLayout.width, height: badgeLayout.height)
+                        // Centred 2pt inside the avatar's top-right corner: WeChat's 10pt dot is centred
+                        // 5.5px inside both edges of the avatar on every row (IMG_2439, IMG_2440), and 2pt
+                        // puts it on the same pixels against our whole-pixel avatar. No reference shows a
+                        // numbered badge on a row; it shares the dot's centre.
+                        let badgeFrame = item.usesWegramLayout ? CGRect(x: avatarFrame.width - 2.0 - badgeLayout.width * 0.5, y: 2.0 - badgeLayout.height * 0.5, width: badgeLayout.width, height: badgeLayout.height) : CGRect(x: nextBadgeX - badgeLayout.width, y: contentRect.maxY - badgeLayout.height + rightAccessoryVerticalOffset, width: badgeLayout.width, height: badgeLayout.height)
                         
                         transition.updateFrame(node: strongSelf.badgeNode, frame: badgeFrame)
-                        nextBadgeX -= badgeLayout.width + 6.0
+                        if !item.usesWegramLayout {
+                            nextBadgeX -= badgeLayout.width + 6.0
+                        }
                         
                         if item.useCommunityViewLayout {
                             strongSelf.badgeNode.layer.rasterizationScale = UIScreenScale
@@ -4646,7 +4807,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         }
                     }
                     
-                    if currentMentionBadgeImage != nil || currentBadgeBackgroundImage != nil {
+                    if currentMentionBadgeImage != nil || (!item.usesWegramLayout && currentBadgeBackgroundImage != nil) {
                         let badgeFrame = CGRect(x: nextBadgeX - mentionBadgeLayout.width, y: contentRect.maxY - mentionBadgeLayout.height + rightAccessoryVerticalOffset, width: mentionBadgeLayout.width, height: mentionBadgeLayout.height)
                         
                         transition.updateFrame(node: strongSelf.mentionBadgeNode, frame: badgeFrame)
@@ -4780,7 +4941,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     
                     let authorNodeFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0, y: contentRect.minY + titleLayout.size.height - 2.0), size: authorLayout)
                     strongSelf.authorNode.frame = authorNodeFrame
-                    let textNodeFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0, y: contentRect.minY + titleLayout.size.height - 2.0 + (authorLayout.height.isZero ? 0.0 : (authorLayout.height - 3.0))), size: textLayout.size)
+                    let textNodeFrame = CGRect(origin: CGPoint(x: contentRect.origin.x - 1.0, y: contentRect.minY + titleLayout.size.height + (usesCompactWegramLayout ? 3.0 : -2.0) + (authorLayout.height.isZero ? 0.0 : (authorLayout.height - 3.0))), size: textLayout.size)
                     
                     if let topForumTopicRect, !isSearching {
                         let compoundHighlightingNode: LinkHighlightingNode
@@ -4960,7 +5121,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         }
                     }
                     
-                    if !itemTags.isEmpty {
+                    if displaysItemTags {
                         let sizeFactor = item.presentationData.fontSize.itemListBaseFontSize / 17.0
                         
                         let itemTagListFrame = CGRect(origin: CGPoint(x: contentRect.minX, y: contentRect.minY + measureLayout.size.height * 2.0 + floorToScreenPixels(2.0 * sizeFactor)), size: CGSize(width: contentRect.width, height: floorToScreenPixels(20.0 * sizeFactor)))
@@ -5342,9 +5503,16 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     if let currentMutedIconImage = currentMutedIconImage {
                         strongSelf.mutedIconNode.image = currentMutedIconImage
                         strongSelf.mutedIconNode.isHidden = false
-                        let mutedIconOriginX = currentHiddenIconImage != nil ? nextTitleIconOrigin : nextTitleIconOrigin - 5.0
-                        transition.updateFrame(node: strongSelf.mutedIconNode, frame: CGRect(origin: CGPoint(x: mutedIconOriginX, y: floorToScreenPixels(titleFrame.maxY - lastLineRect.height * 0.5 - currentMutedIconImage.size.height / 2.0)), size: currentMutedIconImage.size))
-                        nextTitleIconOrigin += currentMutedIconImage.size.width + 1.0
+                        let mutedIconFrame: CGRect
+                        if let wegramMutedIconOriginX {
+                            // The reference's bell sits one pixel below the preview line's centre.
+                            mutedIconFrame = CGRect(origin: CGPoint(x: wegramMutedIconOriginX, y: floorToScreenPixels(textNodeFrame.midY - currentMutedIconImage.size.height * 0.5) + 1.0 / UIScreen.main.scale), size: currentMutedIconImage.size)
+                        } else {
+                            let mutedIconOriginX = currentHiddenIconImage != nil ? nextTitleIconOrigin : nextTitleIconOrigin - 5.0
+                            mutedIconFrame = CGRect(origin: CGPoint(x: mutedIconOriginX, y: floorToScreenPixels(titleFrame.maxY - lastLineRect.height * 0.5 - currentMutedIconImage.size.height / 2.0)), size: currentMutedIconImage.size)
+                            nextTitleIconOrigin += currentMutedIconImage.size.width + 1.0
+                        }
+                        transition.updateFrame(node: strongSelf.mutedIconNode, frame: mutedIconFrame)
                     } else {
                         strongSelf.mutedIconNode.image = nil
                         strongSelf.mutedIconNode.isHidden = true
@@ -5362,7 +5530,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                             strongSelf.mainContentContainerNode.view.addSubview(backgroundView)
                             strongSelf.mainContentContainerNode.addSubnode(titleBadgeNode)
                         }
-                        if currentHiddenIconImage != nil || currentMutedIconImage != nil {
+                        if currentHiddenIconImage != nil || (currentMutedIconImage != nil && !item.usesWegramLayout) {
                             nextTitleIconOrigin -= 7.0
                         }
                         nextTitleIconOrigin += 7.0
@@ -5384,29 +5552,14 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                         titleBadge.textNode.removeFromSupernode()
                     }
                     
-                    let leftSeparatorInset: CGFloat
-                    let rightSeparatorInset: CGFloat
                     let hideCommunitySeparator = item.useCommunityViewLayout && last
-                    // Separators stay out of the side safe areas. The content-aligned ones end 16pt
-                    // before the right inset; the full-width ones run to the edge unless there is a
-                    // right inset, in which case they end where the content-aligned ones do.
-                    let contentRightSeparatorInset: CGFloat = params.rightInset + 16.0
-                    let fullWidthRightSeparatorInset: CGFloat = params.rightInset.isZero ? 0.0 : contentRightSeparatorInset
-                    if case let .groupReference(groupReferenceData) = item.content, groupReferenceData.hiddenByDefault {
-                        leftSeparatorInset = params.leftInset
-                        rightSeparatorInset = fullWidthRightSeparatorInset
-                    } else if item.useCommunityViewLayout {
-                        leftSeparatorInset = editingOffset + leftInset + rawContentRect.origin.x
-                        rightSeparatorInset = contentRightSeparatorInset
-                    } else if (!nextIsPinned && isPinned) || last {
-                        leftSeparatorInset = params.leftInset
-                        rightSeparatorInset = fullWidthRightSeparatorInset
-                    } else {
-                        leftSeparatorInset = editingOffset + leftInset + rawContentRect.origin.x
-                        rightSeparatorInset = contentRightSeparatorInset
-                    }
-                    
-                    transition.updateFrame(node: strongSelf.separatorNode, frame: CGRect(origin: CGPoint(x: leftSeparatorInset, y: layoutOffset + itemHeight - separatorHeight), size: CGSize(width: params.width - leftSeparatorInset - rightSeparatorInset, height: separatorHeight)))
+                    let isHiddenArchive: Bool
+                    if case let .groupReference(data) = item.content { isHiddenArchive = data.hiddenByDefault }
+                    else { isHiddenArchive = false }
+                    let fullWidthSeparator = isHiddenArchive || (!item.useCommunityViewLayout && ((!nextIsPinned && isPinned) || last))
+                    let usesWegramSeparator = item.usesWegramLayout && !item.usesWegramSearchLayout && !item.interaction.isInlineMode && !isHiddenArchive
+                    let separatorFrame = chatListSeparatorFrame(params: params, contentInset: editingOffset + leftInset + rawContentRect.origin.x, y: layoutOffset + itemHeight - separatorHeight, height: separatorHeight, fullWidth: fullWidthSeparator, isWegram: usesWegramSeparator)
+                    transition.updateFrame(node: strongSelf.separatorNode, frame: separatorFrame)
                     strongSelf.separatorNode.isHidden = hideCommunitySeparator
                     if let inlineNavigationLocation = item.interaction.inlineNavigationLocation {
                         strongSelf.updateSeparatorAlpha(transition: transition, inlineNavigationProgress: inlineNavigationLocation.progress)
@@ -5459,7 +5612,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     strongSelf.highlightedBackgroundNode.backgroundColor = highlightedBackgroundColor
                     let topNegativeInset: CGFloat = 0.0
                     strongSelf.highlightedBackgroundNode.frame = CGRect(origin: CGPoint(x: params.leftInset + strongSelf.revealOffset, y: layoutOffset - separatorHeight - topNegativeInset), size: CGSize(width: layout.contentSize.width - params.leftInset - params.rightInset, height: layout.contentSize.height + separatorHeight + topNegativeInset))
-                    transition.updateCornerRadius(node: strongSelf.highlightedBackgroundNode, cornerRadius: strongSelf.isRevealOptionsActive ? 26.0 : 0.0)
+                    transition.updateCornerRadius(node: strongSelf.highlightedBackgroundNode, cornerRadius: strongSelf.revealHighlightCornerRadius)
                     
                     if let peerPresence = peerPresence {
                         strongSelf.peerPresenceManager?.reset(presence: EnginePeer.Presence(status: peerPresence.status, lastActivity: 0), isOnline: online)
@@ -5467,8 +5620,11 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                     
                     strongSelf.updateLayout(size: CGSize(width: layout.contentSize.width, height: itemHeight), leftInset: params.leftInset, rightInset: params.rightInset)
                     
+                    strongSelf.revealOptionsUseFlatStyle = item.usesWegramLayout
                     if item.editing {
                         strongSelf.setRevealOptions((left: [], right: []), enableAnimations: item.context.sharedContext.energyUsageSettings.fullTranslucency)
+                    } else if item.usesWegramLayout {
+                        strongSelf.setRevealOptions(wegramFlatRevealOptions(left: peerLeftRevealOptions, right: peerRevealOptions, dark: item.presentationData.theme.overallDarkAppearance), enableAnimations: false)
                     } else {
                         strongSelf.setRevealOptions((left: peerLeftRevealOptions, right: peerRevealOptions), enableAnimations: item.context.sharedContext.energyUsageSettings.fullTranslucency)
                     }
@@ -5503,26 +5659,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
                             shimmerNode.updateAbsoluteRect(rect, within: size)
                         }
                         
-                        var shapes: [ShimmerEffectNode.Shape] = []
-                        
-                        let titleLineWidth: CGFloat = 180.0
-                        let dateLineWidth: CGFloat = 36.0
-                        let textFirstLineWidth: CGFloat = 240.0
-                        let textSecondLineWidth: CGFloat = 200.0
-                        let lineDiameter: CGFloat = 10.0
-                        
-                        shapes.append(.circle(avatarFrame))
-                        
-                        let titleFrame = strongSelf.titleNode.frame
-                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: titleFrame.minX, y: titleFrame.minY + floor((titleFrame.height - lineDiameter) / 2.0)), width: titleLineWidth, diameter: lineDiameter))
-                        
-                        let textFrame = strongSelf.textNode.textNode.frame
-                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: textFrame.minX, y: textFrame.minY + 7.0), width: textFirstLineWidth, diameter: lineDiameter))
-                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: textFrame.minX, y: textFrame.minY + 7.0 + lineDiameter + 9.0), width: textSecondLineWidth, diameter: lineDiameter))
-                        
-                        let dateFrame = strongSelf.dateNode.frame
-                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: dateFrame.maxX - dateLineWidth, y: dateFrame.minY + 3.0), width: dateLineWidth, diameter: lineDiameter))
-                        
+                        let shapes = chatListLoadingShapes(avatarFrame: avatarFrame, titleFrame: strongSelf.titleNode.frame, textFrame: strongSelf.textNode.textNode.frame, dateFrame: strongSelf.dateNode.frame, contentMaxX: contentRect.maxX, isWegram: item.usesWegramLayout)
+
                         shimmerNode.update(backgroundColor: item.presentationData.theme.list.plainBackgroundColor, foregroundColor: item.presentationData.theme.list.mediaPlaceholderColor, shimmeringColor: item.presentationData.theme.list.itemBlocksBackgroundColor.withAlphaComponent(0.4), shapes: shapes, size: shimmerNode.frame.size)
                     } else if let shimmerNode = strongSelf.placeholderNode {
                         strongSelf.placeholderNode = nil
@@ -5596,7 +5734,7 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
         self.avatarVideoNode?.updateVisibility(isVisible)
       
         if let videoNode = self.avatarVideoNode {
-            videoNode.updateLayout(size: self.avatarNode.frame.size, cornerRadius: self.avatarNode.frame.size.width / 2.0, transition: .immediate)
+            videoNode.updateLayout(size: self.avatarNode.frame.size, cornerRadius: self.layoutParams?.0.usesWegramLayout == true ? self.avatarNode.frame.size.width / 10.0 : self.avatarNode.frame.size.width / 2.0, transition: .immediate)
             videoNode.frame = self.avatarNode.bounds
         }
     }
@@ -5806,7 +5944,8 @@ public class ChatListItemNode: ItemListRevealOptionsItemNode {
     }
     
     func playArchiveAnimation() {
-        guard let item = self.item, case .groupReference = item.content else {
+        // WeChat has no archive animation, and Telegram's would draw its box over the 折叠的聊天 icon.
+        guard let item = self.item, case .groupReference = item.content, !item.usesWegramLayout else {
             return
         }
         self.avatarNode.playArchiveAnimation()

@@ -87,6 +87,7 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
     let storiesReady = Promise<Bool>()
     
     private var panRecognizer: InteractiveTransitionGestureRecognizer?
+    private var showsNavigationSearch = false
     
     init(context: AccountContext, sortOrder: Signal<ContactsSortOrder, NoError>, present: @escaping (ViewController, Any?) -> Void, controller: ContactsController) {
         self.context = context
@@ -95,13 +96,16 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
         self.stringsPromise.set(.single(self.presentationData.strings))
         
-        var inviteImpl: (() -> Void)?
+        var shortcutImpl: ((WegramContactShortcut) -> Void)?
         
         let presentation = combineLatest(sortOrder, self.stringsPromise.get())
         |> map { sortOrder, strings -> ContactListPresentation in
-            let options = [ContactListAdditionalOption(title: strings.Contacts_InviteFriends, icon: .generic(UIImage(bundleImageName: "Contact List/AddMemberIcon")!), action: {
-                inviteImpl?()
-            })]
+            let _ = strings
+            let options = WegramContactShortcut.allCases.map { shortcut in
+                ContactListAdditionalOption(title: shortcut.title, icon: shortcut.image().map(ContactListActionItemIcon.generic) ?? .none, style: .generic, action: {
+                    shortcutImpl?(shortcut)
+                }, clearHighlightAutomatically: true)
+            }
             switch sortOrder {
                 case .presence:
                     return .orderedByPresence(options: options)
@@ -112,7 +116,7 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         
         var contextAction: ((EnginePeer, ASDisplayNode, ContextGesture?, CGPoint?, Bool) -> Void)?
         
-        self.contactListNode = ContactListNode(context: context, presentation: presentation, onlyWriteable: false, isGroupInvitation: false, displaySortOptions: true, contextAction: { peer, node, gesture, location, isStories in
+        self.contactListNode = ContactListNode(context: context, presentation: presentation, onlyWriteable: false, isGroupInvitation: false, displaySortOptions: false, usesWegramLayout: true, contextAction: { peer, node, gesture, location, isStories in
             contextAction?(peer, node, gesture, location, isStories)
         })
         
@@ -147,10 +151,8 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             }
         }).strict()
                 
-        inviteImpl = { [weak self] in
-            if let strongSelf = self {
-                strongSelf.openInvite?()
-            }
+        shortcutImpl = { [weak self] shortcut in
+            self?.controller?.openWegramContactShortcut(shortcut)
         }
         
         contextAction = { [weak self] peer, node, gesture, location, isStories in
@@ -236,7 +238,7 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             }
             
             self.storySubscriptions = storySubscriptions
-            self.contactListNode.storySubscriptions.set(.single(storySubscriptions))
+            self.contactListNode.storySubscriptions.set(.single(nil))
             
             self.storiesReady.set(.single(true))
         }).strict()*/
@@ -261,6 +263,9 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
     private func updateThemeAndStrings() {
         self.backgroundColor = self.presentationData.theme.chatList.backgroundColor
         self.searchDisplayController?.updatePresentationData(self.presentationData)
+        // The navigation bar (title, search field) only takes the theme on a layout pass; without one a
+        // live light/dark switch leaves it in the previous appearance.
+        self.controller?.requestLayout(transition: .immediate)
     }
     
     func scrollToTop() {
@@ -277,6 +282,12 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
     
     private func contentOffsetChanged(offset: ListViewVisibleContentOffset) {
         self.updateNavigationScrolling(transition: .immediate)
+        // Once the search field has scrolled away WeChat puts a search icon beside the add button.
+        let showsSearch = self.getEffectiveNavigationScrollingOffset() >= ChatListNavigationBar.searchScrollHeight - 1.0
+        if showsSearch != self.showsNavigationSearch {
+            self.showsNavigationSearch = showsSearch
+            self.controller?.requestLayout(transition: .immediate)
+        }
     }
     
     private func contentScrollingEnded(listView: ListView) -> Bool {
@@ -319,30 +330,31 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             )))
             rightButtons = []
         } else {
-            title = self.presentationData.strings.Contacts_Title
-            leftButton = AnyComponentWithIdentity(id: "sort", component: AnyComponent(NavigationButtonComponent(
-                content: .text(title: self.presentationData.strings.Contacts_Sort, isBold: false),
-                pressed: { [weak self] sourceView in
-                    guard let self else {
-                        return
+            title = "通讯录"
+            leftButton = nil
+            var buttons: [AnyComponentWithIdentity<NavigationButtonComponentEnvironment>] = []
+            if self.showsNavigationSearch && self.isSearchDisplayControllerActive == nil {
+                buttons.append(AnyComponentWithIdentity(id: "search", component: AnyComponent(NavigationButtonComponent(
+                    content: .icon(imageName: WegramIcon.navigationSearch.rawValue),
+                    pressed: { [weak self] _ in
+                        self?.contactListNode.activateSearch?()
                     }
-                    
-                    self.controller?.presentSortMenu(sourceView: sourceView, gesture: nil)
-                }
-            )))
-            rightButtons = [AnyComponentWithIdentity(id: "add", component: AnyComponent(NavigationButtonComponent(
-                content: .icon(imageName: "Chat List/AddIcon"),
+                ))))
+            }
+            buttons.append(AnyComponentWithIdentity(id: "add", component: AnyComponent(NavigationButtonComponent(
+                content: .icon(imageName: WegramIcon.addContact.rawValue),
                 pressed: { [weak self] _ in
                     guard let self else {
                         return
                     }
                     self.controller?.addPressed()
                 }
-            )))]
+            ))))
+            rightButtons = buttons.reversed()
         }
         
         let primaryContent = ChatListHeaderComponent.Content(
-            title: self.presentationData.strings.Contacts_Title,
+            title: "通讯录",
             navigationBackTitle: nil,
             titleComponent: nil,
             chatListTitle: NetworkStatusTitle(text: title, activity: false, hasProxy: false, connectsViaProxy: false, isPasscodeSet: false, isManuallyLocked: false, peerStatus: nil),
@@ -373,6 +385,7 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
                 tabsNodeIsSearch: tabsNodeIsSearch,
                 accessoryPanelContainer: nil,
                 accessoryPanelContainerHeight: 0.0,
+                usesWegramAppearance: true,
                 activateSearch: { [weak self] searchContentNode in
                     guard let self else {
                         return
@@ -503,7 +516,7 @@ final class ContactsControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             if let requestDeactivateSearch = self?.requestDeactivateSearch {
                 requestDeactivateSearch()
             }
-        }, fieldStyle: placeholderNode?.fieldStyle ?? .modern)
+        }, fieldStyle: placeholderNode?.fieldStyle ?? .modern, usesWegramAppearance: placeholderNode != nil)
         
         self.searchDisplayController?.containerLayoutUpdated(containerLayout, navigationBarHeight: navigationBarHeight, transition: .immediate)
         self.searchDisplayController?.activate(insertSubnode: { [weak self] subnode, isSearchBar in

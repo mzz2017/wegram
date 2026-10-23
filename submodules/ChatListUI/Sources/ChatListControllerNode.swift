@@ -1544,9 +1544,9 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         }
         
         var navigationHeaderPanels: AnyComponent<Empty>?
-        if self.controller?.tabContainerData != nil || !panels.isEmpty {
+        if (self.controller?.hidesFolderTabs != true && self.controller?.tabContainerData != nil) || !panels.isEmpty {
             var tabs: AnyComponent<Empty>?
-            if let tabContainerData = self.controller?.tabContainerData, tabContainerData.0.count > 1 {
+            if self.controller?.hidesFolderTabs != true, let tabContainerData = self.controller?.tabContainerData, tabContainerData.0.count > 1 {
                 let folderFilterIndex: (ChatListFilterTabEntryId, [ChatListFilterTabEntry]) -> Int? = { id, entries in
                     var index = 0
                     for entry in entries {
@@ -1691,7 +1691,10 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         }
         
         var effectiveStorySubscriptions: EngineStorySubscriptions?
-        if let controller = self.controller, case .forum = controller.location {
+        if self.controller?.hidesFolderTabs == true {
+            // Stories live under Discover so the conversation list keeps its WeChat geometry.
+            effectiveStorySubscriptions = nil
+        } else if let controller = self.controller, case .forum = controller.location {
             effectiveStorySubscriptions = nil
         } else {
             if let controller = self.controller, let storySubscriptions = controller.orderedStorySubscriptions, shouldDisplayStoriesInChatListHeader(storySubscriptions: storySubscriptions, isHidden: controller.location == .chatList(groupId: .archive)) {
@@ -1710,7 +1713,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
                 statusBarHeight: layout.statusBarHeight ?? 0.0,
                 leftInset: layout.safeInsets.left,
                 rightInset: layout.safeInsets.right,
-                search: ChatListNavigationBar.Search(isEnabled: true),
+                search: self.hasNavigationSearch ? ChatListNavigationBar.Search(isEnabled: true) : nil,
                 activeSearch: self.isSearchDisplayControllerActive,
                 primaryContent: headerContent?.primaryContent,
                 secondaryContent: headerContent?.secondaryContent,
@@ -1723,6 +1726,8 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
                 tabsNodeIsSearch: false,
                 accessoryPanelContainer: self.controller?.accessoryPanelContainer,
                 accessoryPanelContainerHeight: self.controller?.accessoryPanelContainerHeight ?? 0.0,
+                usesWegramAppearance: self.location == .chatList(groupId: .root) || self.location == .chatList(groupId: .archive),
+                wegramSubpage: self.location == .chatList(groupId: .archive),
                 activateSearch: { [weak self] searchContentNode in
                     guard let self, let controller = self.controller else {
                         return
@@ -1772,6 +1777,13 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         } else {
             return (0.0, 0.0)
         }
+    }
+    
+    // WeChat's Folded Chats page has no search field (the main list's search still finds archived chats). Keeping a
+    // collapsed one would leave the list resting 54pt past its top inset, where `ListView` inserts a chat that moves to
+    // the top upward, under the bar, instead of pushing the list down.
+    private var hasNavigationSearch: Bool {
+        return self.location != .chatList(groupId: .archive)
     }
     
     private func updateNavigationScrolling(navigationHeight: CGFloat, transition: ContainedViewLayoutTransition) {
@@ -1869,7 +1881,9 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         var storiesInset = storiesInset
         
         let navigationBarLayout = self.updateNavigationBar(layout: layout, deferScrollApplication: true, transition: ComponentTransition(transition))
-        self.mainContainerNode.initialScrollingOffset = ChatListNavigationBar.searchScrollHeight + navigationBarLayout.storiesInset
+        // WeChat opens with the search field showing (the user's chat-list reference), so the list starts at its
+        // top rather than scrolled past the field as upstream does.
+        self.mainContainerNode.initialScrollingOffset = navigationBarLayout.storiesInset
         
         navigationBarHeight = navigationBarLayout.navigationHeight
         visualNavigationHeight = navigationBarLayout.navigationHeight
@@ -2072,7 +2086,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             }
         }
         
-        let contentNode = ChatListSearchContainerNode(context: self.context, animationCache: self.animationCache, animationRenderer: self.animationRenderer, filter: filter, requestPeerType: nil, location: effectiveLocation, folder: folder, displaySearchFilters: displaySearchFilters, hasDownloads: hasDownloads, initialFilter: initialFilter, openPeer: { [weak self] peer, _, threadId, dismissSearch in
+        let contentNode = ChatListSearchContainerNode(context: self.context, animationCache: self.animationCache, animationRenderer: self.animationRenderer, filter: filter, requestPeerType: nil, location: effectiveLocation, usesWegramAppearance: self.location == .chatList(groupId: .root) && placeholderNode != nil && !searchBarIsExternal, folder: folder, displaySearchFilters: displaySearchFilters, hasDownloads: hasDownloads, initialFilter: initialFilter, openPeer: { [weak self] peer, _, threadId, dismissSearch in
             self?.requestOpenPeerFromSearch?(peer, threadId, dismissSearch)
         }, openDisabledPeer: { _, _, _ in
         }, openRecentPeerOptions: { [weak self] peer in
@@ -2109,7 +2123,7 @@ final class ChatListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
             if let requestDeactivateSearch = self?.requestDeactivateSearch {
                 requestDeactivateSearch()
             }
-        }, fieldStyle: placeholderNode?.fieldStyle ?? .modern, searchBarIsExternal: searchBarIsExternal)
+        }, fieldStyle: placeholderNode?.fieldStyle ?? .modern, searchBarIsExternal: searchBarIsExternal, usesWegramAppearance: self.location == .chatList(groupId: .root) && placeholderNode != nil && !searchBarIsExternal)
         self.mainContainerNode.accessibilityElementsHidden = true
         self.inlineStackContainerNode?.accessibilityElementsHidden = true
                 

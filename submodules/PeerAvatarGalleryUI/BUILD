@@ -69,3 +69,5 @@ ios_unit_test(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramAvatarGalleryHeader.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

@@ -32,6 +32,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     private let openUrl: (String) -> Void
     
     private let back: () -> Void
+    private let welcomeCloseButton = ASButtonNode()
     
     private var currentData: (Int32, String?, String)?
         
@@ -76,7 +77,7 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
         self.openUrl = openUrl
         self.back = back
                 
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: AuthorizationSequenceController.navigationBarTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: AuthorizationSequenceController.navigationBarTheme(presentationData.theme, usesWegramAppearance: account != nil), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
         
         self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
         
@@ -90,7 +91,30 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
             back()
         }
         
-        if !otherAccountPhoneNumbers.1.isEmpty {
+        if account != nil {
+            let color = presentationData.theme.list.itemPrimaryTextColor
+            self.welcomeCloseButton.setImage(generateImage(CGSize(width: 44, height: 44), rotatedContext: { size, context in
+                context.clear(CGRect(origin: .zero, size: size))
+                context.setStrokeColor(color.cgColor)
+                context.setLineWidth(1.5)
+                context.setLineCap(.round)
+                context.move(to: CGPoint(x: 16, y: 16))
+                context.addLine(to: CGPoint(x: 28, y: 28))
+                context.move(to: CGPoint(x: 28, y: 16))
+                context.addLine(to: CGPoint(x: 16, y: 28))
+                context.strokePath()
+            }), for: .normal)
+            self.welcomeCloseButton.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+            self.welcomeCloseButton.isAccessibilityElement = true
+            self.welcomeCloseButton.accessibilityLabel = presentationData.strings.Common_Close
+            self.welcomeCloseButton.accessibilityIdentifier = "Auth.PhoneEntry.CloseButton"
+            self.welcomeCloseButton.addTarget(self, action: #selector(self.cancelPressed), forControlEvents: .touchUpInside)
+            let closeItem = UIBarButtonItem(customDisplayNode: self.welcomeCloseButton)
+            closeItem?.target = self
+            closeItem?.action = #selector(self.cancelPressed)
+            closeItem?.accessibilityLabel = presentationData.strings.Common_Close
+            self.navigationItem.leftBarButtonItem = closeItem
+        } else if !otherAccountPhoneNumbers.1.isEmpty {
             self.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "___close", style: .plain, target: self, action: #selector(self.cancelPressed))
         }
         
@@ -108,10 +132,13 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     }
     
     @objc private func cancelPressed() {
+        guard !self.inProgress else { return }
         self.back()
     }
     
     func updateNavigationItems() {
+        self.navigationItem.leftBarButtonItem?.isEnabled = !self.inProgress
+        self.welcomeCloseButton.isUserInteractionEnabled = !self.inProgress
         guard let layout = self.validLayout, layout.size.width < 360.0 else {
             return
         }
@@ -135,9 +162,8 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
     private var transitionInArguments: (buttonFrame: CGRect, buttonTitle: String, animationSnapshot: UIView, textSnapshot: UIView)?
     
     func animateWithSplashController(_ controller: AuthorizationSequenceSplashController) {
-        self.shouldAnimateIn = true
-        
         if let animationSnapshot = controller.animationSnapshot, let textSnapshot = controller.textSnaphot {
+            self.shouldAnimateIn = true
             self.transitionInArguments = (controller.buttonFrame, controller.buttonTitle, animationSnapshot, textSnapshot)
         }
     }
@@ -173,7 +199,10 @@ public final class AuthorizationSequencePhoneEntryController: ViewController, MF
         
         self.controllerNode.selectCountryCode = { [weak self] in
             if let strongSelf = self {
-                let controller = AuthorizationSequenceCountrySelectionController(strings: strongSelf.presentationData.strings, theme: strongSelf.presentationData.theme, glass: true)
+                if strongSelf.account != nil { strongSelf.view.endEditing(true) }
+                let country = strongSelf.controllerNode.codeAndNumber
+                let preferredCountryId = country.1 ?? country.0.flatMap { AuthorizationSequenceCountrySelectionController.lookupCountryIdByNumber(String($0), preferredCountries: [:])?.0.id }
+                let controller = AuthorizationSequenceCountrySelectionController(strings: strongSelf.presentationData.strings, theme: strongSelf.presentationData.theme, glass: true, usesWegramAppearance: strongSelf.account != nil, preferredCountryId: preferredCountryId)
                 controller.completeWithCountryCode = { code, name in
                     if let strongSelf = self, let currentData = strongSelf.currentData {
                         strongSelf.updateData(countryCode: Int32(code), countryName: name, number: currentData.2)

@@ -14,6 +14,7 @@ import OpenInExternalAppUI
 import DeviceAccess
 import UndoUI
 import MapKit
+import AvatarNode
 
 public class LocationViewParams {
     let sendLiveLocation: (TelegramMediaMap) -> Void
@@ -21,13 +22,15 @@ public class LocationViewParams {
     let openUrl: (String) -> Void
     let openPeer: (EnginePeer) -> Void
     let showAll: Bool
+    let allowMessageSaving: Bool
         
-    public init(sendLiveLocation: @escaping (TelegramMediaMap) -> Void, stopLiveLocation: @escaping (EngineMessage.Id?) -> Void, openUrl: @escaping (String) -> Void, openPeer: @escaping (EnginePeer) -> Void, showAll: Bool = false) {
+    public init(sendLiveLocation: @escaping (TelegramMediaMap) -> Void, stopLiveLocation: @escaping (EngineMessage.Id?) -> Void, openUrl: @escaping (String) -> Void, openPeer: @escaping (EnginePeer) -> Void, showAll: Bool = false, allowMessageSaving: Bool = false) {
         self.sendLiveLocation = sendLiveLocation
         self.stopLiveLocation = stopLiveLocation
         self.openUrl = openUrl
         self.openPeer = openPeer
         self.showAll = showAll
+        self.allowMessageSaving = allowMessageSaving
     }
 }
 
@@ -69,6 +72,15 @@ public final class LocationViewController: ViewController {
     private var currentMapMode: LocationMapMode = .map
     private var showAll: Bool
     private let isPreview: Bool
+    private let allowMessageSaving: Bool
+    private let wegramOpenUrl: (String) -> Void
+    private let wegramSaveDisposable = MetaDisposable()
+    private var wegramSaveInFlight = false
+    private weak var wegramSaveSheet: ViewController?
+    private weak var wegramTaxiSheet: ActionSheetController?
+    private weak var wegramLocationShareSheet: ActionSheetController?
+    private let wegramRecentPeersDisposable = MetaDisposable()
+    private let wegramCopyDisposable = MetaDisposable()
     
     private let locationManager = LocationManager()
     
@@ -87,6 +99,8 @@ public final class LocationViewController: ViewController {
         self.subject = subject
         self.showAll = params.showAll
         self.isPreview = isPreview
+        self.allowMessageSaving = params.allowMessageSaving
+        self.wegramOpenUrl = params.openUrl
         
         let initialPresentationData = updatedPresentationData?.initial ?? context.sharedContext.currentPresentationData.with { $0 }
         self.basePresentationData = initialPresentationData
@@ -466,6 +480,9 @@ public final class LocationViewController: ViewController {
     
     deinit {
         self.presentationDataDisposable?.dispose()
+        self.wegramSaveDisposable.dispose()
+        self.wegramRecentPeersDisposable.dispose()
+        self.wegramCopyDisposable.dispose()
     }
 
     private static func effectivePresentationData(_ presentationData: PresentationData, mapMode: LocationMapMode) -> PresentationData {
@@ -537,6 +554,147 @@ public final class LocationViewController: ViewController {
         self.controllerNode.containerLayoutUpdated(layout, navigationHeight: self.navigationLayout(layout: layout).navigationFrame.maxY, transition: transition)
     }
             
+    var canSaveWegramLocation: Bool {
+        return self.allowMessageSaving && self.canOpenWegramOptions && !self.context.isFrozen && self.subject.id.peerId.namespace != Namespaces.Peer.SecretChat && !self.subject._asMessage().isCopyProtected()
+    }
+
+    func saveWegramLocation() {
+        self.forwardWegramLocation(to: self.context.account.peerId, saving: true)
+    }
+
+    private func forwardWegramLocation(to peerId: EnginePeer.Id?, saving: Bool = false) {
+        guard self.canSaveWegramLocation, self.view.window != nil, !self.wegramSaveInFlight, self.wegramSaveSheet == nil else { return }
+        self.wegramSaveInFlight = true
+        let messageId = self.subject.id
+        self.wegramSaveDisposable.set((combineLatest(
+            self.context.sharedContext.chatAvailableMessageActions(engine: self.context.engine, accountPeerId: self.context.account.peerId, messageIds: [messageId], keepUpdated: false) |> take(1),
+            self.context.engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: messageId))
+        ) |> deliverOnMainQueue).start(next: { [weak self] actions, message in
+            guard let self else { return }
+            self.wegramSaveInFlight = false
+            guard self.canSaveWegramLocation, self.subject.id == messageId, self.view.window != nil, self.wegramSaveSheet == nil else { return }
+            guard actions.options.contains(.forward), !actions.isCopyProtected, let message, !message._asMessage().isCopyProtected() else {
+                self.wegramLocationUnavailable(chinese: "此消息不支持转发或收藏。", english: "This message cannot be forwarded or saved.")
+                return
+            }
+            let controller = self.context.sharedContext.makeShareController(context: self.context, params: ShareControllerParams(subject: .messages([message._asMessage()]), externalShare: false, immediatePeerId: peerId, forcedActionTitle: saving ? (self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "收藏" : "Save") : nil))
+            self.wegramSaveSheet = controller
+            self.present(controller, in: .window(.root))
+        }, completed: { [weak self] in self?.wegramSaveInFlight = false }))
+    }
+
+    private func copyWegramLocation() {
+        guard self.canSaveWegramLocation else { return }
+        let messageId = self.subject.id
+        self.wegramCopyDisposable.set((self.context.engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: messageId)) |> deliverOnMainQueue).start(next: { [weak self] message in
+            guard let self, self.canSaveWegramLocation, self.view.window != nil, self.subject.id == messageId, let message, !message._asMessage().isCopyProtected(), let location = getLocation(from: message) else { return }
+            let coordinates = String(format: "%.6f, %.6f", locale: Locale(identifier: "en_US_POSIX"), location.latitude, location.longitude)
+            UIPasteboard.general.string = [location.venue?.title, location.venue?.address, coordinates].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+        }))
+    }
+
+    func presentWegramLocationShare() {
+        guard self.canOpenWegramOptions, self.view.window != nil, self.wegramLocationShareSheet == nil, let location = getLocation(from: self.subject), location.liveBroadcastingTimeout == nil else { return }
+        let messageId = self.subject.id
+        let data = self.presentationData
+        let chinese = data.strings.baseLanguageCode.hasPrefix("zh")
+        let sheet = ActionSheetController(theme: WegramLocationShareItem.theme(ActionSheetControllerTheme(wegramTheme: data.theme, fontSize: data.listsFontSize)))
+        let content = WegramLocationShareView()
+        let item = WegramLocationShareItem(content: content, dark: data.theme.overallDarkAppearance, fontSize: data.listsFontSize.baseDisplaySize, chinese: chinese, canForward: self.canSaveWegramLocation)
+        var peers: [EnginePeer] = []
+        var avatars: [AvatarNode] = []
+        var active = true
+        var pending: WegramLocationShareAction?
+        sheet.willDismiss = { [weak self] in
+            active = false
+            self?.wegramRecentPeersDisposable.set(nil)
+        }
+        sheet.dismissed = { [weak self] _ in
+            // Keep avatar image subscriptions alive for the visible sheet only.
+            _ = avatars
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let action = pending, self.canOpenWegramOptions, self.view.window != nil, self.subject.id == messageId else { return }
+                switch action {
+                case let .peer(index):
+                    guard peers.indices.contains(index) else { return }
+                    self.forwardWegramLocation(to: peers[index].id)
+                case .forward:
+                    self.forwardWegramLocation(to: nil)
+                case .copy:
+                    self.copyWegramLocation()
+                case .cancel: break
+                case .improve:
+                    self.wegramLocationUnavailable(chinese: "此地点未提供可修改信息的服务。", english: "This location does not provide a service for editing its information.")
+                }
+            }
+        }
+        content.perform = { [weak self, weak sheet] action in
+            guard active, let self, self.canOpenWegramOptions, self.view.window != nil, self.subject.id == messageId else { return }
+            if action != .improve && action != .cancel && !self.canSaveWegramLocation { return }
+            pending = action == .cancel ? nil : action
+            active = false
+            sheet?.dismissAnimated()
+        }
+        sheet.setItemGroups([ActionSheetItemGroup(items: [item])])
+        self.wegramLocationShareSheet = sheet
+        self.present(sheet, in: .window(.root))
+        if self.canSaveWegramLocation {
+            self.wegramRecentPeersDisposable.set((self.context.engine.messages.chatList(group: .root, count: 40) |> take(1) |> deliverOnMainQueue).start(next: { [weak self, weak sheet, weak content] list in
+                guard let self, let sheet, let content, active, self.wegramLocationShareSheet === sheet, self.canSaveWegramLocation, self.subject.id == messageId else { return }
+                var seen = Set<EnginePeer.Id>()
+                peers = list.items.reversed().compactMap { entry -> EnginePeer? in
+                    guard let peer = entry.renderedPeer.peer, peer.id != self.context.account.peerId, seen.insert(peer.id).inserted, canSendMessagesToPeer(peer) else { return nil }
+                    return peer
+                }
+                peers = Array(peers.prefix(12))
+                avatars = peers.map { peer in
+                    let avatar = AvatarNode(font: avatarPlaceholderFont(size: 24))
+                    avatar.frame = CGRect(x: 0, y: 0, width: 56, height: 56)
+                    avatar.setPeer(context: self.context, theme: data.theme, peer: peer, clipStyle: .none, synchronousLoad: false)
+                    return avatar
+                }
+                content.setPeers(Array(zip(peers, avatars)).map { peer, avatar in (title: peer.displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder), avatar: avatar.view) })
+                sheet.updateItem(groupIndex: 0, itemIndex: 0) { $0 }
+            }))
+        }
+    }
+
+    func openWegramTaxi() {
+        guard self.canOpenWegramOptions, self.view.window != nil, self.wegramTaxiSheet == nil, let location = getLocation(from: self.subject) else { return }
+        let identifiers: Set<String> = ["yandexGo", "yango", "rizogo"]
+        let options = availableOpenInOptions(context: self.context, item: .location(location: location, directions: nil)).filter { identifiers.contains($0.identifier) }
+        guard !options.isEmpty else {
+            self.wegramLocationUnavailable(chinese: "未检测到支持的打车应用。", english: "No supported taxi app is installed.")
+            return
+        }
+        let messageId = self.subject.id
+        let sheet = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: self.presentationData.theme, fontSize: self.presentationData.listsFontSize))
+        var active = true
+        sheet.willDismiss = { active = false }
+        let items: [ActionSheetItem] = options.compactMap { option in
+            guard case let .other(title, _, _, _) = option.application else { return nil }
+            return ActionSheetButtonItem(title: title, action: { [weak self, weak sheet] in
+                guard active else { return }
+                active = false
+                sheet?.dismissAnimated()
+                guard let self, self.canOpenWegramOptions, self.view.window != nil, self.subject.id == messageId, let location = getLocation(from: self.subject),
+                      let current = availableOpenInOptions(context: self.context, item: .location(location: location, directions: nil)).first(where: { $0.identifier == option.identifier }),
+                      case let .openUrl(url) = current.action() else { return }
+                self.wegramOpenUrl(url)
+            })
+        }
+        sheet.setItemGroups([ActionSheetItemGroup(items: items), ActionSheetItemGroup(items: [ActionSheetButtonItem(title: self.presentationData.strings.Common_Cancel, action: { [weak sheet] in active = false; sheet?.dismissAnimated() })])])
+        self.wegramTaxiSheet = sheet
+        self.present(sheet, in: .window(.root))
+    }
+
+    private func wegramLocationUnavailable(chinese: String, english: String) {
+        let text = self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? chinese : english
+        self.present(textAlertController(context: self.context, title: nil, text: text, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+    }
+
+    private var wegramDidRequestDismiss = false
+    var canOpenWegramOptions: Bool { return !self.isPreview && !self.isBeingDismissed && !self.wegramDidRequestDismiss }
     private var didDismiss = false
     public override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
@@ -547,6 +705,7 @@ public final class LocationViewController: ViewController {
     }
     
     public override func dismiss(completion: (() -> Void)? = nil) {
+        self.wegramDidRequestDismiss = true
         super.dismiss(completion: completion)
     }
 }

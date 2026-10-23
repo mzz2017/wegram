@@ -9,6 +9,55 @@ import ItemListUI
 import LocationResources
 import ShimmerEffect
 
+public struct WegramVenueRowLayout {
+    public let titleFrame: CGRect
+    public let addressFrame: CGRect
+    public let checkFrame: CGRect
+    public let separatorFrame: CGRect
+    public let height: CGFloat
+
+    public static func textWidth(width: CGFloat, leftInset: CGFloat, rightInset: CGFloat, hasInfo: Bool) -> CGFloat {
+        return max(0, width - leftInset - rightInset - 10 - 16 - 28 - (hasInfo ? 44 : 0))
+    }
+
+    public init(width: CGFloat, leftInset: CGFloat, rightInset: CGFloat, titleSize: CGSize, addressSize: CGSize, hasInfo: Bool) {
+        let textHeight = titleSize.height + (addressSize.height > 0 ? 4 : 0) + addressSize.height
+        self.height = max(76, textHeight + 28)
+        let textWidth = Self.textWidth(width: width, leftInset: leftInset, rightInset: rightInset, hasInfo: hasInfo)
+        self.titleFrame = CGRect(x: min(width, leftInset + 10), y: floor((self.height - textHeight) / 2), width: min(titleSize.width, textWidth), height: titleSize.height)
+        self.addressFrame = CGRect(x: self.titleFrame.minX, y: self.titleFrame.maxY + (addressSize.height > 0 ? 4 : 0), width: min(addressSize.width, textWidth), height: addressSize.height)
+        self.checkFrame = CGRect(x: max(0, width - rightInset - 16 - 20), y: floor((self.height - 20) / 2), width: min(20, max(0, width - rightInset)), height: 20)
+        self.separatorFrame = CGRect(x: min(width, leftInset + 10), y: self.height - UIScreenPixel, width: max(0, width - leftInset - rightInset - 20), height: UIScreenPixel)
+    }
+
+    public static func title(_ title: String, query: String?, font: UIFont, color: UIColor) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: title, font: font, textColor: color)
+        if let query, !query.isEmpty {
+            let source = title as NSString
+            var remaining = NSRange(location: 0, length: source.length)
+            while remaining.length > 0 {
+                let match = source.range(of: query, options: .caseInsensitive, range: remaining)
+                if match.location == NSNotFound || match.length == 0 { break }
+                result.addAttribute(.foregroundColor, value: UIColor(rgb: 0x07c160), range: match)
+                remaining = NSRange(location: NSMaxRange(match), length: source.length - NSMaxRange(match))
+            }
+        }
+        return result
+    }
+
+    public static let checkImage = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 20)).image { output in
+        let context = output.cgContext
+        context.setStrokeColor(UIColor(rgb: 0x07c160).cgColor)
+        context.setLineWidth(2)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.move(to: CGPoint(x: 2, y: 10))
+        context.addLine(to: CGPoint(x: 7, y: 15))
+        context.addLine(to: CGPoint(x: 18, y: 4))
+        context.strokePath()
+    }
+}
+
 public final class ItemListVenueItem: ListViewItem, ItemListItem {
     public enum InfoIcon {
         case info
@@ -25,6 +74,8 @@ public final class ItemListVenueItem: ListViewItem, ItemListItem {
     let style: ItemListStyle
     let action: (() -> Void)?
     let infoAction: (() -> Void)?
+    let wegramSelected: Bool?
+    let wegramHighlightedQuery: String?
     
     public let sectionId: ItemListSectionId
     let header: ListViewItemHeader?
@@ -41,7 +92,7 @@ public final class ItemListVenueItem: ListViewItem, ItemListItem {
         ))
     }
     
-    public init(presentationData: ItemListPresentationData, systemStyle: ItemListSystemStyle = .legacy, engine: TelegramEngine, venue: TelegramMediaMap?, title: String? = nil, subtitle: String? = nil, icon: ItemListVenueItem.InfoIcon = .info, sectionId: ItemListSectionId = 0, style: ItemListStyle, action: (() -> Void)?, infoAction: (() -> Void)? = nil, header: ListViewItemHeader? = nil) {
+    public init(presentationData: ItemListPresentationData, systemStyle: ItemListSystemStyle = .legacy, engine: TelegramEngine, venue: TelegramMediaMap?, title: String? = nil, subtitle: String? = nil, icon: ItemListVenueItem.InfoIcon = .info, sectionId: ItemListSectionId = 0, style: ItemListStyle, action: (() -> Void)?, infoAction: (() -> Void)? = nil, header: ListViewItemHeader? = nil, wegramSelected: Bool? = nil, wegramHighlightedQuery: String? = nil) {
         self.presentationData = presentationData
         self.systemStyle = systemStyle
         self.engine = engine
@@ -54,6 +105,8 @@ public final class ItemListVenueItem: ListViewItem, ItemListItem {
         self.action = action
         self.infoAction = infoAction
         self.header = header
+        self.wegramSelected = wegramSelected
+        self.wegramHighlightedQuery = wegramHighlightedQuery
     }
     
     public func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
@@ -135,6 +188,7 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
     private let iconNode: TransformImageNode
     private let titleNode: TextNode
     private let addressNode: TextNode
+    private let wegramCheckNode = ASImageNode()
     private let infoButton: HighlightableButtonNode
     
     private var placeholderNode: ShimmerEffectNode?
@@ -191,6 +245,8 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
         self.addSubnode(self.addressNode)
         self.addSubnode(self.infoButton)
         self.addSubnode(self.iconNode)
+        self.wegramCheckNode.isUserInteractionEnabled = false
+        self.addSubnode(self.wegramCheckNode)
         
         self.infoButton.addTarget(self, action: #selector(self.infoPressed), forControlEvents: .touchUpInside)
     }
@@ -215,15 +271,16 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
             var updatedTheme: PresentationTheme?
             var updatedVenueType: String?
             
-            let titleFont = Font.semibold(item.presentationData.fontSize.itemListBaseFontSize)
-            let addressFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * 15.0 / 17.0))
+            let wegram = item.wegramSelected != nil
+            let titleFont = wegram ? Font.regular(item.presentationData.fontSize.itemListBaseFontSize) : Font.semibold(item.presentationData.fontSize.itemListBaseFontSize)
+            let addressFont = Font.regular(floor(item.presentationData.fontSize.itemListBaseFontSize * (wegram ? 13.0 : 15.0) / 17.0))
             
             if currentItem?.presentationData.theme !== item.presentationData.theme {
                 updatedTheme = item.presentationData.theme
             }
         
             let venueType = item.venue?.venue?.type ?? ""
-            if currentItem?.venue?.venue?.type != venueType {
+            if currentItem?.venue?.venue?.type != venueType || currentItem?.wegramSelected != item.wegramSelected {
                 updatedVenueType = venueType
             }
         
@@ -245,11 +302,11 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
                 subtitle = " "
             }
             
-            let titleAttributedString = NSAttributedString(string: title, font: titleFont, textColor: item.presentationData.theme.list.itemPrimaryTextColor)
-            let addressAttributedString = NSAttributedString(string: subtitle, font: addressFont, textColor: item.presentationData.theme.list.itemSecondaryTextColor)
+            let titleAttributedString = WegramVenueRowLayout.title(title, query: wegram ? item.wegramHighlightedQuery : nil, font: titleFont, color: item.presentationData.theme.list.itemPrimaryTextColor)
+            let addressAttributedString = WegramVenueRowLayout.title(subtitle, query: wegram ? item.wegramHighlightedQuery : nil, font: addressFont, color: item.presentationData.theme.list.itemSecondaryTextColor)
             
-            let leftInset: CGFloat = 65.0 + params.leftInset
-            let rightInset: CGFloat = 16.0 + params.rightInset + (item.infoAction != nil ? 48.0 : 0.0)
+            let leftInset: CGFloat = (wegram ? 10.0 : 65.0) + params.leftInset
+            let rightInset: CGFloat = 16.0 + params.rightInset + (wegram ? 28.0 + (item.infoAction != nil ? 44 : 0) : (item.infoAction != nil ? 48.0 : 0.0))
             let verticalInset: CGFloat = addressAttributedString.string.isEmpty ? 14.0 : 8.0
             let iconSize: CGFloat = 40.0
            
@@ -277,7 +334,9 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
                     insets = itemListNeighborsGroupedInsets(neighbors, params)
             }
             
-            let contentSize = CGSize(width: params.width, height: max(minHeight, rawHeight))
+            let wegramLayout = WegramVenueRowLayout(width: params.width, leftInset: params.leftInset, rightInset: params.rightInset, titleSize: titleLayout.size, addressSize: addressLayout.size, hasInfo: item.infoAction != nil)
+            if wegram { insets = .zero }
+            let contentSize = CGSize(width: params.width, height: wegram ? wegramLayout.height : max(minHeight, rawHeight))
             let separatorHeight = UIScreenPixel
             let separatorRightInset = item.systemStyle == .glass ? 16.0 : 0.0
             
@@ -290,6 +349,12 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
                                         
                     strongSelf.accessibilityLabel = titleAttributedString.string
                     strongSelf.accessibilityValue = addressAttributedString.string
+                    strongSelf.accessibilityTraits = wegram && item.action != nil ? (item.wegramSelected == true && item.venue != nil ? [.button, .selected] : [.button]) : []
+                    strongSelf.wegramCheckNode.image = wegram ? WegramVenueRowLayout.checkImage : nil
+                    strongSelf.wegramCheckNode.isHidden = item.wegramSelected != true || item.venue == nil
+                    strongSelf.wegramCheckNode.frame = wegramLayout.checkFrame
+                    strongSelf.iconNode.isHidden = wegram
+                    if !wegram && item.venue != nil && strongSelf.iconNode.supernode == nil { strongSelf.addSubnode(strongSelf.iconNode) }
                      
                     if let _ = updatedTheme {
                         strongSelf.topStripeNode.backgroundColor = itemSeparatorColor
@@ -312,7 +377,7 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
                     let _ = titleApply()
                     let _ = addressApply()
                     
-                    if let updatedVenueType = updatedVenueType {
+                    if !wegram, let updatedVenueType = updatedVenueType {
                         strongSelf.iconNode.setSignal(venueIcon(engine: item.engine, type: updatedVenueType, background: true))
                     }
                     
@@ -389,12 +454,16 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
                             strongSelf.bottomStripeNode.frame = CGRect(origin: CGPoint(x: bottomStripeInset, y: contentSize.height - separatorHeight), size: CGSize(width: params.width - bottomStripeInset - params.rightInset - separatorRightInset, height: separatorHeight))
                     }
                     
-                    transition.updateFrame(node: strongSelf.titleNode, frame: CGRect(origin: CGPoint(x: leftInset, y: verticalInset), size: titleLayout.size))
-                    transition.updateFrame(node: strongSelf.addressNode, frame: CGRect(origin: CGPoint(x: leftInset, y: verticalInset + titleLayout.size.height + titleSpacing), size: addressLayout.size))
+                    if wegram {
+                        strongSelf.bottomStripeNode.frame = wegramLayout.separatorFrame
+                        strongSelf.bottomStripeNode.isHidden = false
+                    }
+                    transition.updateFrame(node: strongSelf.titleNode, frame: wegram ? wegramLayout.titleFrame : CGRect(origin: CGPoint(x: leftInset, y: verticalInset), size: titleLayout.size))
+                    transition.updateFrame(node: strongSelf.addressNode, frame: wegram ? wegramLayout.addressFrame : CGRect(origin: CGPoint(x: leftInset, y: verticalInset + titleLayout.size.height + titleSpacing), size: addressLayout.size))
                     
                     transition.updateFrame(node: strongSelf.iconNode, frame: CGRect(origin: CGPoint(x: params.leftInset + 15.0, y: floorToScreenPixels((layout.contentSize.height - iconSize) / 2.0)), size: CGSize(width: iconSize, height: iconSize)))
                     
-                    transition.updateFrame(node: strongSelf.infoButton, frame: CGRect(x: layout.contentSize.width - params.rightInset - 60.0, y: 0.0, width: 60.0, height: layout.contentSize.height))
+                    transition.updateFrame(node: strongSelf.infoButton, frame: wegram ? CGRect(x: wegramLayout.checkFrame.minX - 44, y: 0, width: 44, height: contentSize.height) : CGRect(x: layout.contentSize.width - params.rightInset - 60.0, y: 0.0, width: 60.0, height: layout.contentSize.height))
                     strongSelf.infoButton.isHidden = item.infoAction == nil
                     
                     strongSelf.highlightedBackgroundNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -UIScreenPixel), size: CGSize(width: params.width, height: contentSize.height + UIScreenPixel + UIScreenPixel))
@@ -425,13 +494,13 @@ public class ItemListVenueItemNode: ListViewItemNode, ItemListItemNode {
                         let lineDiameter: CGFloat = 10.0
                         
                         let iconFrame = strongSelf.iconNode.frame
-                        shapes.append(.circle(iconFrame))
+                        if !wegram { shapes.append(.circle(iconFrame)) }
                         
                         let titleFrame = strongSelf.titleNode.frame
-                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: titleFrame.minX, y: titleFrame.minY + floor((titleFrame.height - lineDiameter) / 2.0)), width: titleLineWidth, diameter: lineDiameter))
+                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: titleFrame.minX, y: titleFrame.minY + floor((titleFrame.height - lineDiameter) / 2.0)), width: wegram ? min(titleLineWidth, max(0, params.width - leftInset - rightInset)) : titleLineWidth, diameter: lineDiameter))
                         
                         let subtitleFrame = strongSelf.addressNode.frame
-                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: subtitleFrame.minX, y: subtitleFrame.minY + floor((subtitleFrame.height - lineDiameter) / 2.0)), width: subtitleLineWidth, diameter: lineDiameter))
+                        shapes.append(.roundedRectLine(startPoint: CGPoint(x: subtitleFrame.minX, y: subtitleFrame.minY + floor((subtitleFrame.height - lineDiameter) / 2.0)), width: wegram ? min(subtitleLineWidth, max(0, params.width - leftInset - rightInset)) : subtitleLineWidth, diameter: lineDiameter))
                                                 
                         shimmerNode.update(backgroundColor: placeholderBackgroundColor, foregroundColor: item.presentationData.theme.list.mediaPlaceholderColor, shimmeringColor: item.presentationData.theme.list.itemBlocksBackgroundColor.withAlphaComponent(0.4), shapes: shapes, size: layout.contentSize)
                         

@@ -11,6 +11,8 @@ swift_library(
     ],
     deps = [
         "//submodules/AsyncDisplayKit:AsyncDisplayKit",
+        "//submodules/AppBundle",
+        "//submodules/WegramLanguageUI",
         "//submodules/LottieSettings:LottieSettings",
         "//submodules/TelegramCore:TelegramCore",
         "//submodules/Display:Display",
@@ -54,3 +56,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramPhoneFieldsLayout.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

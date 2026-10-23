@@ -155,6 +155,15 @@ private func yearRange(for state: DatePickerNode.State) -> Range<Int> {
     return minYear ..< maxYear + 1
 }
 
+private final class DayAccessibilityElement: UIAccessibilityElement {
+    var select: (() -> Bool)?
+
+    override func accessibilityActivate() -> Bool {
+        guard !self.accessibilityTraits.contains(.notEnabled), let select = self.select else { return false }
+        return select()
+    }
+}
+
 public final class DatePickerNode: ASDisplayNode {
     class MonthNode: ASDisplayNode {
         let month: Date
@@ -176,14 +185,22 @@ public final class DatePickerNode: ASDisplayNode {
         
         private let selectionNode: ASImageNode
         private let dateNodes: [ImmediateTextNode]
+        private var dayAccessibilityElements: [DayAccessibilityElement] = []
+        private let dateFormatter: DateFormatter
+        var daySelected: ((Int32) -> Bool)?
         
         private let firstWeekday: Int
         private let startWeekday: Int
         private let numberOfDays: Int
         
-        init(theme: DatePickerTheme, month: Date, minimumDate: Date?, maximumDate: Date?, date: Date?) {
+        init(theme: DatePickerTheme, strings: PresentationStrings, month: Date, minimumDate: Date?, maximumDate: Date?, date: Date?) {
             self.theme = theme
             self.month = month
+            self.dateFormatter = DateFormatter()
+            self.dateFormatter.calendar = calendar
+            self.dateFormatter.locale = Locale(identifier: strings.baseLanguageCode)
+            self.dateFormatter.dateStyle = .full
+            self.dateFormatter.timeStyle = .none
             self.minimumDate = minimumDate
             self.maximumDate = maximumDate
             self.date = date
@@ -204,6 +221,7 @@ public final class DatePickerNode: ASDisplayNode {
             
             super.init()
             
+            self.setViewBlock { UIView() }
             self.addSubnode(self.selectionNode)
             self.dateNodes.forEach { self.addSubnode($0) }
         }
@@ -224,6 +242,10 @@ public final class DatePickerNode: ASDisplayNode {
         }
         
         func updateLayout(size: CGSize) -> CGFloat {
+            if self.dayAccessibilityElements.isEmpty {
+                self.dayAccessibilityElements = (0..<42).map { _ in DayAccessibilityElement(accessibilityContainer: self.view) }
+            }
+            var visibleDates: [DayAccessibilityElement] = []
             var weekday = self.firstWeekday
             var started = false
             var ended = false
@@ -290,6 +312,24 @@ public final class DatePickerNode: ASDisplayNode {
                     let cellFrame = CGRect(x: sideInset + CGFloat(col) * cellSize, y: 0.0 + CGFloat(row) * cellSize, width: cellSize, height: cellSize)
                     let textFrame = CGRect(origin: CGPoint(x: cellFrame.minX + floor((cellFrame.width - textSize.width) / 2.0), y: cellFrame.minY + floor((cellFrame.height - textSize.height) / 2.0)), size: textSize)
                     textNode.frame = textFrame
+                    let element = self.dayAccessibilityElements[i]
+                    element.accessibilityLabel = self.dateFormatter.string(from: date)
+                    element.accessibilityIdentifier = "DatePicker.Day.\(components.year!).\(components.month!).\(count)"
+                    element.accessibilityFrameInContainerSpace = cellFrame
+                    element.accessibilityTraits = [.button]
+                    if isSelected { element.accessibilityTraits.insert(.selected) }
+                    if !isAvailableDate { element.accessibilityTraits.insert(.notEnabled) }
+                    let day = Int32(count)
+                    element.select = { [weak self] in
+                        guard let self, self.view.window != nil else { return false }
+                        var ancestor: UIView? = self.view
+                        while let view = ancestor {
+                            guard !view.isHidden, view.alpha > 0.01, !view.accessibilityElementsHidden else { return false }
+                            ancestor = view.superview
+                        }
+                        return self.daySelected?(day) ?? false
+                    }
+                    visibleDates.append(element)
                     
                     if isSelected {
                         self.selectionNode.isHidden = false
@@ -305,6 +345,7 @@ public final class DatePickerNode: ASDisplayNode {
                     textNode.isHidden = true
                 }
             }
+            self.view.accessibilityElements = visibleDates
             return maxY
         }
     }
@@ -646,46 +687,52 @@ public final class DatePickerNode: ASDisplayNode {
         
         let location = recognizer.location(in: monthNode.view)
         if let day = monthNode.dateAtPoint(location) {
-            let monthComponents = calendar.dateComponents([.month, .year], from: monthNode.month)
-            
-            var dateComponents: DateComponents
-            if let date = self.date {
-                dateComponents = calendar.dateComponents([.hour, .minute, .day, .month, .year], from: date)
-                dateComponents.year = monthComponents.year
-                dateComponents.month = monthComponents.month
-                dateComponents.day = Int(day)
-            } else {
-                dateComponents = DateComponents()
-                dateComponents.year = monthComponents.year
-                dateComponents.month = monthComponents.month
-                dateComponents.day = Int(day)
-                dateComponents.hour = 11
-                dateComponents.minute = 0
-            }
-            
-            if let date = calendar.date(from: dateComponents), date <= self.minimumDate {
-                let minimumDateComponents = calendar.dateComponents([.hour, .minute, .day, .month, .year], from: self.minimumDate)
-                if let hour = minimumDateComponents.hour {
-                    dateComponents.hour = hour + 3
-                }
-            }
-            
-            if let date = calendar.date(from: dateComponents), date > self.maximumDate {
-                let maximumDateComponents = calendar.dateComponents([.hour, .minute, .day, .month, .year], from: self.maximumDate)
-                if let hour = maximumDateComponents.hour {
-                    dateComponents.hour = hour - 1
-                }
-            }
-            
-            if let date = calendar.date(from: dateComponents), date >= self.minimumDate && date < self.maximumDate {
-                let updatedState = State(minDate: self.state.minDate, maxDate: self.state.maxDate, date: date, displayingMonthSelection: self.state.displayingMonthSelection, displayingDateSelection: self.state.displayingDateSelection, displayingTimeSelection: self.state.displayingTimeSelection, selectedMonth: monthNode.month)
-                self.updateState(updatedState, animated: false)
-                
-                self.valueUpdated?(date)
-            }
+            _ = self.selectDay(day, in: monthNode.month)
         }
     }
-    
+
+    private func selectDay(_ day: Int32, in month: Date) -> Bool {
+        let monthComponents = calendar.dateComponents([.month, .year], from: month)
+
+        var dateComponents: DateComponents
+        if let date = self.date {
+            dateComponents = calendar.dateComponents([.hour, .minute, .day, .month, .year], from: date)
+            dateComponents.year = monthComponents.year
+            dateComponents.month = monthComponents.month
+            dateComponents.day = Int(day)
+        } else {
+            dateComponents = DateComponents()
+            dateComponents.year = monthComponents.year
+            dateComponents.month = monthComponents.month
+            dateComponents.day = Int(day)
+            dateComponents.hour = 11
+            dateComponents.minute = 0
+        }
+
+        if let date = calendar.date(from: dateComponents), date <= self.minimumDate {
+            let minimumDateComponents = calendar.dateComponents([.hour, .minute, .day, .month, .year], from: self.minimumDate)
+            if let hour = minimumDateComponents.hour {
+                dateComponents.hour = hour + 3
+            }
+        }
+
+        if let date = calendar.date(from: dateComponents), date > self.maximumDate {
+            let maximumDateComponents = calendar.dateComponents([.hour, .minute, .day, .month, .year], from: self.maximumDate)
+            if let hour = maximumDateComponents.hour {
+                dateComponents.hour = hour - 1
+            }
+        }
+
+        if let date = calendar.date(from: dateComponents), date >= self.minimumDate && date < self.maximumDate {
+            let updatedState = State(minDate: self.state.minDate, maxDate: self.state.maxDate, date: date, displayingMonthSelection: self.state.displayingMonthSelection, displayingDateSelection: self.state.displayingDateSelection, displayingTimeSelection: self.state.displayingTimeSelection, selectedMonth: month)
+            self.updateState(updatedState, animated: false)
+
+            self.valueUpdated?(date)
+            return true
+        }
+        return false
+    }
+
     @objc private func panGesture(_ recognizer: UIPanGestureRecognizer) {
         switch recognizer.state {
         case .began:
@@ -748,12 +795,18 @@ public final class DatePickerNode: ASDisplayNode {
                     current.date = self.state.date
                 } else {
                     wasAdded = true
-                    let addedItemNode = MonthNode(theme: self.theme, month: self.months[i], minimumDate: self.state.minDate, maximumDate: self.state.maxDate, date: self.state.date)
+                    let addedItemNode = MonthNode(theme: self.theme, strings: self.strings, month: self.months[i], minimumDate: self.state.minDate, maximumDate: self.state.maxDate, date: self.state.date)
+                    let month = self.months[i]
+                    addedItemNode.daySelected = { [weak self] day in
+                        guard let self, self.state.selectedMonth == month, self.state.displayingDateSelection, !self.state.displayingMonthSelection, !self.state.displayingTimeSelection else { return false }
+                        return self.selectDay(day, in: month)
+                    }
                     itemNode = addedItemNode
                     self.monthNodes[self.months[i]] = addedItemNode
                     self.contentNode.addSubnode(addedItemNode)
                 }
                 if let itemNode {
+                    itemNode.view.accessibilityElementsHidden = i != self.currentIndex
                     let indexOffset = CGFloat(i - self.currentIndex)
                     let itemFrame = CGRect(origin: CGPoint(x: indexOffset * size.width + self.transitionFraction * size.width, y: 0.0), size: size)
                     
@@ -816,6 +869,19 @@ public final class DatePickerNode: ASDisplayNode {
         
         transition.updateTransformRotation(node: self.monthArrowNode, angle: self.state.displayingMonthSelection ? CGFloat.pi / 2.0 : 0.0)
         
+        self.monthButtonNode.isAccessibilityElement = true
+        self.monthButtonNode.accessibilityTraits = .button
+        self.monthButtonNode.accessibilityLabel = self.monthTextNode.attributedText?.string
+        self.monthButtonNode.accessibilityIdentifier = "DatePicker.Month"
+        for (button, offset, identifier) in [(self.previousButtonNode, -1, "PreviousMonth"), (self.nextButtonNode, 1, "NextMonth")] {
+            button.isAccessibilityElement = true
+            button.accessibilityTraits = .button
+            button.accessibilityIdentifier = "DatePicker." + identifier
+            if let target = monthByAdding(offset, to: month) {
+                let values = calendar.dateComponents([.year, .month], from: target)
+                button.accessibilityLabel = stringForMonth(strings: self.strings, month: Int32(values.month! - 1), ofYear: Int32(values.year! - 1900))
+            }
+        }
         self.monthButtonNode.frame = monthTextFrame.inset(by: UIEdgeInsets(top: -6.0, left: -6.0, bottom: -6.0, right: -30.0))
         
         self.previousButtonNode.isEnabled = self.currentIndex > 0

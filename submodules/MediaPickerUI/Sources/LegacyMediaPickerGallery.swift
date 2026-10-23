@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import AttachmentUI
 import Display
 import SwiftSignalKit
 import TelegramCore
@@ -11,6 +12,19 @@ import LegacyUI
 import LegacyMediaPickerUI
 import Photos
 import MediaAssetsContext
+
+func wegramCanMergeSelectedMedia(selection: TGMediaSelectionContext?, editing: TGMediaEditingContext, asFile: Bool, peer: EnginePeer?) -> Bool {
+    if let peer, case .secretChat = peer { return false }
+    guard !asFile, let selection, selection.count() >= 3, editing.sendPaidMessageStars == 0 else { return false }
+    for selected in selection.selectedItems() {
+        guard let item = selected as? (NSObject & TGMediaEditableItem) else { return false }
+        if let asset = item as? TGMediaAsset, asset.type == TGMediaAssetGifType { return false }
+        let adjustments = editing.adjustments(for: item)
+        if editing.spoiler(for: item) || editing.timer(for: item) != nil || editing.price(for: item) != nil || adjustments?.sendAsGif == true || adjustments?.paintingData?.hasAnimation == true { return false }
+        if let mode = editing.livePhotoMode(for: item)?.uintValue, mode == TGMediaLivePhotoMode.loop.rawValue || mode == TGMediaLivePhotoMode.bounce.rawValue { return false }
+    }
+    return true
+}
 
 private func galleryFetchResultItems(
     fetchResult: PHFetchResult<PHAsset>,
@@ -117,6 +131,10 @@ func presentLegacyMediaPickerGallery(
     chatLocation: ChatLocation?,
     isScheduledMessages: Bool,
     isActionButtonDone: Bool = false,
+    usesWegramAppearance: Bool = false,
+    photoSendingState: WegramPhotoSendingState? = nil,
+    originalPhotoAvailable: (() -> Bool)? = nil,
+    originalPhotoSelectionUpdated: (() -> Void)? = nil,
     presentationData: PresentationData,
     source: LegacyMediaPickerGallerySource,
     immediateThumbnail: UIImage?,
@@ -140,6 +158,7 @@ func presentLegacyMediaPickerGallery(
     dismissAll: @escaping () -> Void,
     editCover: @escaping (CGSize, @escaping (UIImage) -> Void) -> Void = { _, _ in }
 ) -> TGModernGalleryController {
+    let usesWegramPhotoAppearance = usesWegramAppearance && editingContext.sendPaidMessageStars == 0
     let reminder = peer?.id == context.account.peerId
     let hasSilentPosting = hasSilentPosting && peer?.id != context.account.peerId
     var hasCoverButton = false
@@ -175,14 +194,58 @@ func presentLegacyMediaPickerGallery(
         livePhotoButton.present = present
         return livePhotoButton
     }
-    paintStickersContext.photoToolbarView = { backButton, doneButton, solidBackground, hasSendStarsButton in
-        return makeMediaPickerPhotoToolbarView(context: context, backButton: backButton, doneButton: doneButton, solidBackground: solidBackground, hasSendStarsButton: hasSendStarsButton)
+    weak var previewController: TGModernGalleryController?
+    let canSelectOriginal: () -> Bool = { [weak editingContext] in
+        guard originalPhotoAvailable?() == true, let editingContext else { return false }
+        if let item = previewController?.currentItem() as? TGMediaPickerGalleryItem {
+            if editingContext.spoiler(for: item.asset) || editingContext.price(for: item.asset) != nil || (editingContext.timer(for: item.asset)?.intValue ?? 0) > 0 { return false }
+        }
+        return true
+    }
+    paintStickersContext.photoToolbarView = { [weak selectionContext] backButton, doneButton, solidBackground, hasSendStarsButton in
+        let previewState: (() -> (original: Bool, originalAvailable: Bool, count: Int, itemId: String?))?
+        if let photoSendingState {
+            previewState = {
+                let available = canSelectOriginal()
+                if !available { photoSendingState.original = false }
+                let focusedItem = (previewController?.currentItem() as? TGMediaPickerGalleryItem)?.asset
+                let count = Int(selectionContext?.count() ?? 0)
+                // The original completion may select the focused item, subject to its permission gate.
+                let displayedCount = count == 0 ? 1 : ((focusedItem.map { selectionContext?.isItemSelected($0) == true } ?? false) ? count : 0)
+                return (photoSendingState.original, available, displayedCount, focusedItem?.uniqueIdentifier)
+            }
+        } else {
+            previewState = nil
+        }
+        return makeMediaPickerPhotoToolbarView(context: context, backButton: backButton, doneButton: doneButton, solidBackground: solidBackground, hasSendStarsButton: hasSendStarsButton, usesWegramAppearance: usesWegramPhotoAppearance, previewState: previewState, toggleOriginal: {
+            guard let photoSendingState, canSelectOriginal() else { return }
+            photoSendingState.original.toggle()
+            originalPhotoSelectionUpdated?()
+            (previewController?.model as? TGMediaPickerGalleryModel)?.interfaceView.setNeedsLayout()
+        }, caption: {
+            guard usesWegramPhotoAppearance, !solidBackground, photoSendingState != nil,
+                  let model = previewController?.model as? TGMediaPickerGalleryModel, model.interfaceView.canBeginEditingCaption() else { return nil }
+            return (presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "说明" : "Caption", {
+                guard let controller = previewController, controller.viewIfLoaded?.window != nil,
+                      let model = controller.model as? TGMediaPickerGalleryModel else { return }
+                model.interfaceView.beginEditingCaption()
+            })
+        }, selectedPhotos: { [weak selectionContext] in
+            guard usesWegramPhotoAppearance, !solidBackground, let selectionContext, selectionContext.count() > 0 else { return nil }
+            let chinese = presentationData.strings.baseLanguageCode.hasPrefix("zh")
+            let title = (chinese ? "已选照片" : "Selected Photos") + "(\(selectionContext.count()))"
+            return (title, {
+                guard let model = previewController?.model as? TGMediaPickerGalleryModel else { return }
+                model.interfaceView.toggleSelectedPhotosFromMenu()
+            })
+        })
     }
     paintStickersContext.editCover = { dimensions, completion in
         editCover(dimensions, completion)
     }
     
     let controller = TGModernGalleryController(context: legacyController.context)!
+    previewController = controller
     controller.asyncTransitionIn = true
     legacyController.bind(controller: controller)
     
@@ -224,6 +287,28 @@ func presentLegacyMediaPickerGallery(
         hasCoverButton: hasCoverButton
     )!
     model.stickersContext = paintStickersContext
+    model.interfaceView.usesWegramAppearance = usesWegramPhotoAppearance
+    model.interfaceView.hidesSelectionCounterWhenClosed = usesWegramPhotoAppearance && photoSendingState != nil
+    model.interfaceView.hidesWegramCaptionPanel = usesWegramPhotoAppearance && photoSendingState != nil
+    if usesWegramPhotoAppearance, let photoSendingState {
+        let mergeView = WegramPhotoMergeView()
+        let updateMerge: () -> Void = { [weak mergeView, weak selectionContext] in
+            let available = wegramCanMergeSelectedMedia(selection: selectionContext, editing: editingContext, asFile: asFile || photoSendingState.original, peer: peer)
+            mergeView?.update(count: Int(selectionContext?.count() ?? 0), selected: available ? (selectionContext?.grouping ?? false) : nil, dark: true, fontSize: presentationData.listsFontSize.baseDisplaySize, title: presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "发送后合并展示" : "Display as an album", minimumHeight: 64)
+        }
+        mergeView.toggle = { [weak mergeView, weak selectionContext] in
+            guard let mergeView, mergeView.window != nil, wegramViewAcceptsActions(mergeView),
+                  wegramCanMergeSelectedMedia(selection: selectionContext, editing: editingContext, asFile: asFile || photoSendingState.original, peer: peer),
+                  let selectionContext else { return }
+            selectionContext.toggleGrouping()
+            photoSendingState.mergeDisplay = selectionContext.grouping
+            originalPhotoSelectionUpdated?()
+            updateMerge()
+        }
+        model.interfaceView.wegramMergeView = mergeView
+        model.interfaceView.updateWegramMergeView = updateMerge
+        updateMerge()
+    }
     controller.model = model
     model.controller = controller
     model.willFinishEditingItem = { item, adjustments, representation, hasChanges in
@@ -460,6 +545,9 @@ func presentLegacyMediaPickerGallery(
         } else {
             return imageSignal
         }
+    }
+    if usesWegramPhotoAppearance {
+        legacyController.view.accessibilityViewIsModal = true
     }
     present(legacyController, nil)
     

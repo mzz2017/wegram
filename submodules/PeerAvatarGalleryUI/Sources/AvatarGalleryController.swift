@@ -555,6 +555,12 @@ public class AvatarGalleryController: ViewController, StandalonePresentableContr
     }
     
     private let titleView: GalleryTitleView
+    private let usesWegramProfileLayout: Bool
+    private let wegramSaveDisposable = MetaDisposable()
+    private var wegramSaveStatus: ViewController?
+    private var wegramIsSaving = false
+    private let wegramHeader = WegramAvatarGalleryHeader()
+    private weak var wegramFooter: AvatarGalleryItemFooterContentNode?
     
     private let replaceRootController: (ViewController, Promise<Bool>?) -> Void
     
@@ -562,11 +568,12 @@ public class AvatarGalleryController: ViewController, StandalonePresentableContr
     private let rebuiltEntriesDisposable = MetaDisposable()
     private var localEntriesChangeCount = 0
 
-    public init(context: AccountContext, peer: EnginePeer, sourceCorners: SourceCorners = .round, remoteEntries: Promise<[AvatarGalleryEntry]>? = nil, isSuggested: Bool = false, skipInitial: Bool = false, centralEntryIndex: Int? = nil, replaceRootController: @escaping (ViewController, Promise<Bool>?) -> Void, synchronousLoad: Bool = false) {
+    public init(context: AccountContext, peer: EnginePeer, sourceCorners: SourceCorners = .round, remoteEntries: Promise<[AvatarGalleryEntry]>? = nil, isSuggested: Bool = false, skipInitial: Bool = false, centralEntryIndex: Int? = nil, replaceRootController: @escaping (ViewController, Promise<Bool>?) -> Void, synchronousLoad: Bool = false, usesWegramProfileLayout: Bool = false) {
         self.context = context
         self.peer = peer
         self.sourceCorners = sourceCorners
         self.isSuggested = isSuggested
+        self.usesWegramProfileLayout = usesWegramProfileLayout && peer.id == context.account.peerId && !isSuggested
         self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
         self.replaceRootController = replaceRootController
         
@@ -574,12 +581,17 @@ public class AvatarGalleryController: ViewController, StandalonePresentableContr
         
         self.titleView = GalleryTitleView(context: context, presentationData: self.presentationData)
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: GalleryController.darkNavigationTheme, strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: self.usesWegramProfileLayout ? WegramAvatarGalleryHeader.theme : GalleryController.darkNavigationTheme, strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)))
         
         let backItem = UIBarButtonItem(backButtonAppearanceWithTitle: self.presentationData.strings.Common_Back, target: self, action: #selector(self.donePressed))
         self.navigationItem.leftBarButtonItem = backItem
         
         self.navigationItem.titleView = self.titleView
+        if self.usesWegramProfileLayout {
+            self.wegramHeader.back = { [weak self] in self?.donePressed() }
+            self.wegramHeader.more = { [weak self] in self?.wegramMorePressed() }
+            self.updateWegramHeader()
+        }
         
         self.statusBar.statusBarStyle = .White
         
@@ -686,21 +698,121 @@ public class AvatarGalleryController: ViewController, StandalonePresentableContr
         }))
         
         self.centralItemAttributesDisposable.add(self.centralItemRightBarButtonItems.get().start(next: { [weak self] rightBarButtonItems in
-            self?.navigationItem.rightBarButtonItems = rightBarButtonItems
+            guard let self else { return }
+            if self.usesWegramProfileLayout { self.updateWegramHeader() }
+            else { self.navigationItem.rightBarButtonItems = rightBarButtonItems }
         }))
         
         self.centralItemAttributesDisposable.add(self.centralItemFooterContentNode.get().start(next: { [weak self] footerContentNode, _ in
+            self?.wegramFooter = footerContentNode as? AvatarGalleryItemFooterContentNode
             self?.galleryNode.updatePresentationState({
                 $0.withUpdatedFooterContentNode(footerContentNode)
             }, transition: .immediate)
         }))
     }
     
+    private func updateWegramHeader() {
+        self.wegramHeader.apply(to: self.navigationItem, chinese: self.presentationData.strings.baseLanguageCode.hasPrefix("zh"), backTitle: self.presentationData.strings.Common_Back, moreTitle: self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "更多" : "More")
+    }
+
+    private func wegramMorePressed() {
+        guard let node = self.galleryNode.pager.centralItemNode(), self.entries.indices.contains(node.index) else { return }
+        let entry = self.entries[node.index]
+        let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        let menu = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: self.presentationData.theme, fontSize: self.presentationData.listsFontSize))
+        let action: (String, Bool, @escaping () -> Void) -> ActionSheetButtonItem = { [weak menu] title, enabled, perform in
+            return ActionSheetButtonItem(title: title, color: enabled ? .accent : .disabled, enabled: enabled, action: {
+                menu?.dismissAnimated()
+                perform()
+            })
+        }
+        var items: [ActionSheetItem] = [
+            action(chinese ? "更换头像" : "Change Profile Photo", self.openAvatarSetup != nil, { [weak self] in
+                self?.openAvatarSetup?({ [weak self] in self?.dismissImmediately() })
+            }),
+            action(entry.videoRepresentations.isEmpty ? (chinese ? "保存图片" : "Save Image") : (chinese ? "保存视频" : "Save Video"), self.wegramFooter?.canShareFromMenu == true && !self.wegramIsSaving, { [weak self] in self?.wegramSavePressed(entry: entry) })
+        ]
+        if self.entries.count > 1 {
+            let targetEntry = self.entries[node.index == 0 ? 1 : 0]
+            let title = node.index == 0 ? (chinese ? "查看历史头像" : "View Previous Photos") : (chinese ? "返回当前头像" : "View Current Photo")
+            items.append(action(title, true, { [weak self] in
+                guard let self, let index = self.entries.firstIndex(where: { $0.id == targetEntry.id }) else { return }
+                self.galleryNode.pager.transaction(GalleryPagerTransaction(deleteItems: [], insertItems: [], updateItems: [], focusOnItem: index, synchronous: false))
+            }))
+        }
+        items.append(action(chinese ? "分享头像" : "Share Avatar", self.wegramFooter?.canShareFromMenu == true, { [weak self] in self?.wegramFooter?.shareFromMenu() }))
+        items.append(action(chinese ? "更多编辑选项" : "More Editing Options", true, { [weak self] in
+            guard let self else { return }
+            self.editEntry(entry, sourceView: self.wegramHeader.moreButton.view, gesture: nil)
+        }))
+        menu.setItemGroups([
+            ActionSheetItemGroup(items: items),
+            ActionSheetItemGroup(items: [ActionSheetButtonItem(title: self.presentationData.strings.Common_Cancel, action: { [weak menu] in menu?.dismissAnimated() })])
+        ])
+        self.present(menu, in: .window(.root))
+    }
+
+    private func wegramSavePressed(entry: AvatarGalleryEntry) {
+        guard self.usesWegramProfileLayout, !self.wegramIsSaving, self.wegramFooter?.canShareFromMenu == true, !entry.representations.isEmpty else { return }
+        let mediaReference: AnyMediaReference
+        if let video = entry.videoRepresentations.last {
+            guard let peerReference = PeerReference(self.peer) else { self.wegramSaveFailed(); return }
+            mediaReference = FileMediaReference.avatarList(peer: peerReference, media: TelegramMediaFile(fileId: EngineMedia.Id(namespace: Namespaces.Media.LocalFile, id: 0), partialReference: nil, resource: video.representation.resource, previewRepresentations: [], videoThumbnails: [], immediateThumbnailData: nil, mimeType: "video/mp4", size: nil, attributes: [.Animated, .Video(duration: 0, size: video.representation.dimensions, flags: [], preloadSize: nil, coverTime: nil, videoCodec: nil)], alternativeRepresentations: [])).abstract
+        } else {
+            let image = TelegramMediaImage(imageId: EngineMedia.Id(namespace: 0, id: 0), representations: entry.representations.map { $0.representation }, immediateThumbnailData: nil, reference: nil, partialReference: nil, flags: [])
+            if let peerReference = PeerReference(self.peer) {
+                mediaReference = ImageMediaReference.avatarList(peer: peerReference, media: image).abstract
+            } else {
+                mediaReference = .standalone(media: image)
+            }
+        }
+        self.wegramIsSaving = true
+        let status = OverlayStatusController(style: .dark, type: .loading(cancelled: { [weak self] in
+            self?.wegramIsSaving = false
+            self?.wegramSaveDisposable.set(nil)
+            self?.wegramSaveStatus?.dismiss()
+            self?.wegramSaveStatus = nil
+        }))
+        self.wegramSaveStatus = status
+        self.present(status, in: .window(.root))
+        let context = self.context
+        let save = cameraRollSaveResultSignal { result in
+            return SaveToCameraRoll.saveToCameraRoll(context: context, userLocation: .other, mediaReference: mediaReference, result: result)
+        }
+        self.wegramSaveDisposable.set((save |> deliverOnMainQueue).start(next: { [weak self] result in
+            guard let self, self.wegramIsSaving else { return }
+            self.wegramIsSaving = false
+            self.wegramSaveStatus?.dismiss()
+            self.wegramSaveStatus = nil
+            switch result {
+            case .saved:
+                let text = entry.videoRepresentations.isEmpty ? self.presentationData.strings.Gallery_ImageSaved : self.presentationData.strings.Gallery_VideoSaved
+                self.present(OverlayStatusController(style: .dark, type: .genericSuccess(text, false)), in: .window(.root))
+            case .accessDenied:
+                break
+            case .failed:
+                self.wegramSaveFailed()
+            }
+        }, completed: { [weak self] in
+            guard let self, self.wegramIsSaving else { return }
+            self.wegramIsSaving = false
+            self.wegramSaveStatus?.dismiss()
+            self.wegramSaveStatus = nil
+            self.wegramSaveFailed()
+        }))
+    }
+
+    private func wegramSaveFailed() {
+        self.present(textAlertController(context: self.context, title: nil, text: self.presentationData.strings.Login_UnknownError, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+    }
+
     required init(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
     deinit {
+        self.wegramSaveDisposable.dispose()
+        self.wegramSaveStatus?.dismiss()
         self.disposable.dispose()
         self.centralItemAttributesDisposable.dispose()
         self.editDisposable.dispose()
@@ -769,7 +881,9 @@ public class AvatarGalleryController: ViewController, StandalonePresentableContr
         }, currentItemNode: { [weak self] in
             return self?.galleryNode.pager.centralItemNode()
         })
-        self.displayNode = GalleryControllerNode(context: self.context, controllerInteraction: controllerInteraction, titleView: self.titleView)
+        self.displayNode = GalleryControllerNode(context: self.context, controllerInteraction: controllerInteraction, titleView: self.usesWegramProfileLayout ? nil : self.titleView)
+        self.galleryNode.footerNode.isHidden = self.usesWegramProfileLayout
+        self.galleryNode.hidesThumbnails = self.usesWegramProfileLayout
         self.displayNodeDidLoad()
         
         self.galleryNode.pager.updateOnReplacement = true
@@ -886,6 +1000,9 @@ public class AvatarGalleryController: ViewController, StandalonePresentableContr
         
         self.galleryNode.frame = CGRect(origin: CGPoint(), size: layout.size)
         self.galleryNode.containerLayoutUpdated(layout, navigationBarHeight: self.navigationLayout(layout: layout).navigationFrame.maxY, transition: transition)
+        if self.usesWegramProfileLayout {
+            self.galleryNode.footerNode.isHidden = true
+        }
         
         if !self.adjustedForInitialPreviewingLayout && self.isPresentedInPreviewingContext() {
             self.adjustedForInitialPreviewingLayout = true

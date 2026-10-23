@@ -25,7 +25,14 @@ open class GalleryControllerNode: ASDisplayNode, ASScrollViewDelegate, ASGesture
     private let headerEdgeEffectView: EdgeEffectView
     
     public let footerNode: GalleryFooterNode
-    public var currentThumbnailContainerNode: GalleryThumbnailContainerNode?
+    public var hidesThumbnails = false {
+        didSet { self.currentThumbnailContainerNode?.isHidden = self.hidesThumbnails }
+    }
+    public var currentThumbnailContainerNode: GalleryThumbnailContainerNode? {
+        didSet {
+            if self.hidesThumbnails { self.currentThumbnailContainerNode?.isHidden = true }
+        }
+    }
     public var overlayNode: ASDisplayNode?
     public var transitionDataForCentralItem: (() -> ((ASDisplayNode, CGRect, () -> (UIView?, UIView?))?, (UIView) -> Void)?)?
     public var dismiss: (() -> Void)?

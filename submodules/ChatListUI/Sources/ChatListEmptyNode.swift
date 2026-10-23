@@ -4,6 +4,7 @@ import UIKit
 import AsyncDisplayKit
 import Display
 import TelegramPresentationData
+import TelegramUIPreferences
 import AnimatedStickerNode
 import TelegramAnimatedStickerNode
 import AppBundle
@@ -18,7 +19,7 @@ import ChatListHeaderComponent
 import ButtonComponent
 
 final class ChatListEmptyNode: ASDisplayNode {
-    enum Subject {
+    enum Subject: Equatable {
         case chats(hasArchive: Bool)
         case archive
         case filter(showEdit: Bool)
@@ -31,6 +32,8 @@ final class ChatListEmptyNode: ASDisplayNode {
     private let context: AccountContext
     private var theme: PresentationTheme
     private var strings: PresentationStrings
+    private var fontSize: PresentationFontSize
+    private var wegramView: WegramChatListEmptyView?
     
     let subject: Subject
     private(set) var isLoading: Bool
@@ -55,10 +58,11 @@ final class ChatListEmptyNode: ASDisplayNode {
     private var globalPrivacySettings: GlobalPrivacySettings = .default
     private var archiveSettingsDisposable: Disposable?
     
-    init(context: AccountContext, subject: Subject, isLoading: Bool, theme: PresentationTheme, strings: PresentationStrings, action: @escaping () -> Void, secondaryAction: @escaping () -> Void, openArchiveSettings: @escaping () -> Void) {
+    init(context: AccountContext, subject: Subject, isLoading: Bool, theme: PresentationTheme, strings: PresentationStrings, fontSize: PresentationFontSize = .regular, usesWegramAppearance: Bool = false, action: @escaping () -> Void, secondaryAction: @escaping () -> Void, openArchiveSettings: @escaping () -> Void) {
         self.context = context
         self.theme = theme
         self.strings = strings
+        self.fontSize = fontSize
         
         self.action = action
         self.secondaryAction = secondaryAction
@@ -109,7 +113,16 @@ final class ChatListEmptyNode: ASDisplayNode {
         
         self.animationSize = CGSize(width: 124.0, height: 124.0)
         
-        if case .archive = subject {
+        let usesFlatContent: Bool
+        switch subject {
+        case .chats, .filter: usesFlatContent = usesWegramAppearance
+        case .archive, .forum: usesFlatContent = false
+        }
+        if usesFlatContent {
+            let content = WegramChatListEmptyView(action: { [weak self] in self?.buttonPressed() })
+            self.wegramView = content
+            self.view.addSubview(content)
+        } else if case .archive = subject {
         } else {
             self.addSubnode(self.animationNode)
             self.addSubnode(self.textNode)
@@ -128,9 +141,11 @@ final class ChatListEmptyNode: ASDisplayNode {
         
         self.secondaryButtonNode.addTarget(self, action: #selector(self.secondaryButtonPressed), forControlEvents: .touchUpInside)
         
-        self.updateThemeAndStrings(theme: theme, strings: strings)
+        self.updateThemeAndStrings(theme: theme, strings: strings, fontSize: fontSize)
         
-        self.animationNode.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.animationTapGesture(_:))))
+        if !usesFlatContent {
+            self.animationNode.view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.animationTapGesture(_:))))
+        }
         
         if case .archive = subject {
             let _ = self.context.engine.privacy.updateGlobalPrivacySettings().startStandalone()
@@ -171,12 +186,14 @@ final class ChatListEmptyNode: ASDisplayNode {
     }
     
     func restartAnimation() {
+        guard self.wegramView == nil else { return }
         self.animationNode.play(firstFrame: false, fromIndex: nil)
     }
     
-    func updateThemeAndStrings(theme: PresentationTheme, strings: PresentationStrings) {
+    func updateThemeAndStrings(theme: PresentationTheme, strings: PresentationStrings, fontSize: PresentationFontSize = .regular) {
         self.theme = theme
         self.strings = strings
+        self.fontSize = fontSize
         
         let text: String
         var descriptionText = ""
@@ -196,6 +213,11 @@ final class ChatListEmptyNode: ASDisplayNode {
                 text = strings.ChatList_EmptyTopicsTitle
                 buttonText = strings.ChatList_EmptyTopicsCreate
                 descriptionText = strings.ChatList_EmptyTopicsDescription
+        }
+        if let wegramView = self.wegramView {
+            wegramView.update(theme: theme, fontSize: fontSize, title: text, description: descriptionText, actionTitle: self.buttonIsHidden ? nil : buttonText, loadingText: strings.Channel_NotificationLoading, isLoading: self.isLoading)
+            if let (size, insets) = self.validLayout { self.updateLayout(size: size, insets: insets, transition: .immediate) }
+            return
         }
         let string = NSMutableAttributedString(string: text, font: Font.semibold(17.0), textColor: theme.list.itemPrimaryTextColor)
         let descriptionString = NSAttributedString(string: descriptionText, font: Font.regular(14.0), textColor: theme.list.itemSecondaryTextColor)
@@ -222,6 +244,7 @@ final class ChatListEmptyNode: ASDisplayNode {
             return
         }
         self.isLoading = isLoading
+        if let wegramView = self.wegramView { wegramView.updateIsLoading(isLoading); return }
         self.animationNode.isHidden = self.isLoading
         self.textNode.isHidden = self.isLoading
         self.descriptionNode.isHidden = self.isLoading
@@ -231,6 +254,15 @@ final class ChatListEmptyNode: ASDisplayNode {
     
     func updateLayout(size: CGSize, insets: UIEdgeInsets, transition: ContainedViewLayoutTransition) {
         self.validLayout = (size, insets)
+        if let wegramView = self.wegramView {
+            transition.updateFrame(view: wegramView, frame: CGRect(origin: .zero, size: size))
+            var contentInsets = insets
+            if case .chats(hasArchive: true) = self.subject {
+                contentInsets.top += ceil(72 * self.fontSize.itemListBaseFontSize / 17)
+            }
+            wegramView.updateLayout(insets: contentInsets)
+            return
+        }
         
         let indicatorSize = self.activityIndicator.measure(CGSize(width: 100.0, height: 100.0))
         transition.updateFrame(node: self.activityIndicator, frame: CGRect(origin: CGPoint(x: floor((size.width - indicatorSize.width) / 2.0), y: insets.top + floor((size.height - insets.top - insets.bottom - indicatorSize.height - 50.0) / 2.0)), size: indicatorSize))
@@ -386,6 +418,9 @@ final class ChatListEmptyNode: ASDisplayNode {
     }
     
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let wegramView = self.wegramView {
+            return wegramView.hitTest(self.view.convert(point, to: wegramView), with: event)
+        }
         if let buttonView = self.button.view, !buttonView.isHidden, self.buttonFrame.insetBy(dx: -10.0, dy: -10.0).contains(point) {
             return buttonView.hitTest(self.view.convert(point, to: buttonView), with: event)
         }

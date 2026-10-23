@@ -1,5 +1,8 @@
 import Foundation
 import UIKit
+import AsyncDisplayKit
+import Markdown
+import AvatarNode
 import Display
 import SwiftSignalKit
 import TelegramCore
@@ -378,7 +381,41 @@ private struct SaveIncomingMediaControllerState: Equatable {
     var peerIdWithOptions: EnginePeer.Id?
 }
 
-public func saveIncomingMediaController(context: AccountContext, scope: SaveIncomingMediaScope, focusOnItemTag: SaveIncomingMediaEntryTag? = nil) -> ViewController {
+private func saveIncomingMediaScopeSettings(presentationData: PresentationData, scope: SaveIncomingMediaScope, state: SaveIncomingMediaControllerState, mediaAutoSaveSettings: MediaAutoSaveSettings) -> (configuration: MediaAutoSaveConfiguration, exceptions: [MediaAutoSaveSettings.ExceptionItem], title: String) {
+    let configuration: MediaAutoSaveConfiguration
+    var exceptions: [MediaAutoSaveSettings.ExceptionItem] = []
+    let title: String
+    switch scope {
+    case let .peer(id):
+        if let data = mediaAutoSaveSettings.exceptions.first(where: { $0.id == id }) {
+            configuration = data.configuration
+        } else {
+            configuration = .default
+        }
+        title = presentationData.strings.Autosave_Exception
+    case .addPeer:
+        configuration = state.pendingConfiguration
+        title = presentationData.strings.Autosave_AddException
+    case let .peerType(peerType):
+        exceptions = mediaAutoSaveSettings.exceptions
+        switch peerType {
+        case .privateChats:
+            configuration = mediaAutoSaveSettings.configurations[.users] ?? .default
+            title = presentationData.strings.Notifications_PrivateChats
+        case .groups:
+            configuration = mediaAutoSaveSettings.configurations[.groups] ?? .default
+            title = presentationData.strings.Notifications_GroupChats
+        case .channels:
+            configuration = mediaAutoSaveSettings.configurations[.channels] ?? .default
+            title = presentationData.strings.Notifications_Channels
+        }
+    }
+
+    return (configuration, exceptions, title)
+}
+
+
+public func saveIncomingMediaController(context: AccountContext, scope: SaveIncomingMediaScope, focusOnItemTag: SaveIncomingMediaEntryTag? = nil, wegramStyle: Bool = false) -> ViewController {
     let stateValue = Atomic(value: SaveIncomingMediaControllerState())
     let statePromise = ValuePromise<SaveIncomingMediaControllerState>(stateValue.with { $0 })
     let updateState: ((SaveIncomingMediaControllerState) -> SaveIncomingMediaControllerState) -> Void = { f in
@@ -535,7 +572,7 @@ public func saveIncomingMediaController(context: AccountContext, scope: SaveInco
                             }
                             return true
                         }
-                        controllers.append(saveIncomingMediaController(context: context, scope: .peer(peerId)))
+                        controllers.append(saveIncomingMediaController(context: context, scope: .peer(peerId), wegramStyle: wegramStyle))
                         navigationController.setViewControllers(controllers, animated: true)
                     } else {
                         var dismissAll: (() -> Void)?
@@ -550,7 +587,7 @@ public func saveIncomingMediaController(context: AccountContext, scope: SaveInco
                             }).start()
                             
                             dismissAll?()
-                        }))
+                        }), wegramStyle: wegramStyle)
                         controller?.push(exceptionController)
                         
                         dismissAll = { [weak exceptionController] in
@@ -575,7 +612,7 @@ public func saveIncomingMediaController(context: AccountContext, scope: SaveInco
             pushController?(controller)
         },
         openPeerMenu: { peer in
-            pushController?(saveIncomingMediaController(context: context, scope: .peer(peer.id)))
+            pushController?(saveIncomingMediaController(context: context, scope: .peer(peer.id), wegramStyle: wegramStyle))
         },
         setPeerIdWithRevealedOptions: { itemId, fromItemId in
             updateState { state in
@@ -597,7 +634,7 @@ public func saveIncomingMediaController(context: AccountContext, scope: SaveInco
         },
         deleteAllExceptions: {
             let presentationData = context.sharedContext.currentPresentationData.with { $0 }
-            let actionSheet = ActionSheetController(presentationData: presentationData)
+            let actionSheet = wegramStyle ? ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: presentationData.theme, fontSize: presentationData.listsFontSize)) : ActionSheetController(presentationData: presentationData)
             actionSheet.setItemGroups([ActionSheetItemGroup(items: [
                 ActionSheetButtonItem(title: presentationData.strings.Autosave_DeleteAllExceptions, color: .destructive, action: { [weak actionSheet] in
                     actionSheet?.dismissAnimated()
@@ -655,55 +692,43 @@ public func saveIncomingMediaController(context: AccountContext, scope: SaveInco
     
     let previousState = Atomic<StoredState?>(value: nil)
     
-    let signal = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, statePromise.get(), preferences, peer, autosaveExceptionPeers)
+    let source = combineLatest(queue: .mainQueue(), context.sharedContext.presentationData, statePromise.get(), preferences, peer, autosaveExceptionPeers)
     |> deliverOnMainQueue
-    |> map { presentationData, state, mediaAutoSaveSettings, peer, autosaveExceptionPeers -> (ItemListControllerState, (ItemListNodeState, Any)) in
+
+    let complete: () -> Void = {
+        switch scope {
+        case let .addPeer(_, completion):
+            let configuration = stateValue.with({ $0 }).pendingConfiguration
+            completion(configuration)
+        default:
+            dismiss?()
+        }
+    }
+    let isPeerType: Bool
+    switch scope { case .peerType: isPeerType = true; default: isPeerType = false }
+    if wegramStyle, focusOnItemTag == nil || (isPeerType && focusOnItemTag == .addException) {
+        let controller = WegramSaveIncomingMediaController(context: context, scope: scope, arguments: arguments, source: source, exceptionsOnly: focusOnItemTag == .addException, complete: isPeerType ? nil : complete)
+        if !isPeerType { controller.navigationPresentation = .modal }
+        pushController = { [weak controller] c in controller?.push(c) }
+        presentControllerImpl = { [weak controller] c in controller?.present(c, in: .window(.root)) }
+        dismiss = { [weak controller] in controller?.dismiss() }
+        return controller
+    }
+    let signal = source |> map { presentationData, state, mediaAutoSaveSettings, peer, autosaveExceptionPeers -> (ItemListControllerState, (ItemListNodeState, Any)) in
         var rightButton: ItemListNavigationButton?
         
         switch scope {
         case .peer, .addPeer:
-            rightButton = ItemListNavigationButton(content: .icon(.done), style: .bold, enabled: true, action: {
-                switch scope {
-                case let .addPeer(_, completion):
-                    let configuration = stateValue.with({ $0 }).pendingConfiguration
-                    completion(configuration)
-                default:
-                    dismiss?()
-                }
-            })
+            rightButton = ItemListNavigationButton(content: .icon(.done), style: .bold, enabled: true, action: complete)
         default:
             break
         }
         
-        let configuration: MediaAutoSaveConfiguration
-        var exceptions: [MediaAutoSaveSettings.ExceptionItem] = []
-        let title: String
-        switch scope {
-        case let .peer(id):
-            if let data = mediaAutoSaveSettings.exceptions.first(where: { $0.id == id }) {
-                configuration = data.configuration
-            } else {
-                configuration = .default
-            }
-            title = presentationData.strings.Autosave_Exception
-        case .addPeer:
-            configuration = state.pendingConfiguration
-            title = presentationData.strings.Autosave_AddException
-        case let .peerType(peerType):
-            exceptions = mediaAutoSaveSettings.exceptions
-            switch peerType {
-            case .privateChats:
-                configuration = mediaAutoSaveSettings.configurations[.users] ?? .default
-                title = presentationData.strings.Notifications_PrivateChats
-            case .groups:
-                configuration = mediaAutoSaveSettings.configurations[.groups] ?? .default
-                title = presentationData.strings.Notifications_GroupChats
-            case .channels:
-                configuration = mediaAutoSaveSettings.configurations[.channels] ?? .default
-                title = presentationData.strings.Notifications_Channels
-            }
-        }
-        
+        let values = saveIncomingMediaScopeSettings(presentationData: presentationData, scope: scope, state: state, mediaAutoSaveSettings: mediaAutoSaveSettings)
+        let configuration = values.configuration
+        let exceptions = values.exceptions
+        let title = values.title
+
         let entries = saveIncomingMediaControllerEntries(presentationData: presentationData, scope: scope, state: state, peer: peer.0, peerPresence: peer.1, configuration: configuration, exceptions: exceptions, autosaveExceptionPeers: autosaveExceptionPeers)
         
         var animateChanges = false
@@ -767,3 +792,220 @@ public func saveIncomingMediaController(context: AccountContext, scope: SaveInco
     return controller
 }
 
+
+private typealias WegramSaveIncomingMediaSource = (PresentationData, SaveIncomingMediaControllerState, MediaAutoSaveSettings, (EnginePeer?, EnginePeer.Presence?), [EnginePeer.Id: EnginePeer?])
+
+private final class WegramSaveIncomingMediaController: ViewController {
+    private let context: AccountContext
+    private let scope: SaveIncomingMediaScope
+    private let arguments: SaveIncomingMediaControllerArguments
+    private var presentationData: PresentationData
+    private let sourceDisposable = MetaDisposable()
+    private let content = WegramDownloadCategoryContentView()
+    private let exceptionsContent = WegramAutoSaveExceptionsContentView()
+    private let exceptionsOnly: Bool
+    private let complete: (() -> Void)?
+    private let doneButton = WegramNameSaveButton()
+    private lazy var doneNode: ASDisplayNode = {
+        let node = ASDisplayNode(viewBlock: { [button = self.doneButton] in button })
+        node.style.preferredSize = CGSize(width: 64, height: 44)
+        return node
+    }()
+    private let peerAvatar = AvatarNode(font: avatarPlaceholderFont(size: 16))
+    private var exceptionPeers: [EnginePeer] = []
+    private var avatars: [ObjectIdentifier: AvatarNode] = [:]
+    private let titleButton = UIButton(type: .custom)
+    private let backButton = ASButtonNode()
+    private var current: WegramSaveIncomingMediaSource?
+    private var loaded = false
+    private var hasVideoSize = false
+
+    init(context: AccountContext, scope: SaveIncomingMediaScope, arguments: SaveIncomingMediaControllerArguments, source: Signal<WegramSaveIncomingMediaSource, NoError>, exceptionsOnly: Bool, complete: (() -> Void)?) {
+        self.complete = complete
+        self.exceptionsOnly = exceptionsOnly
+        self.context = context
+        self.scope = scope
+        self.arguments = arguments
+        self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: self.presentationData.theme), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)))
+        self.titleButton.titleLabel?.font = wegramNavigationTitleFont
+        self.titleButton.accessibilityIdentifier = "Wegram.AutoSave.OriginalSettings"
+        self.titleButton.addAction(UIAction(handler: { [weak self] _ in self?.openOriginal(focus: self?.exceptionsOnly == true ? .addException : nil) }), for: .touchUpInside)
+        self.navigationItem.titleView = self.titleButton
+        self.doneButton.accessibilityIdentifier = "Wegram.AutoSave.Done"
+        self.doneButton.addAction(UIAction(handler: { [weak self] _ in
+            guard let self, self.loaded else { return }
+            self.complete?()
+        }), for: .touchUpInside)
+        self.backButton.addTarget(self, action: #selector(self.backPressed), forControlEvents: .touchUpInside)
+        self.content.toggle = { [weak self] field in
+            guard let self, self.loaded else { return }
+            switch field {
+            case .photo: self.arguments.toggle(.photo)
+            case .video: self.arguments.toggle(.video)
+            default: return
+            }
+        }
+        self.content.adjustSize = { [weak self] bytes in
+            guard let self, self.loaded, self.hasVideoSize else { return }
+            self.arguments.updateMaximumVideoSize(bytes)
+        }
+        self.content.openAction = { [weak self] in
+            guard let self, self.loaded else { return }
+            self.push(saveIncomingMediaController(context: self.context, scope: self.scope, focusOnItemTag: .addException, wegramStyle: true))
+        }
+        self.exceptionsContent.add = { [weak self] in
+            guard let self, self.loaded else { return }
+            self.arguments.openAddException()
+        }
+        self.exceptionsContent.open = { [weak self] id in
+            guard let self, self.loaded, let peer = self.exceptionPeers.first(where: { $0.id.toInt64() == id }) else { return }
+            self.arguments.openPeerMenu(peer)
+        }
+        self.exceptionsContent.remove = { [weak self] id in
+            guard let self, self.loaded, let peer = self.exceptionPeers.first(where: { $0.id.toInt64() == id }) else { return }
+            self.arguments.deletePeer(peer.id)
+        }
+        self.exceptionsContent.deleteAll = { [weak self] in
+            guard let self, self.loaded, !self.exceptionPeers.isEmpty else { return }
+            self.arguments.deleteAllExceptions()
+        }
+        self.exceptionsContent.configureAvatar = { [weak self] id, host in
+            guard let self, let peer = self.exceptionPeers.first(where: { $0.id.toInt64() == id }) else { return }
+            let key = ObjectIdentifier(host)
+            let avatar = self.avatars[key] ?? AvatarNode(font: avatarPlaceholderFont(size: 16))
+            self.avatars[key] = avatar
+            avatar.cornerRadius = 4
+            avatar.clipsToBounds = true
+            if avatar.view.superview !== host { host.addSubview(avatar.view) }
+            avatar.frame = CGRect(x: 0, y: 0, width: 40, height: 40)
+            avatar.updateSize(size: CGSize(width: 40, height: 40))
+            avatar.setPeer(context: self.context, theme: self.presentationData.theme, peer: peer, clipStyle: .none, displayDimensions: CGSize(width: 40, height: 40))
+        }
+        self.sourceDisposable.set(source.startStrict(next: { [weak self] value in
+            self?.current = value
+            self?.presentationData = value.0
+            self?.updatePresentation()
+        }))
+        self.updatePresentation()
+    }
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    deinit { self.sourceDisposable.dispose() }
+    private func openOriginal(focus: SaveIncomingMediaEntryTag?) {
+        self.push(saveIncomingMediaController(context: self.context, scope: self.scope, focusOnItemTag: focus))
+    }
+    private func updatePresentation() {
+        let data = self.presentationData
+        let chinese = data.strings.baseLanguageCode.hasPrefix("zh")
+        let dark = data.theme.overallDarkAppearance
+        let font = data.listsFontSize.itemListBaseFontSize
+        let color = WegramNavigationColors(isDark: dark).control
+        self.content.update(dark: dark, fontSize: font, chinese: chinese)
+        self.content.formatSize = { autodownloadDataSizeString($0, decimalSeparator: data.dateTimeFormat.decimalSeparator) }
+        var headerPeer: EnginePeer?
+        var heading = ""
+        var sectionInfo = ""
+        var footer = ""
+        var title = chinese ? "自动保存到相册" : "Save to Photos"
+        var rules: [WegramDownloadToggle] = []
+        var sizeHeading = ""
+        var size: WegramDownloadSize?
+        var exceptionCount = 0
+        var hasExceptions = false
+        var exceptionRows: [WegramAutoSaveExceptionRow] = []
+        var addTitle = data.strings.Autosave_AddException
+        var deleteAllTitle = data.strings.Autosave_DeleteAllExceptions
+        self.exceptionPeers = []
+        if let current = self.current {
+            let values = saveIncomingMediaScopeSettings(presentationData: data, scope: self.scope, state: current.1, mediaAutoSaveSettings: current.2)
+            title = values.title
+            for entry in saveIncomingMediaControllerEntries(presentationData: data, scope: self.scope, state: current.1, peer: current.3.0, peerPresence: current.3.1, configuration: values.configuration, exceptions: values.exceptions, autosaveExceptionPeers: current.4) {
+                switch entry {
+                case let .peer(peer, _): headerPeer = peer
+                case let .typesHeader(text): heading = text
+                case let .typePhotos(text, value): rules.append(WegramDownloadToggle(field: .photo, title: text, value: value, enabled: true))
+                case let .typeVideos(text, value): rules.append(WegramDownloadToggle(field: .video, title: text, value: value, enabled: true))
+                case let .typesInfo(text): sectionInfo = text
+                case let .videoSizeHeader(text): sizeHeading = text
+                case let .videoSize(decimal, text, bytes):
+                    size = WegramDownloadSize(heading: sizeHeading, text: text, bytes: bytes, minimum: autodownloadDataSizeString(512 * 1024, decimalSeparator: decimal), maximum: autodownloadDataSizeString(1536 * 1024 * 1024, decimalSeparator: decimal))
+                case let .videoInfo(text): footer = text
+                case let .addException(text):
+                    hasExceptions = true
+                    addTitle = text
+                case let .exceptionItem(_, peer, label):
+                    exceptionCount += 1
+                    self.exceptionPeers.append(peer)
+                    exceptionRows.append(WegramAutoSaveExceptionRow(id: peer.id.toInt64(), name: peer.displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder), summary: label))
+                case let .deleteAllExceptions(text): deleteAllTitle = text
+                default: break
+                }
+            }
+        }
+        self.loaded = self.current != nil
+        self.exceptionsContent.update(dark: dark, fontSize: font, addTitle: addTitle, deleteAllTitle: deleteAllTitle, deleteTitle: data.strings.Common_Delete, emptyTitle: chinese ? "暂无例外" : "No Exceptions")
+        self.exceptionsContent.load(rows: exceptionRows, loaded: self.loaded)
+        if self.exceptionsOnly { title = data.strings.Autosave_ExceptionsSection }
+        self.hasVideoSize = size != nil
+        let action = hasExceptions ? WegramMediaRuleAction(title: chinese ? "例外" : "Exceptions", value: "\(exceptionCount)") : nil
+        self.content.load(heading: heading, rules: rules, size: size, footer: footer, sectionInfo: sectionInfo, action: action, peerName: headerPeer?.displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder))
+        if let headerPeer {
+            self.peerAvatar.cornerRadius = 4
+            self.peerAvatar.clipsToBounds = true
+            let host = self.content.peerHeader.avatarHost
+            if self.peerAvatar.view.superview !== host { host.addSubview(self.peerAvatar.view) }
+            self.peerAvatar.frame = CGRect(x: 0, y: 0, width: 40, height: 40)
+            self.peerAvatar.updateSize(size: CGSize(width: 40, height: 40))
+            self.peerAvatar.setPeer(context: self.context, theme: data.theme, peer: headerPeer, clipStyle: .none, displayDimensions: CGSize(width: 40, height: 40))
+        }
+        let gray = UIColor(rgb: dark ? 0x888888 : 0x777777)
+        let attributes = MarkdownAttributes(body: MarkdownAttributeSet(font: Font.regular(font * 13 / 17), textColor: gray), bold: MarkdownAttributeSet(font: Font.semibold(font * 13 / 17), textColor: gray), link: MarkdownAttributeSet(font: Font.regular(font * 13 / 17), textColor: UIColor(rgb: 0x07c160)), linkAttribute: { _ in nil })
+        self.content.sectionInfo.attributedText = parseMarkdownIntoAttributedString(sectionInfo, attributes: attributes)
+        self.content.footer.attributedText = parseMarkdownIntoAttributedString(footer, attributes: attributes)
+        self.titleButton.setTitle(title, for: .normal)
+        self.titleButton.setTitleColor(color, for: .normal)
+        self.titleButton.isUserInteractionEnabled = self.complete == nil
+        self.titleButton.accessibilityTraits = self.complete == nil ? .button : .header
+        self.titleButton.accessibilityHint = self.complete == nil ? (chinese ? "打开完整自动保存与例外管理" : "Open full automatic saving and exception management") : nil
+        self.doneButton.setTitle(data.strings.Common_Done, for: .normal)
+        self.doneButton.accessibilityLabel = data.strings.Common_Done
+        self.doneButton.isEnabled = self.loaded
+        self.doneButton.accessibilityTraits = self.loaded ? .button : [.button, .notEnabled]
+        if self.complete != nil {
+            let done = UIBarButtonItem(customDisplayNode: self.doneNode)
+            done?.isEnabled = self.loaded
+            done?.accessibilityLabel = data.strings.Common_Done
+            self.navigationItem.rightBarButtonItem = done
+        }
+        self.titleButton.sizeToFit()
+        self.titleButton.bounds.size.height = 44
+        let image = wegramNavigationBackArrowImage(color: color)
+        self.backButton.setImage(image, for: .normal)
+        let backSize = image?.size ?? .zero
+        self.backButton.contentEdgeInsets = UIEdgeInsets(top: (44 - backSize.height) / 2, left: 0, bottom: (44 - backSize.height) / 2, right: 44 - backSize.width)
+        let back = UIBarButtonItem(customDisplayNode: self.backButton)
+        back?.target = self
+        back?.action = #selector(self.backPressed)
+        back?.accessibilityLabel = data.strings.Common_Back
+        self.navigationItem.leftBarButtonItem = back
+        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: data.theme), strings: NavigationBarStrings(presentationStrings: data.strings)), transition: .immediate)
+        self.statusBar.statusBarStyle = data.theme.rootController.statusBarStyle.style
+        if self.isNodeLoaded { self.displayNode.backgroundColor = self.content.backgroundColor }
+    }
+    override func loadDisplayNode() {
+        self.displayNode = ASDisplayNode()
+        self.displayNode.view.addSubview(self.exceptionsOnly ? self.exceptionsContent : self.content)
+        self.updatePresentation()
+        self.displayNodeDidLoad()
+    }
+    override func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        super.containerLayoutUpdated(layout, transition: transition)
+        let top = self.navigationLayout(layout: layout).navigationFrame.maxY
+        self.content.contentInset.bottom = layout.intrinsicInsets.bottom
+        self.content.verticalScrollIndicatorInsets.bottom = layout.intrinsicInsets.bottom
+        self.exceptionsContent.table.contentInset.bottom = layout.intrinsicInsets.bottom
+        self.exceptionsContent.table.verticalScrollIndicatorInsets.bottom = layout.intrinsicInsets.bottom
+        transition.updateFrame(view: self.exceptionsOnly ? self.exceptionsContent : self.content, frame: CGRect(x: layout.safeInsets.left, y: top, width: layout.size.width - layout.safeInsets.left - layout.safeInsets.right, height: max(0, layout.size.height - top)))
+    }
+    @objc private func backPressed() { self.dismiss() }
+}

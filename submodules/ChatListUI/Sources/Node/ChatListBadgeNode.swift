@@ -99,11 +99,11 @@ final class ChatListBadgeNode: ASDisplayNode {
                         strongSelf.backgroundNode.image = backgroundImage
                     }
                     
-                    if content == currentContent {
+                    let badgeWidth = max(imageWidth, badgeWidth)
+                    let backgroundSize = CGSize(width: badgeWidth, height: strongSelf.backgroundNode.image?.size.height ?? 0.0)
+                    if content == currentContent && strongSelf.backgroundNode.bounds.size == backgroundSize {
                         return
                     }
-                    
-                    let badgeWidth = max(imageWidth, badgeWidth)
                     let previousBadgeWidth = !strongSelf.backgroundNode.bounds.width.isZero ? strongSelf.backgroundNode.bounds.width : badgeWidth
                     
                     var animateTextNode = false

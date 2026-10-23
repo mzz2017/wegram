@@ -220,6 +220,7 @@ final class CallControllerNodeV2: ViewControllerTracingNode, CallControllerNodeP
             isConferencePossible: false,
             enableVideoSharpening: enableVideoSharpening
         )
+        self.callScreenState?.isOutgoing = call.isOutgoing
         
         self.isMicrophoneMutedDisposable = (call.isMuted
         |> deliverOnMainQueue).startStrict(next: { [weak self] isMuted in
@@ -666,8 +667,10 @@ final class CallControllerNodeV2: ViewControllerTracingNode, CallControllerNodeP
         if (self.currentPeer?.smallProfileImage != peer.smallProfileImage) || self.callScreenState?.avatarImage == nil {
             self.peerAvatarDisposable?.dispose()
             
+            // WeGram: square, since WeChat's call avatar is a rounded square over its own blurred copy;
+            // the upstream AvatarLayer still clips it to its circle.
             let size = CGSize(width: 128.0, height: 128.0)
-            if let representation = peer.largeProfileImage, let signal = peerAvatarImage(account: self.call.context.account, peerReference: PeerReference(peer), authorOfMessage: nil, representation: representation, displayDimensions: size, synchronousLoad: self.callScreenState?.avatarImage == nil) {
+            if let representation = peer.largeProfileImage, let signal = peerAvatarImage(account: self.call.context.account, peerReference: PeerReference(peer), authorOfMessage: nil, representation: representation, displayDimensions: size, clipStyle: .none, synchronousLoad: self.callScreenState?.avatarImage == nil) {
                 self.peerAvatarDisposable = (signal
                 |> deliverOnMainQueue).startStrict(next: { [weak self] imageVersions in
                     guard let self else {
@@ -683,7 +686,7 @@ final class CallControllerNodeV2: ViewControllerTracingNode, CallControllerNodeP
             } else {
                 let image = generateImage(size, rotatedContext: { size, context in
                     context.clear(CGRect(origin: CGPoint(), size: size))
-                    drawPeerAvatarLetters(context: context, size: size, font: avatarPlaceholderFont(size: 50.0), letters: peer.displayLetters, peerId: peer.id, nameColor: peer.nameColor)
+                    drawPeerAvatarLetters(context: context, size: size, round: false, font: avatarPlaceholderFont(size: 50.0), letters: peer.displayLetters, peerId: peer.id, nameColor: peer.nameColor)
                 })!
                 callScreenState.avatarImage = image
                 self.callScreenState = callScreenState

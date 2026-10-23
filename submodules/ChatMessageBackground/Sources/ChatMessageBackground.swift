@@ -245,7 +245,7 @@ public class ChatMessageBackground: ASDisplayNode {
         case .none:
             image = nil
         case let .incoming(mergeType):
-            if maskMode, let backgroundNode = backgroundNode, backgroundNode.hasBubbleBackground(for: .incoming), !highlighted {
+            if !graphics.usesWegramNeutralFill, maskMode, let backgroundNode = backgroundNode, backgroundNode.hasBubbleBackground(for: .incoming), !highlighted {
                 image = nil
             } else {
                 switch mergeType {
@@ -268,7 +268,7 @@ public class ChatMessageBackground: ASDisplayNode {
                 }
             }
         case let .outgoing(mergeType):
-            if maskMode, let backgroundNode = backgroundNode, backgroundNode.hasBubbleBackground(for: .outgoing), !highlighted {
+            if !graphics.usesWegramNeutralFill, maskMode, let backgroundNode = backgroundNode, backgroundNode.hasBubbleBackground(for: .outgoing), !highlighted {
                 image = nil
             } else {
                 switch mergeType {
@@ -620,6 +620,7 @@ public final class ChatMessageBubbleBackdrop: ASDisplayNode {
     }
         
     public func setType(type: ChatMessageBackgroundType, theme: ChatPresentationThemeData, essentialGraphics: PrincipalThemeEssentialGraphics, maskMode inputMaskMode: Bool, backgroundNode: WallpaperBackgroundNode?) {
+        let backgroundNode = essentialGraphics.usesWegramNeutralFill ? nil : backgroundNode
         let maskMode = self.fixedMaskMode ?? inputMaskMode
 
         if self.currentType != type || self.theme != theme || self.currentMaskMode != maskMode || self.essentialGraphics !== essentialGraphics || self.backgroundNode !== backgroundNode {

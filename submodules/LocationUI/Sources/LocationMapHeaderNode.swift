@@ -49,6 +49,9 @@ private func generateShadowImage(theme: PresentationTheme, highlighted: Bool) ->
 public final class LocationMapHeaderNode: ASDisplayNode {
     private var presentationData: PresentationData
     private let glass: Bool
+    private let usesWegramControls: Bool
+    public var hidesWegramDetailControls = false
+    public var canShowPlacesInThisArea: Bool { self.displayingPlacesButton }
     private let toggleMapModeSelection: () -> Void
     private let updateMapMode: (LocationMapMode) -> Void
     private let goToUserLocation: () -> Void
@@ -97,10 +100,13 @@ public final class LocationMapHeaderNode: ASDisplayNode {
         goToUserLocation: @escaping () -> Void,
         setupProximityNotification: @escaping (Bool) -> Void = { _ in },
         showPlacesInThisArea: @escaping () -> Void = {},
-        weatherPressed: @escaping () -> Void = {}
+        weatherPressed: @escaping () -> Void = {},
+        usesWegramControls: Bool = false,
+        usesWegramDetailPin: Bool = false
     ) {
         self.presentationData = presentationData
         self.glass = glass
+        self.usesWegramControls = usesWegramControls
         self.toggleMapModeSelection = toggleMapModeSelection
         self.updateMapMode = updateMapMode
         self.goToUserLocation = goToUserLocation
@@ -108,7 +114,7 @@ public final class LocationMapHeaderNode: ASDisplayNode {
         self.showPlacesInThisArea = showPlacesInThisArea
         self.weatherPressed = weatherPressed
         
-        self.mapNode = LocationMapNode()
+        self.mapNode = LocationMapNode(usesWegramPicker: usesWegramControls, usesWegramDetailPin: usesWegramDetailPin)
         
         if glass {
             self.options = ComponentView()
@@ -202,6 +208,7 @@ public final class LocationMapHeaderNode: ASDisplayNode {
             }
         }
 
+        self.placesBackgroundNode.isHidden = usesWegramControls
         self.addSubnode(self.placesBackgroundNode)
         self.placesBackgroundView?.contentView.addSubview(self.placesButtonNode.view)
         if let weatherBackgroundView = self.weatherBackgroundView {
@@ -340,6 +347,15 @@ public final class LocationMapHeaderNode: ASDisplayNode {
         transition.updateFrame(node: self.mapNode, frame: mapFrame)
         self.mapNode.updateLayout(size: mapFrame.size, topPadding: topPadding, inset: mapFrame.origin.y * -1.0 + navigationBarHeight, transition: transition)
         
+        self.placesBackgroundNode.isHidden = self.usesWegramControls || self.hidesWegramDetailControls
+        self.options?.view?.isHidden = self.hidesWegramDetailControls
+        self.optionsBackgroundView?.isHidden = self.hidesWegramDetailControls
+        self.optionsBackgroundNode.isHidden = self.hidesWegramDetailControls
+        if self.hidesWegramDetailControls {
+            self.weatherBackgroundView?.isHidden = true
+            if let icon = self.weatherIcon.view as? LottieComponent.View { icon.externalShouldPlay = false }
+            return
+        }
         let inset: CGFloat = 6.0
         
         let placesButtonSize = CGSize(width: 180.0 + panelInset * 2.0, height: 45.0 + panelInset * 2.0)
@@ -477,6 +493,7 @@ public final class LocationMapHeaderNode: ASDisplayNode {
             self.weatherButton.frame = CGRect(origin: .zero, size: panelFrame.size)
         }
 
+        if self.usesWegramControls { return }
         if let options = self.options {
             let optionsSize = options.update(
                 transition: ComponentTransition(transition),

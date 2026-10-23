@@ -73,7 +73,7 @@ private final class AddPaymentMethodSheetContent: CombinedComponent {
             
             let text = text.update(
                 component: MultilineTextComponent(
-                    text: .plain(NSAttributedString(string: "Add your debit or credit card to buy goods and services on Telegram.", font: UIFont.systemFont(ofSize: 15.0), textColor: .gray)),
+                    text: .plain(NSAttributedString(string: "Add your debit or credit card to buy goods and services on WeGram.", font: UIFont.systemFont(ofSize: 15.0), textColor: .gray)),
                     horizontalAlignment: .center,
                     maximumNumberOfLines: 0
                 ),

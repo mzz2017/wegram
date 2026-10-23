@@ -126,7 +126,7 @@ private enum ContactListNodeEntry: Comparable, Identifiable {
         }
     }
     
-    func item(context: AccountContext, presentationData: PresentationData, interaction: ContactListNodeInteraction, isSearch: Bool, listStyle: ItemListStyle) -> ListViewItem {
+    func item(context: AccountContext, presentationData: PresentationData, interaction: ContactListNodeInteraction, isSearch: Bool, listStyle: ItemListStyle, usesWegramLayout: Bool) -> ListViewItem {
         switch self {
             case let .sort(_, strings, sortOrder):
                 var text = strings.Contacts_SortedByName
@@ -158,7 +158,7 @@ private enum ContactListNodeEntry: Comparable, Identifiable {
                     style = .generic
                     height = .tall
                 }
-                return ContactListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, title: option.title, subtitle: option.subtitle, icon: option.icon, actionStyle: style, height: height, clearHighlightAutomatically: option.clearHighlightAutomatically, header: header, action: option.action)
+                return ContactListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: usesWegramLayout ? .legacy : .glass, title: option.title, subtitle: option.subtitle, icon: option.icon, actionStyle: style, height: height, usesWegramLayout: usesWegramLayout, clearHighlightAutomatically: option.clearHighlightAutomatically, header: header, action: option.action)
             case let .header(_, header):
                 var sectionId: Int32 = 0
                 var text = ""
@@ -245,13 +245,13 @@ private enum ContactListNodeEntry: Comparable, Identifiable {
                 if case .blocks = listStyle, let id = header?.id.id.base as? Int64 {
                     sectionId = Int32(clamping: id)
                 }
-                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), style: listStyle, systemStyle: .glass, sectionId: listStyle == .blocks ? sectionId : 0, sortOrder: nameSortOrder, displayOrder: nameDisplayOrder, context: context, peerMode: isSearch ? .generalSearch(isSavedMessages: false) : .peer, peer: itemPeer, status: status, requiresPremiumForMessaging: requiresPremiumForMessaging, enabled: enabled, selection: selection, selectionPosition: .left, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), additionalActions: additionalActions, index: nil, header: listStyle == .blocks ? nil : header, action: { _ in
+                return ContactsPeerItem(presentationData: ItemListPresentationData(presentationData), style: listStyle, systemStyle: usesWegramLayout ? .legacy : .glass, sectionId: listStyle == .blocks ? sectionId : 0, sortOrder: nameSortOrder, displayOrder: nameDisplayOrder, context: context, peerMode: isSearch ? .generalSearch(isSavedMessages: false) : .peer, peer: itemPeer, status: usesWegramLayout ? .none : status, requiresPremiumForMessaging: requiresPremiumForMessaging, enabled: enabled, selection: selection, selectionPosition: .left, editing: ContactsPeerItemEditing(editable: false, editing: false, revealed: false), additionalActions: additionalActions, index: nil, header: listStyle == .blocks ? nil : header, action: { _ in
                         interaction.openPeer(peer, .generic, nil, nil)
                 }, disabledAction: { _ in
                     if case let .peer(peer, _, _) = peer {
                         interaction.openDisabledPeer(peer, requiresPremiumForMessaging ? .premiumRequired : .generic)
                     }
-                }, itemHighlighting: interaction.itemHighlighting, contextAction: itemContextAction, storyStats: nil, openStories: { peer, sourceNode in
+                }, itemHighlighting: interaction.itemHighlighting, usesWegramLayout: usesWegramLayout, contextAction: itemContextAction, storyStats: nil, openStories: { peer, sourceNode in
                     if case let .peer(peerValue, _) = peer, let peerValue {
                         interaction.openStories(peerValue, sourceNode)
                     }
@@ -439,6 +439,7 @@ private func contactListNodeEntries(
     authorizationStatus: AccessType,
     warningSuppressed: (Bool, Bool),
     displaySortOptions: Bool,
+    usesWegramLayout: Bool,
     displayCallIcons: Bool,
     storySubscriptions: EngineStorySubscriptions?,
     topPeers: [EnginePeer],
@@ -455,12 +456,12 @@ private func contactListNodeEntries(
     var addHeader = false
     if #available(iOSApplicationExtension 10.0, iOS 10.0, *) {
         let (suppressed, syncDisabled) = warningSuppressed
-        if !peers.isEmpty && !syncDisabled {
+        if !usesWegramLayout && !peers.isEmpty && !syncDisabled {
             let title = strings.Contacts_PermissionsTitle
             let text = strings.Contacts_PermissionsText
             switch authorizationStatus {
                 case .limited:
-                    if displaySortOptions {
+                    if displaySortOptions || usesWegramLayout {
                         entries.append(.permissionLimited(theme, strings))
                     }
                 case .denied:
@@ -513,8 +514,26 @@ private func contactListNodeEntries(
                 entries.append(.option(i, options[i], commonHeader, theme, strings))
             }
         case let .natural(options, _, _):
+            var sortKeys: [ContactListPeerId: String] = [:]
+            if usesWegramLayout {
+                for peer in peers {
+                    switch peer.indexName {
+                    case let .title(title, _):
+                        sortKeys[peer.id] = WegramContactCollation.sortKey(title)
+                    case let .personName(first, last, _, _):
+                        sortKeys[peer.id] = WegramContactCollation.sortKey(firstName: first, lastName: last, lastNameFirst: sortOrder == .lastFirst)
+                    }
+                }
+            }
             let sortedPeers = peers.sorted(by: { lhs, rhs in
-                let result = lhs.indexName.isLessThan(other: rhs.indexName, ordering: sortOrder)
+                let result: ComparisonResult
+                if usesWegramLayout {
+                    let left = sortKeys[lhs.id] ?? ""
+                    let right = sortKeys[rhs.id] ?? ""
+                    result = left == right ? .orderedSame : (left < right ? .orderedAscending : .orderedDescending)
+                } else {
+                    result = lhs.indexName.isLessThan(other: rhs.indexName, ordering: sortOrder)
+                }
                 if result == .orderedSame {
                     if case let .peer(lhsPeer, _, _) = lhs, case let .peer(rhsPeer, _, _) = rhs {
                         return lhsPeer.id < rhsPeer.id
@@ -557,6 +576,9 @@ private func contactListNodeEntries(
                                 }
                         }
                 }
+                if usesWegramLayout {
+                    indexHeader = WegramContactCollation.section(forKey: sortKeys[peer.id] ?? "").utf16.first ?? hashHeader
+                }
                 if let scalar = UnicodeScalar(indexHeader) {
                     if !NSCharacterSet.uppercaseLetters.contains(scalar) {
                         indexHeader = hashHeader
@@ -572,7 +594,7 @@ private func contactListNodeEntries(
                 if let cached = headerCache[indexHeader] {
                     header = cached
                 } else {
-                    header = ContactListNameIndexHeader(theme: theme, letter: indexHeader)
+                    header = ContactListNameIndexHeader(theme: theme, letter: indexHeader, usesWegramLayout: usesWegramLayout)
                     headerCache[indexHeader] = header
                 }
                 headers[peer.id] = header
@@ -867,12 +889,12 @@ private func contactListNodeEntries(
     return entries
 }
 
-private func preparedContactListNodeTransition(context: AccountContext, presentationData: PresentationData, from fromEntries: [ContactListNodeEntry], to toEntries: [ContactListNodeEntry], interaction: ContactListNodeInteraction, firstTime: Bool, isEmpty: Bool, hasOptions: Bool, generateIndexSections: Bool, animation: ContactListAnimation, isSearch: Bool, listStyle: ItemListStyle) -> ContactsListNodeTransition {
+private func preparedContactListNodeTransition(context: AccountContext, presentationData: PresentationData, from fromEntries: [ContactListNodeEntry], to toEntries: [ContactListNodeEntry], interaction: ContactListNodeInteraction, firstTime: Bool, isEmpty: Bool, hasOptions: Bool, generateIndexSections: Bool, animation: ContactListAnimation, isSearch: Bool, listStyle: ItemListStyle, usesWegramLayout: Bool) -> ContactsListNodeTransition {
     let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: fromEntries, rightList: toEntries)
     
     let deletions = deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) }
-    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, interaction: interaction, isSearch: isSearch, listStyle: listStyle), directionHint: nil) }
-    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, interaction: interaction, isSearch: isSearch, listStyle: listStyle), directionHint: nil) }
+    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, interaction: interaction, isSearch: isSearch, listStyle: listStyle, usesWegramLayout: usesWegramLayout), directionHint: nil) }
+    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, presentationData: presentationData, interaction: interaction, isSearch: isSearch, listStyle: listStyle, usesWegramLayout: usesWegramLayout), directionHint: nil) }
     
     var shouldFixScroll = false
     var indexSections: [String] = []
@@ -906,6 +928,10 @@ private func preparedContactListNodeTransition(context: AccountContext, presenta
                     break
             }
         }
+    }
+    
+    if generateIndexSections && usesWegramLayout && !indexSections.isEmpty {
+        indexSections = [CollectionIndexNode.searchIndex] + "ABCDEFGHIJKLMNOPQRSTUVWXYZ#".map { String($0) }
     }
     
     var scrollToItem: ListViewScrollToItem?
@@ -1020,6 +1046,7 @@ public final class ContactListNode: ASDisplayNode {
     
     public let listNode: ListView
     private var indexNode: CollectionIndexNode
+    private let usesWegramLayout: Bool
     private var indexSections: [String]?
     
     private var queuedTransitions: [ContactsListNodeTransition] = []
@@ -1195,6 +1222,35 @@ public final class ContactListNode: ASDisplayNode {
     private let presentationDataPromise: Promise<PresentationData>
     
     private var authorizationNode: PermissionContentNode
+
+    // WeChat's section index is gray rather than the accent colour (#555555 light is an assumption; the dark
+    // reference glyphs measure up to (96,100,100) through JPEG antialiasing, so #8C8C8C is too).
+    // WeChat marks the section at the top of the list on its index while the list scrolls.
+    private func updateIndexHighlight() {
+        guard self.usesWegramLayout, let (_, headerInsets, _) = self.validLayout, let entries = self.previousEntries.with({ $0 }) else {
+            return
+        }
+        var topIndex: Int?
+        self.listNode.forEachVisibleItemNode { node in
+            if let itemNode = node as? ListViewItemNode, let index = itemNode.index, itemNode.apparentFrame.maxY > headerInsets.top + 1.0 {
+                if topIndex == nil || index < topIndex! {
+                    topIndex = index
+                }
+            }
+        }
+        var title: String?
+        if let topIndex = topIndex, topIndex < entries.count, case let .peer(_, _, _, header, _, _, _, _, _, _, _, _, _, _, _, _) = entries[topIndex], let header = header as? ContactListNameIndexHeader, let scalar = UnicodeScalar(header.letter) {
+            title = "\(Character(scalar))"
+        }
+        self.indexNode.setScrollHighlight(title: title)
+    }
+    
+    private var indexColor: UIColor {
+        if self.usesWegramLayout {
+            return UIColor(rgb: self.presentationData.theme.overallDarkAppearance ? 0x8c8c8c : 0x555555)
+        }
+        return self.presentationData.theme.list.itemAccentColor
+    }
     private let displayPermissionPlaceholder: Bool
     private var authorizationDisposable: Disposable?
     public var authorizationUpdated: ((AccessType) -> Void)?
@@ -1215,6 +1271,7 @@ public final class ContactListNode: ASDisplayNode {
         selectionState: ContactListNodeGroupSelectionState? = nil,
         displayPermissionPlaceholder: Bool = true,
         displaySortOptions: Bool = false,
+        usesWegramLayout: Bool = false,
         displayCallIcons: Bool = false,
         contextAction: ((EnginePeer, ASDisplayNode, ContextGesture?, CGPoint?, Bool) -> Void)? = nil,
         isSearch: Bool = false,
@@ -1238,6 +1295,13 @@ public final class ContactListNode: ASDisplayNode {
         }
         
         self.indexNode = CollectionIndexNode()
+        self.usesWegramLayout = usesWegramLayout
+        if usesWegramLayout {
+            self.indexNode.itemHeight = 16.0
+            self.indexNode.verticalInset = 0.0
+            self.indexNode.showsBubble = true
+            self.indexNode.titleFont = Font.medium(10.0)
+        }
         
         self.presentationDataPromise = Promise(self.presentationData)
         
@@ -1276,7 +1340,7 @@ public final class ContactListNode: ASDisplayNode {
         
         self.backgroundColor = listStyle == .blocks ? self.presentationData.theme.list.blocksBackgroundColor : self.presentationData.theme.chatList.backgroundColor
         
-        if listStyle == .blocks {
+        if listStyle == .blocks || usesWegramLayout {
             self.listNode.verticalScrollIndicatorColor = .clear
         } else {
             self.listNode.verticalScrollIndicatorColor = self.presentationData.theme.list.scrollIndicatorColor
@@ -1300,7 +1364,7 @@ public final class ContactListNode: ASDisplayNode {
         })
         
         let processingQueue = Queue()
-        let previousEntries = Atomic<[ContactListNodeEntry]?>(value: nil)
+        let previousEntries = self.previousEntries
         let previousSelectionState = Atomic<ContactListNodeGroupSelectionState?>(value: nil)
         let previousPendingRemovalPeerIds = Atomic<Set<EnginePeer.Id>?>(value: nil)
         
@@ -1377,6 +1441,28 @@ public final class ContactListNode: ASDisplayNode {
         
         self.indexNode.indexSelected = { [weak self] section in
             guard let strongSelf = self, let layout = strongSelf.validLayout, let entries = previousEntries.with({ $0 }) else {
+                return
+            }
+            var section = section
+            if strongSelf.usesWegramLayout {
+                // The bar lists the whole alphabet, so a letter without contacts lands on the next one that has some.
+                var existing = Set<String>()
+                for entry in entries {
+                    if case let .peer(_, _, _, header, _, _, _, _, _, _, _, _, _, _, _, _) = entry, let header = header as? ContactListNameIndexHeader, let scalar = UnicodeScalar(header.letter) {
+                        existing.insert("\(Character(scalar))")
+                    }
+                }
+                if section == CollectionIndexNode.searchIndex {
+                    section = ""
+                } else {
+                    let order = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ#").map { String($0) }
+                    if let start = order.firstIndex(of: section) {
+                        section = order[start...].first(where: { existing.contains($0) }) ?? order[...start].reversed().first(where: { existing.contains($0) }) ?? section
+                    }
+                }
+            }
+            if section.isEmpty {
+                let _ = strongSelf.listNode.scrollToOffsetFromTop(0.0, animated: false)
                 return
             }
             
@@ -1770,6 +1856,7 @@ public final class ContactListNode: ASDisplayNode {
                                 authorizationStatus: .allowed,
                                 warningSuppressed: (true, true),
                                 displaySortOptions: false,
+                                usesWegramLayout: usesWegramLayout,
                                 displayCallIcons: displayCallIcons,
                                 storySubscriptions: nil,
                                 topPeers: [],
@@ -1778,7 +1865,7 @@ public final class ContactListNode: ASDisplayNode {
                                 interaction: interaction
                             )
                             let previous = previousEntries.swap(entries)
-                            return .single(preparedContactListNodeTransition(context: context, presentationData: presentationData, from: previous ?? [], to: entries, interaction: interaction, firstTime: previous == nil, isEmpty: false, hasOptions: false, generateIndexSections: generateSections, animation: .none, isSearch: isSearch, listStyle: listStyle))
+                            return .single(preparedContactListNodeTransition(context: context, presentationData: presentationData, from: previous ?? [], to: entries, interaction: interaction, firstTime: previous == nil, isEmpty: false, hasOptions: false, generateIndexSections: generateSections, animation: .none, isSearch: isSearch, listStyle: listStyle, usesWegramLayout: usesWegramLayout))
                         }
                         
                         if OSAtomicCompareAndSwap32(1, 0, &firstTime) {
@@ -2007,6 +2094,7 @@ public final class ContactListNode: ASDisplayNode {
                                 authorizationStatus: authorizationStatus,
                                 warningSuppressed: warningSuppressed,
                                 displaySortOptions: displaySortOptions,
+                                usesWegramLayout: usesWegramLayout,
                                 displayCallIcons: displayCallIcons,
                                 storySubscriptions: storySubscriptions,
                                 topPeers: topPeers.map { $0.peer
@@ -2055,7 +2143,7 @@ public final class ContactListNode: ASDisplayNode {
                                 animation = .none
                             }
                             
-                            return .single(preparedContactListNodeTransition(context: context, presentationData: presentationData, from: previous ?? [], to: entries, interaction: interaction, firstTime: previous == nil, isEmpty: isEmpty, hasOptions: optionsCount != 0, generateIndexSections: generateSections, animation: animation, isSearch: isSearch, listStyle: listStyle))
+                            return .single(preparedContactListNodeTransition(context: context, presentationData: presentationData, from: previous ?? [], to: entries, interaction: interaction, firstTime: previous == nil, isEmpty: isEmpty, hasOptions: optionsCount != 0, generateIndexSections: generateSections, animation: animation, isSearch: isSearch, listStyle: listStyle, usesWegramLayout: usesWegramLayout))
                         }
             
                     if OSAtomicCompareAndSwap32(1, 0, &firstTime) {
@@ -2082,7 +2170,7 @@ public final class ContactListNode: ASDisplayNode {
                 
                 if previousTheme !== presentationData.theme || previousStrings !== presentationData.strings {
                     strongSelf.backgroundColor = listStyle == .blocks ? strongSelf.presentationData.theme.list.blocksBackgroundColor : strongSelf.presentationData.theme.chatList.backgroundColor
-                    if listStyle == .blocks {
+                    if listStyle == .blocks || strongSelf.usesWegramLayout {
                         strongSelf.listNode.verticalScrollIndicatorColor = .clear
                     } else {
                         strongSelf.listNode.verticalScrollIndicatorColor = strongSelf.presentationData.theme.list.scrollIndicatorColor
@@ -2129,6 +2217,7 @@ public final class ContactListNode: ASDisplayNode {
         self.listNode.visibleContentOffsetChanged = { [weak self] offset, _ in
             if let strongSelf = self {
                 strongSelf.contentOffsetChanged?(offset)
+                strongSelf.updateIndexHighlight()
             }
         }
         
@@ -2228,8 +2317,11 @@ public final class ContactListNode: ASDisplayNode {
             if case .blocks = self.listStyle {
                 indexNodeFrame.origin.x += 18.0
             }
+            if self.usesWegramLayout {
+                indexNodeFrame.size.height -= 50.0
+            }
             transition.updateFrame(node: indexNode, frame: indexNodeFrame)
-            self.indexNode.update(size: indexNodeFrame.size, color: self.presentationData.theme.list.itemAccentColor, sections: indexSections, transition: transition)
+            self.indexNode.update(size: indexNodeFrame.size, color: self.indexColor, sections: indexSections, transition: transition)
         }
         
         if self.multipleSelection {
@@ -2296,9 +2388,12 @@ public final class ContactListNode: ASDisplayNode {
                     if case .blocks = self.listStyle {
                         indexNodeFrame.origin.x += 18.0
                     }
+                    if self.usesWegramLayout {
+                        indexNodeFrame.size.height -= 50.0
+                    }
                     self.indexNode.frame = indexNodeFrame
 
-                    self.indexNode.update(size: CGSize(width: 20.0, height: layout.size.height - insets.top - insets.bottom), color: self.presentationData.theme.list.itemAccentColor, sections: transition.indexSections, transition: .animated(duration: 0.2, curve: .easeInOut))
+                    self.indexNode.update(size: CGSize(width: 20.0, height: layout.size.height - insets.top - insets.bottom - (self.usesWegramLayout ? 50.0 : 0.0)), color: self.indexColor, sections: transition.indexSections, transition: .animated(duration: 0.2, curve: .easeInOut))
                     self.indexNode.isUserInteractionEnabled = !transition.indexSections.isEmpty
                 }
                 

@@ -1205,12 +1205,12 @@ private func callSearchableItems(context: AccountContext) -> [SettingsSearchable
         ),
         SettingsSearchableItem(
             id: "calls/show-tab",
-            title: strings.CallSettings_TabIcon,
-            alternate: synonyms(strings.SettingsSearch_Synonyms_Calls_CallTab),
+            title: strings.Calls_TabTitle,
             icon: icon,
             breadcrumbs: [strings.CallSettings_RecentCalls],
+            isVisible: false,
             present: { context, _, present in
-                presentCallSettings(context, present, .showTab)
+                presentCallSettings(context, present, nil)
             }
         ),
         SettingsSearchableItem(
@@ -4416,8 +4416,8 @@ func settingsSearchableItems(
         let proxyItems = proxySearchableItems(context: context, servers: proxyServers)
         allItems.append(contentsOf: proxyItems)
         
-        let appearanceItems = appearanceSearchableItems(context: context)
-        allItems.append(contentsOf: appearanceItems)
+        // WeGram does not let users theme the app, so Telegram's Appearance settings (themes, accent
+        // and bubble colours) are not searchable; dark mode, text size and chat background live under 通用.
         
         let powerSavingItems = energySavingSearchableItems(context: context)
         allItems.append(contentsOf: powerSavingItems)

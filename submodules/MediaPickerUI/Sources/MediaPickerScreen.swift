@@ -37,6 +37,30 @@ import GlassControls
 import AlertComponent
 import MultilineTextComponent
 
+private func wegramPhotoPickerNavigationTheme(_ theme: PresentationTheme, height: CGFloat = 44) -> NavigationBarTheme {
+    let navigationTheme = NavigationBarTheme(wegramTheme: theme, nominalHeight: height, contentTopInset: 0)
+    return theme.overallDarkAppearance ? navigationTheme : navigationTheme.withUpdatedBackgroundColor(.white)
+}
+
+private func wegramPhotoPickerNavigationImage(_ theme: PresentationTheme, isBack: Bool = false) -> UIImage? {
+    return generateImage(CGSize(width: 28, height: 28), rotatedContext: { size, context in
+        context.clear(CGRect(origin: .zero, size: size))
+        context.setStrokeColor(WegramNavigationColors(isDark: theme.overallDarkAppearance).control.cgColor)
+        context.setLineWidth(1.3)
+        if isBack {
+            context.move(to: CGPoint(x: 17, y: 6))
+            context.addLine(to: CGPoint(x: 9, y: 14))
+            context.addLine(to: CGPoint(x: 17, y: 22))
+        } else {
+            context.move(to: CGPoint(x: 5, y: 7))
+            context.addLine(to: CGPoint(x: 19, y: 21))
+            context.move(to: CGPoint(x: 5, y: 21))
+            context.addLine(to: CGPoint(x: 19, y: 7))
+        }
+        context.strokePath()
+    })?.withRenderingMode(.alwaysOriginal)
+}
+
 final class MediaPickerInteraction {
     let downloadManager: AssetDownloadManager
     let openMedia: (PHFetchResult<PHAsset>, Int, UIImage?) -> Void
@@ -48,8 +72,10 @@ final class MediaPickerInteraction {
     let dismissInput: () -> Void
     let selectionState: TGMediaSelectionContext?
     let editingState: TGMediaEditingContext
+    let usesWegramAppearance: Bool
     var hiddenMediaId: String?
     var displayLivePhotoIcon: Bool = false
+    var addLimitedPhotos: () -> Void = {}
         
     init(
         downloadManager: AssetDownloadManager,
@@ -61,7 +87,8 @@ final class MediaPickerInteraction {
         schedule: @escaping  (ChatSendMessageActionSheetController.SendParameters?) -> Void,
         dismissInput: @escaping () -> Void,
         selectionState: TGMediaSelectionContext?,
-        editingState: TGMediaEditingContext
+        editingState: TGMediaEditingContext,
+        usesWegramAppearance: Bool = false
     ) {
         self.downloadManager = downloadManager
         self.openMedia = openMedia
@@ -73,6 +100,7 @@ final class MediaPickerInteraction {
         self.dismissInput = dismissInput
         self.selectionState = selectionState
         self.editingState = editingState
+        self.usesWegramAppearance = usesWegramAppearance
     }
 }
 
@@ -81,6 +109,7 @@ private struct MediaPickerGridEntry: Comparable, Identifiable {
         case asset(Int)
         case media(Int)
         case draft(String)
+        case limitedAccess
     }
 
     let index: Int
@@ -96,6 +125,8 @@ private struct MediaPickerGridEntry: Comparable, Identifiable {
             return .media(index)
         case let .draft(draft, _):
             return .draft(draft.path)
+        case .limitedAccess:
+            return .limitedAccess
         }
     }
 
@@ -181,6 +212,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     public enum Style {
         case glass
         case legacy
+        case wegram
     }
     
     public enum Subject {
@@ -301,6 +333,10 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     public var cancelPanGesture: () -> Void = { }
     public var isContainerPanning: () -> Bool = { return false }
     public var isContainerExpanded: () -> Bool = { return false }
+    public var expandedBackgroundColor: UIColor? {
+        guard self.canUsePhotoToolbar, case .assets(nil, .default) = self.subject else { return nil }
+        return self.presentationData.theme.overallDarkAppearance ? self.presentationData.theme.list.plainBackgroundColor : .white
+    }
     public var isMinimized: Bool = false
     
     public var getCurrentSendMessageContextMediaPreview: (() -> ChatSendMessageContextScreenMediaPreview?)? = nil
@@ -420,8 +456,9 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             self.mediaAssetsContext = mediaAssetsContext
             
             self.containerNode = ASDisplayNode()
-            self.backgroundNode = NavigationBackgroundNode(color: self.presentationData.theme.rootController.tabBar.backgroundColor)
-            self.backgroundNode.backgroundColor = self.presentationData.theme.list.plainBackgroundColor
+            let photoBackground: UIColor? = controller.style == .wegram && !self.presentationData.theme.overallDarkAppearance ? .white : nil
+            self.backgroundNode = NavigationBackgroundNode(color: photoBackground ?? self.presentationData.theme.rootController.tabBar.backgroundColor)
+            self.backgroundNode.backgroundColor = photoBackground ?? self.presentationData.theme.list.plainBackgroundColor
             
             if case .glass = controller.style, !"".isEmpty {
                 self.backgroundView = GlassBackgroundView()
@@ -499,7 +536,8 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 } else {
                     drafts = .single([])
                 }
-                updatedState = combineLatest(mediaAssetsContext.mediaAccess(), mediaAssetsContext.cameraAccess())
+                let cameraAccess: Signal<AVAuthorizationStatus?, NoError> = controller.style == .wegram ? .single(nil) : mediaAssetsContext.cameraAccess()
+                updatedState = combineLatest(mediaAssetsContext.mediaAccess(), cameraAccess)
                 |> mapToSignal { mediaAccess, cameraAccess -> Signal<State, NoError> in
                     if case .notDetermined = mediaAccess {
                         return .single(.assets(fetchResult: nil, preload: false, drafts: [], mediaAccess: mediaAccess, cameraAccess: cameraAccess))
@@ -744,7 +782,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             var useLegacyCamera = false
             var useModernCamera = false
             if case .assets(nil, .default) = controller.subject {
-                useLegacyCamera = true
+                useLegacyCamera = controller.style != .wegram
             } else if case .assets(nil, let mode) = controller.subject {
                 switch mode {
                 case .createSticker, .createAvatar:
@@ -1062,8 +1100,11 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                         }
                         entries.append(MediaPickerGridEntry(index: i, content: .asset(fetchResult, index), selectable: selectable, stories: stories))
                     }
+                    if controller.canUsePhotoToolbar, case .assets(nil, .default) = controller.subject, mediaAccess == .limited {
+                        entries.append(MediaPickerGridEntry(index: count, content: .limitedAccess, selectable: false, stories: false))
+                    }
                     
-                    if case let .assets(previousFetchResult, _, _, _, previousCameraAccess) = previousState, previousFetchResult == nil || previousCameraAccess != cameraAccess {
+                    if case let .assets(previousFetchResult, _, _, previousMediaAccess, previousCameraAccess) = previousState, previousFetchResult == nil || previousCameraAccess != cameraAccess || previousMediaAccess != mediaAccess {
                         updateLayout = true
                     }
                     
@@ -1225,8 +1266,9 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
         func updatePresentationData(_ presentationData: PresentationData) {
             self.presentationData = presentationData
             
-            self.backgroundNode.backgroundColor = self.presentationData.theme.list.plainBackgroundColor
-            self.backgroundNode.updateColor(color: self.presentationData.theme.rootController.tabBar.backgroundColor, transition: .immediate)
+            let photoBackground: UIColor? = self.controller?.style == .wegram && !self.presentationData.theme.overallDarkAppearance ? .white : nil
+            self.backgroundNode.backgroundColor = photoBackground ?? self.presentationData.theme.list.plainBackgroundColor
+            self.backgroundNode.updateColor(color: photoBackground ?? self.presentationData.theme.rootController.tabBar.backgroundColor, transition: .immediate)
             
             self.updateSelectionState(animated: true)
         }
@@ -1251,7 +1293,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                     persistentItems = true
                 }
                 
-                let selectionNode = MediaPickerSelectedListNode(context: controller.context, persistentItems: persistentItems, isExternalPreview: false, isObscuredExternalPreview: false)
+                let selectionNode = MediaPickerSelectedListNode(context: controller.context, persistentItems: persistentItems, isExternalPreview: false, isObscuredExternalPreview: false, usesWegramAppearance: controller.style == .wegram)
                 selectionNode.alpha = animated ? 0.0 : 1.0
                 selectionNode.layer.allowsGroupOpacity = true
                 selectionNode.isUserInteractionEnabled = false
@@ -1284,6 +1326,10 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             
             self.gridNode.isUserInteractionEnabled = displayMode == .all
             self.selectionNode?.isUserInteractionEnabled = displayMode == .selected
+            if self.controller?.style == .wegram {
+                self.gridContainerNode.view.accessibilityElementsHidden = displayMode == .selected
+                self.selectionNode?.view.accessibilityElementsHidden = displayMode != .selected
+            }
                         
             var completion: () -> Void = {}
             if updated && displayMode == .all {
@@ -1316,6 +1362,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
         
         fileprivate func closeGalleryController() {
             if let _ = self.currentGalleryController, let currentGalleryParentController = self.currentGalleryParentController {
+                self.controller?.setGalleryAccessibilityHidden(false)
                 self.currentGalleryController = nil
                 self.currentGalleryParentController = nil
                 
@@ -1404,7 +1451,12 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             
             self.openingMedia = true
             
-            self.currentGalleryController = presentLegacyMediaPickerGallery(context: controller.context, peer: controller.peer, threadTitle: controller.threadTitle, chatLocation: controller.chatLocation, isScheduledMessages: controller.isScheduledMessages, isActionButtonDone: controller.isActionButtonDone, presentationData: self.presentationData, source: .fetchResult(fetchResult: fetchResult, index: index, reversed: reversed), immediateThumbnail: immediateThumbnail, selectionContext: interaction.selectionState?.selectionLimit == 1 ? nil : interaction.selectionState, editingContext: interaction.editingState, asFile: controller.subject.asFile, hasSilentPosting: true, hasSchedule: hasSchedule, hasTimer: hasTimer, updateHiddenMedia: { [weak self] id in
+            self.currentGalleryController = presentLegacyMediaPickerGallery(context: controller.context, peer: controller.peer, threadTitle: controller.threadTitle, chatLocation: controller.chatLocation, isScheduledMessages: controller.isScheduledMessages, isActionButtonDone: controller.isActionButtonDone, usesWegramAppearance: controller.style == .wegram, photoSendingState: controller.style == .wegram && controller.canUsePhotoToolbar ? controller.photoSendingState : nil, originalPhotoAvailable: { [weak controller] in
+                guard let controller else { return false }
+                return controller.canUsePhotoToolbar && controller.originalPhotoAvailable
+            }, originalPhotoSelectionUpdated: { [weak controller] in
+                controller?.updatePhotoToolbar()
+            }, presentationData: self.presentationData, source: .fetchResult(fetchResult: fetchResult, index: index, reversed: reversed), immediateThumbnail: immediateThumbnail, selectionContext: interaction.selectionState?.selectionLimit == 1 ? nil : interaction.selectionState, editingContext: interaction.editingState, asFile: controller.subject.asFile, hasSilentPosting: true, hasSchedule: hasSchedule, hasTimer: hasTimer, updateHiddenMedia: { [weak self] id in
                 self?.hiddenMediaId.set(.single(id))
             }, initialLayout: layout, transitionHostView: { [weak self] in
                 return self?.gridNode.view
@@ -1416,6 +1468,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 }
             }, presentSchedulePicker: controller.presentSchedulePicker, presentTimerPicker: controller.presentTimerPicker, getCaptionPanelView: controller.getCaptionPanelView, present: { [weak self] c, a in
                 self?.currentGalleryParentController = c
+                self?.controller?.setGalleryAccessibilityHidden(true)
                 c.navigationPresentation = .flatModal
                 if let parentController = self?.controller?.parentController() {
                     parentController.push(c)
@@ -1428,8 +1481,10 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 self?.hasGallery = true
                 self?.updateIsCameraActive()
             }, willTransitionOut: { [weak self] in
+                self?.controller?.setGalleryAccessibilityHidden(false)
                 self?.hasGallery = false
                 self?.updateIsCameraActive()
+                self?.controller?.updatePhotoToolbar()
             }, dismissAll: { [weak self] in
                 self?.controller?.dismissAll()
             }, editCover: { [weak self] dimensions, completion in
@@ -1451,7 +1506,12 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             }
             
             self.openingMedia = true
-            self.currentGalleryController = presentLegacyMediaPickerGallery(context: controller.context, peer: controller.peer, threadTitle: controller.threadTitle, chatLocation: controller.chatLocation, isScheduledMessages: controller.isScheduledMessages, presentationData: self.presentationData, source: .selection(item: item), immediateThumbnail: immediateThumbnail, selectionContext: interaction.selectionState, editingContext: interaction.editingState, asFile: controller.subject.asFile, hasSilentPosting: true, hasSchedule: true, hasTimer: hasTimer, updateHiddenMedia: { [weak self] id in
+            self.currentGalleryController = presentLegacyMediaPickerGallery(context: controller.context, peer: controller.peer, threadTitle: controller.threadTitle, chatLocation: controller.chatLocation, isScheduledMessages: controller.isScheduledMessages, usesWegramAppearance: controller.style == .wegram, photoSendingState: controller.style == .wegram && controller.canUsePhotoToolbar ? controller.photoSendingState : nil, originalPhotoAvailable: { [weak controller] in
+                guard let controller else { return false }
+                return controller.canUsePhotoToolbar && controller.originalPhotoAvailable
+            }, originalPhotoSelectionUpdated: { [weak controller] in
+                controller?.updatePhotoToolbar()
+            }, presentationData: self.presentationData, source: .selection(item: item), immediateThumbnail: immediateThumbnail, selectionContext: interaction.selectionState, editingContext: interaction.editingState, asFile: controller.subject.asFile, hasSilentPosting: true, hasSchedule: true, hasTimer: hasTimer, updateHiddenMedia: { [weak self] id in
                 self?.hiddenMediaId.set(.single(id))
             }, initialLayout: layout, transitionHostView: { [weak self] in
                 return self?.selectionNode?.view
@@ -1463,14 +1523,17 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 }
             }, presentSchedulePicker: controller.presentSchedulePicker, presentTimerPicker: controller.presentTimerPicker, getCaptionPanelView: controller.getCaptionPanelView, present: { [weak self] c, a in
                 self?.currentGalleryParentController = c
+                self?.controller?.setGalleryAccessibilityHidden(true)
                 self?.controller?.present(c, in: .window(.root), with: a, blockInteraction: true)
             }, finishedTransitionIn: { [weak self] in
                 self?.openingMedia = false
                 self?.hasGallery = true
                 self?.updateIsCameraActive()
             }, willTransitionOut: { [weak self] in
+                self?.controller?.setGalleryAccessibilityHidden(false)
                 self?.hasGallery = false
                 self?.updateIsCameraActive()
+                self?.controller?.updatePhotoToolbar()
             }, dismissAll: { [weak self] in
                 self?.controller?.dismissAll()
             }, editCover: { _, _ in
@@ -1495,7 +1558,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             }
         }
         
-        fileprivate func send(fromGallery: Bool = false, asFile: Bool = false, silently: Bool, scheduleTime: Int32?, animated: Bool, parameters: ChatSendMessageActionSheetController.SendParameters?, completion: @escaping () -> Void) {
+        fileprivate func send(fromGallery: Bool = false, asFile: Bool = false, silently: Bool, scheduleTime: Int32?, animated: Bool, parameters: ChatSendMessageActionSheetController.SendParameters?, convertToJpeg: Bool? = nil, completion: @escaping () -> Void) {
             guard let controller = self.controller, !controller.completed else {
                 return
             }
@@ -1548,7 +1611,9 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 }
             }
             
-            if asFile && hasHeic {
+            if asFile, let convertToJpeg {
+                proceed(convertToJpeg)
+            } else if asFile && hasHeic {
                 controller.present(textAlertController(context: controller.context, updatedPresentationData: self.controller?.updatedPresentationData, title: nil, text: self.presentationData.strings.MediaPicker_JpegConversionText, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.MediaPicker_KeepHeic, action: {
                     proceed(false)
                 }), TextAlertAction(type: .genericAction, title: self.presentationData.strings.MediaPicker_ConvertToJpeg, action: {
@@ -1691,13 +1756,18 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 self.controller?.updateTabBarAlpha(1.0, transition)
             } else if self.placeholderNode != nil {
                 self.controller?.navigationBar?.updateBackgroundAlpha(0.0, transition: .immediate)
-                
+                let bottomPanelAlpha: CGFloat
+                if self.controller?.style == .wegram, case .noAccess = self.state {
+                    bottomPanelAlpha = 1
+                } else {
+                    bottomPanelAlpha = 0
+                }
                 if delayDisappear {
                     Queue.mainQueue().after(0.25) {
-                        self.controller?.updateTabBarAlpha(0.0, transition)
+                        self.controller?.updateTabBarAlpha(bottomPanelAlpha, transition)
                     }
                 } else {
-                    self.controller?.updateTabBarAlpha(0.0, transition)
+                    self.controller?.updateTabBarAlpha(bottomPanelAlpha, transition)
                 }
             } else {
                 var previousContentOffsetValue: CGFloat?
@@ -1747,19 +1817,20 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 self._ready.set(.single(true))
                 switch layout.orientation {
                     case .portrait:
-                        itemsPerRow = 3
+                        itemsPerRow = controller.style == .wegram ? 4 : 3
                     case .landscape:
                         itemsPerRow = 5
                 }
             } else {
                 itemsPerRow = 3
             }
-            let width = layout.size.width - layout.safeInsets.left - layout.safeInsets.right
-            let itemSpacing: CGFloat = 1.0
+            let gridSideInset: CGFloat = controller.style == .wegram && itemsPerRow == 4 ? 2 : 0
+            let width = layout.size.width - layout.safeInsets.left - layout.safeInsets.right - gridSideInset * 2
+            let itemSpacing: CGFloat = gridSideInset > 0 ? 2 : 1
             let itemWidth = floorToScreenPixels((width - itemSpacing * CGFloat(itemsPerRow - 1)) / CGFloat(itemsPerRow))
             
             var cutoutRects: [CGRect] = []
-            var cameraRect: CGRect? = CGRect(origin: CGPoint(x: layout.safeInsets.left, y: 0.0), size: CGSize(width: itemWidth, height: itemWidth * 2.0 + 1.0))
+            var cameraRect: CGRect? = CGRect(origin: CGPoint(x: layout.safeInsets.left + gridSideInset, y: 0.0), size: CGSize(width: itemWidth, height: itemWidth * 2.0 + itemSpacing))
             if self.cameraView == nil && self.modernCameraView == nil {
                 cameraRect = nil
             }
@@ -1810,7 +1881,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                     self.updateNavigation(transition: .immediate)
                 } else if case .notDetermined = mediaAccess {
                 } else {
-                    if case .limited = mediaAccess {
+                    if case .limited = mediaAccess, !controller.canUsePhotoToolbar || controller.usesOriginalPhotoPanel {
                         let manageNode: MediaPickerManageNode
                         if let current = self.manageNode {
                             manageNode = current
@@ -1826,7 +1897,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                         }
                         manageHeight = manageNode.update(layout: layout, theme: self.presentationData.theme, strings: self.presentationData.strings, subject: .limitedMedia, transition: transition)
                         transition.updateFrame(node: manageNode, frame: CGRect(origin: CGPoint(x: 0.0, y: -manageHeight), size: CGSize(width: layout.size.width, height: manageHeight)))
-                    } else if [.denied, .restricted].contains(cameraAccess) {
+                    } else if [.denied, .restricted].contains(cameraAccess) && !(mediaAccess == .limited && controller.canUsePhotoToolbar && !controller.usesOriginalPhotoPanel) {
                         cameraRect = nil
                         
                         let manageNode: MediaPickerManageNode
@@ -1851,8 +1922,8 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 cameraRect = nil
             }
                         
-            let cleanGridInsets = UIEdgeInsets(top: insets.top, left: layout.safeInsets.left, bottom: layout.intrinsicInsets.bottom, right: layout.safeInsets.right)
-            let gridInsets = UIEdgeInsets(top: insets.top + manageHeight, left: layout.safeInsets.left, bottom: layout.intrinsicInsets.bottom, right: layout.safeInsets.right)
+            let cleanGridInsets = UIEdgeInsets(top: insets.top, left: layout.safeInsets.left + gridSideInset, bottom: layout.intrinsicInsets.bottom, right: layout.safeInsets.right + gridSideInset)
+            let gridInsets = UIEdgeInsets(top: insets.top + manageHeight, left: layout.safeInsets.left + gridSideInset, bottom: layout.intrinsicInsets.bottom, right: layout.safeInsets.right + gridSideInset)
             transition.updateFrame(node: self.gridContainerNode, frame: innerBounds)
             transition.updateFrame(node: self.gridContentNode, frame: innerBounds)
             if let warpView = self.warpView {
@@ -1916,8 +1987,10 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 }
                 
                 let selectedItems = controller.interaction?.selectionState?.selectedItems() as? [TGMediaSelectableItem] ?? []
+                var selectionInsets = cleanGridInsets
+                if controller.style == .wegram { selectionInsets.bottom += layout.additionalInsets.bottom }
                 let updateSelectionNode = {
-                    selectionNode.updateLayout(size: bounds.size, insets: cleanGridInsets, items: selectedItems, grouped: self.controller?.groupedValue ?? true, theme: self.presentationData.theme, wallpaper: self.presentationData.chatWallpaper, bubbleCorners: self.presentationData.chatBubbleCorners, transition: selectionTransition)
+                    selectionNode.updateLayout(size: bounds.size, insets: selectionInsets, items: selectedItems, grouped: self.controller?.groupedValue ?? true, theme: self.presentationData.theme, wallpaper: self.presentationData.chatWallpaper, bubbleCorners: self.presentationData.chatBubbleCorners, transition: selectionTransition)
                 }
                 
                 if selectedItems.count < 1 && self.currentDisplayMode == .selected {
@@ -1994,7 +2067,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 if let current = self.placeholderNode {
                     placeholderNode = current
                 } else {
-                    placeholderNode = MediaPickerPlaceholderNode(content: .intro(story: story), lottieSettings: controller.context.lottieRenderingSettings)
+                    placeholderNode = MediaPickerPlaceholderNode(content: .intro(story: story), lottieSettings: controller.context.lottieRenderingSettings, usesWegramAppearance: controller.style == .wegram)
                     placeholderNode.settingsPressed = { [weak self] in
                         self?.controller?.context.sharedContext.applicationBindings.openSettings()
                     }
@@ -2014,7 +2087,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                     
                     self.updateTopEdgeEffect()
                 }
-                placeholderNode.update(layout: layout, theme: self.presentationData.theme, strings: self.presentationData.strings, hasCamera: hasCamera, transition: placeholderTransition)
+                placeholderNode.update(layout: layout, theme: self.presentationData.theme, strings: self.presentationData.strings, hasCamera: hasCamera, transition: placeholderTransition, fontSize: self.presentationData.listsFontSize.baseDisplaySize, topInset: navigationBarHeight)
                 placeholderTransition.updateFrame(node: placeholderNode, frame: innerBounds)
             } else if let placeholderNode = self.placeholderNode, bannedSendMedia == nil {
                 self.placeholderNode = nil
@@ -2041,7 +2114,12 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     private var groupedValue: Bool = true {
         didSet {
             self.groupedPromise.set(self.groupedValue)
-            self.interaction?.selectionState?.grouping = self.groupedValue
+            if self.style == .wegram {
+                self.photoSendingState.mergeDisplay = self.groupedValue
+                if let selection = self.interaction?.selectionState, selection.grouping != self.groupedValue { selection.toggleGrouping() }
+            } else {
+                self.interaction?.selectionState?.grouping = self.groupedValue
+            }
             
             if let layout = self.validLayout {
                 self.containerLayoutUpdated(layout, transition: .immediate)
@@ -2064,6 +2142,100 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     private let initialMainButtonState: AttachmentMainButtonState?
     private let mainButtonHidesOnSelection: Bool
     private let mainButtonAction: (() -> Void)?
+    private let photoSendingState: WegramPhotoSendingState
+    private var usesOriginalPhotoPanel = false
+    private var galleryAccessibilityState: (content: Bool, toolbar: Bool)?
+
+    fileprivate func setGalleryAccessibilityHidden(_ hidden: Bool) {
+        guard self.style == .wegram else { return }
+        if hidden {
+            guard self.galleryAccessibilityState == nil else { return }
+            self.galleryAccessibilityState = (self.view.accessibilityElementsHidden, self.photoToolbar.accessibilityElementsHidden)
+            self.view.accessibilityElementsHidden = true
+            self.photoToolbar.accessibilityElementsHidden = true
+        } else if let previous = self.galleryAccessibilityState {
+            self.view.accessibilityElementsHidden = previous.content
+            self.photoToolbar.accessibilityElementsHidden = previous.toolbar
+            self.galleryAccessibilityState = nil
+        }
+    }
+    private var customPhotoPanelVisible = false
+    private var customPhotoPanelHasMerge = false
+    private var customPhotoPanelHasLimitedAccess = false
+    fileprivate let customBottomPanelPromise = Promise<AttachmentCustomBottomPanel?>(nil)
+    private lazy var photoToolbar: WegramPhotoToolbarView = {
+        let toolbar = WegramPhotoToolbarView()
+        toolbar.preview = { [weak self, weak toolbar] in
+            guard let self, toolbar?.window != nil, self.canUsePhotoToolbar, !self.usesOriginalPhotoPanel, !self.isDismissing, self.isNodeLoaded, self.view.window != nil,
+                  let item = self.interaction?.selectionState?.selectedItems().first as? TGMediaSelectableItem else { return }
+            self.controllerNode.openSelectedMedia(item: item, immediateThumbnail: nil)
+        }
+        toolbar.toggleOriginal = { [weak self, weak toolbar] in
+            guard let self, toolbar?.window != nil, self.canUsePhotoToolbar, !self.usesOriginalPhotoPanel, !self.isDismissing, self.isNodeLoaded, self.view.window != nil, self.originalPhotoAvailable else { return }
+            self.photoSendingState.original.toggle()
+            self.updatePhotoToolbar()
+        }
+        toolbar.mergeView.toggle = { [weak self, weak toolbar] in
+            guard let self, toolbar?.window != nil, self.canUsePhotoToolbar, !self.usesOriginalPhotoPanel, !self.isDismissing,
+                  let editing = self.interaction?.editingState,
+                  wegramCanMergeSelectedMedia(selection: self.interaction?.selectionState, editing: editing, asFile: self.subject.asFile || self.photoSendingState.original, peer: self.peer) else { return }
+            self.groupedValue.toggle()
+            self.updatePhotoToolbar()
+        }
+        toolbar.send = { [weak self, weak toolbar] in
+            guard let self, toolbar?.window != nil, self.canUsePhotoToolbar, !self.usesOriginalPhotoPanel, !self.isDismissing, !self.completed, self.isNodeLoaded, self.view.window != nil,
+                  let selection = self.interaction?.selectionState, selection.count() > 0 else { return }
+            self.interaction?.sendSelected(nil, false, nil, true, nil, {})
+        }
+        toolbar.options = { [weak self, weak toolbar] in
+            guard let self, toolbar?.window != nil, self.canUsePhotoToolbar, !self.isDismissing, self.isNodeLoaded, self.view.window != nil, self.selectionCount > 0 else { return }
+            self.usesOriginalPhotoPanel = true
+            self.updatePhotoToolbar()
+        }
+        toolbar.manageAccess = { [weak self, weak toolbar] in
+            guard let self, toolbar?.window != nil, self.canUsePhotoToolbar, !self.usesOriginalPhotoPanel, !self.isDismissing, self.isNodeLoaded,
+                  case let .assets(_, _, _, access, _) = self.controllerNode.state, access == .limited else { return }
+            self.context.sharedContext.applicationBindings.openSettings()
+        }
+        return toolbar
+    }()
+
+    private var canUsePhotoToolbar: Bool {
+        self.style == .wegram && self.initialMainButtonState == nil && (self.interaction?.editingState.sendPaidMessageStars ?? 0) == 0
+    }
+    private var wegramPhotoHeaderHeight: CGFloat {
+        if self.canUsePhotoToolbar, case .assets(nil, .default) = self.subject, !self.isContainerExpanded(), self.validLayout?.orientation != .landscape {
+            return 64
+        }
+        return 44
+    }
+    private var originalPhotoAvailable: Bool {
+        if self.isNodeLoaded, case .noAccess = self.controllerNode.state { return false }
+        guard let selection = self.interaction?.selectionState, let editing = self.interaction?.editingState else { return false }
+        for case let item as TGMediaEditableItem in selection.selectedItems() {
+            if editing.spoiler(for: item) || editing.price(for: item) != nil || (editing.timer(for: item)?.intValue ?? 0) > 0 { return false }
+        }
+        return true
+    }
+    fileprivate func updatePhotoToolbar() {
+        guard self.style == .wegram, self.interaction != nil else { return }
+        if !self.originalPhotoAvailable { self.photoSendingState.original = false }
+        if let selection = self.interaction?.selectionState, self.groupedValue != selection.grouping { self.groupedValue = selection.grouping }
+        let canMerge = self.interaction.map { wegramCanMergeSelectedMedia(selection: $0.selectionState, editing: $0.editingState, asFile: self.subject.asFile || self.photoSendingState.original, peer: self.peer) } ?? false
+        let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        var limitedAccess = false
+        if self.isNodeLoaded, case let .assets(_, _, _, access, _) = self.controllerNode.state { limitedAccess = access == .limited }
+        let accessTitle = chinese ? "你已设置WeGram只能访问相册部分照片，建议设为「允许访问所有照片」" : "WeGram can only access selected photos. Allow access to all photos in Settings."
+        self.photoToolbar.update(count: Int(self.interaction?.selectionState?.count() ?? 0), original: self.photoSendingState.original, originalAvailable: self.originalPhotoAvailable, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.baseDisplaySize, previewTitle: chinese ? "预览" : "Preview", originalTitle: chinese ? "原图" : "Original", sendTitle: self.presentationData.strings.MediaPicker_Send, optionsTitle: chinese ? "说明与发送选项" : "Caption and Send Options", mergeSelected: canMerge ? self.groupedValue : nil, mergeTitle: chinese ? "发送后合并展示" : "Display as an album", limitedAccessTitle: limitedAccess ? accessTitle : nil)
+        let hasAccessNotice = !self.photoToolbar.limitedAccessButton.isHidden
+        let visible = self.canUsePhotoToolbar && !self.usesOriginalPhotoPanel
+        if visible != self.customPhotoPanelVisible || canMerge != self.customPhotoPanelHasMerge || hasAccessNotice != self.customPhotoPanelHasLimitedAccess {
+            self.customPhotoPanelVisible = visible
+            self.customPhotoPanelHasMerge = canMerge
+            self.customPhotoPanelHasLimitedAccess = hasAccessNotice
+            self.customBottomPanelPromise.set(.single(visible ? self.photoToolbar : nil))
+        }
+    }
     private let secondaryButtonAction: (() -> Void)?
     
     public init(
@@ -2091,9 +2263,11 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
         mainButtonState: AttachmentMainButtonState? = nil,
         mainButtonHidesOnSelection: Bool = false,
         mainButtonAction: (() -> Void)? = nil,
-        secondaryButtonAction: (() -> Void)? = nil
+        secondaryButtonAction: (() -> Void)? = nil,
+        photoSendingState: WegramPhotoSendingState? = nil
     ) {
         self.context = context
+        self.photoSendingState = photoSendingState ?? WegramPhotoSendingState()
                 
         let presentationData = updatedPresentationData?.initial ?? context.sharedContext.currentPresentationData.with { $0 }
         self.presentationData = presentationData
@@ -2124,7 +2298,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
         self.explicitMultipleSelection = forCollage && selectionContext.selectionLimit > 1
         let editingContext = editingContext ?? (subject.asFile ? TGMediaEditingContext.forCaptionsOnly() : TGMediaEditingContext())!
         
-        self.titleView = MediaPickerTitleView(theme: self.presentationData.theme, glass: style == .glass, segments: [self.presentationData.strings.Attachment_AllMedia, self.presentationData.strings.Attachment_SelectedMedia(1)], selectedIndex: 0)
+        self.titleView = MediaPickerTitleView(theme: self.presentationData.theme, glass: style == .glass, usesWegramAppearance: style == .wegram, segments: [self.presentationData.strings.Attachment_AllMedia, self.presentationData.strings.Attachment_SelectedMedia(1)], selectedIndex: 0)
         
         if case let .assets(collection, mode) = subject {
             if let collection = collection {
@@ -2196,6 +2370,8 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
         var navigationBarPresentationData: NavigationBarPresentationData?
         if case .glass = style {
             navigationBarPresentationData = NavigationBarPresentationData(presentationData: presentationData, hideBackground: true, hideBadge: true, hideSeparator: true)
+        } else if case .wegram = style {
+            navigationBarPresentationData = NavigationBarPresentationData(theme: wegramPhotoPickerNavigationTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings))
         } else {
             navigationBarPresentationData = NavigationBarPresentationData(presentationData: presentationData)
         }
@@ -2366,7 +2542,12 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 if let currentItem = currentItem {
                     selectionState.setItem(currentItem, selected: true)
                 }
-                strongSelf.controllerNode.send(fromGallery: currentItem != nil, asFile: strongSelf.subject.asFile, silently: silently, scheduleTime: scheduleTime, animated: animated, parameters: parameters, completion: completion)
+                var options: (asFile: Bool, convertToJpeg: Bool?) = (strongSelf.subject.asFile, nil)
+                if strongSelf.style == .wegram {
+                    options = strongSelf.photoSendingState.sendOptions(isAvailable: strongSelf.canUsePhotoToolbar && strongSelf.originalPhotoAvailable, asFile: strongSelf.subject.asFile)
+                    strongSelf.updatePhotoToolbar()
+                }
+                strongSelf.controllerNode.send(fromGallery: currentItem != nil, asFile: options.asFile, silently: silently, scheduleTime: scheduleTime, animated: animated, parameters: parameters, convertToJpeg: options.convertToJpeg, completion: completion)
             }
         }, schedule: { [weak self] parameters in
             if let strongSelf = self {
@@ -2378,7 +2559,12 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             if let strongSelf = self {
                 strongSelf.controllerNode.dismissInput()
             }
-        }, selectionState: selectionContext, editingState: editingContext)
+        }, selectionState: selectionContext, editingState: editingContext, usesWegramAppearance: style == .wegram)
+        self.interaction?.addLimitedPhotos = { [weak self] in
+            guard let self, self.canUsePhotoToolbar, !self.isDismissing, self.isNodeLoaded, self.view.window != nil,
+                  case let .assets(_, _, _, access, _) = self.controllerNode.state, access == .limited else { return }
+            PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: self)
+        }
         
         var displayLivePhotoIcon = false
         if case let .assets(_, mode) = subject, case .default = mode {
@@ -2394,9 +2580,12 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             self.interaction?.editingState.setHighQualityPhoto(highQualityPhoto)
         }
         
-        self.interaction?.selectionState?.grouping = true
-        
         self.interaction?.editingState.sendPaidMessageStars = sendPaidMessageStars ?? 0
+        if style == .wegram && self.canUsePhotoToolbar {
+            self.groupedValue = self.photoSendingState.mergeDisplay
+        } else {
+            self.interaction?.selectionState?.grouping = true
+        }
         
         if case let .media(media) = self.subject {
             for item in media {
@@ -2446,6 +2635,9 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             } else {
                 if case .glass = style {
                     self.navigationItem.leftBarButtonItem = UIBarButtonItem(customView: UIView())
+                } else if case .wegram = style {
+                    self.navigationItem.leftBarButtonItem = UIBarButtonItem(image: wegramPhotoPickerNavigationImage(self.presentationData.theme), style: .plain, target: self, action: #selector(self.cancelPressed))
+                    self.navigationItem.leftBarButtonItem?.accessibilityLabel = self.presentationData.strings.Common_Cancel
                 } else {
                     self.navigationItem.leftBarButtonItem = UIBarButtonItem(customDisplayNode: self.cancelButtonNode)
                     self.navigationItem.leftBarButtonItem?.action = #selector(self.cancelPressed)
@@ -2464,6 +2656,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 }
             }
         }
+        self.updateWegramAlbumButton()
     }
     
     required init(coder aDecoder: NSCoder) {
@@ -2505,8 +2698,142 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     
     private var didSetupGroups = false
     private let groupsPromise = Promise<[MediaGroupItem]>()
-    
+    private var wegramAlbumMenu: WegramPhotoAlbumListView?
+    private lazy var wegramAlbumButton: WegramPhotoAlbumButton = {
+        let button = WegramPhotoAlbumButton(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
+        button.toggle = { [weak self, weak button] in
+            guard let self, button?.window != nil, self.canUsePhotoToolbar, !self.isDismissing, self.titleView.isEnabled else { return }
+            self.presentGroupsMenu()
+        }
+        button.options = { [weak self, weak button] in
+            guard let self, let button, button.window != nil, self.canUsePhotoToolbar, !self.isDismissing else { return }
+            self.dismissWegramAlbumMenu()
+            self.searchOrMorePressed(view: button, gesture: nil)
+        }
+        return button
+    }()
+
+    private lazy var wegramAlbumButtonNode = WegramPhotoAlbumNavigationNode(button: self.wegramAlbumButton)
+    private var wegramAlbumBarItem: UIBarButtonItem?
+    private lazy var wegramExpandBarItem: UIBarButtonItem = {
+        let image = generateImage(CGSize(width: 28, height: 28), rotatedContext: { size, context in
+            context.clear(CGRect(origin: .zero, size: size))
+            context.setStrokeColor(UIColor.black.cgColor)
+            context.setLineWidth(1.3)
+            context.setLineJoin(.round)
+            context.move(to: CGPoint(x: 6, y: 14))
+            context.addLine(to: CGPoint(x: 6, y: 22))
+            context.addLine(to: CGPoint(x: 14, y: 22))
+            context.move(to: CGPoint(x: 14, y: 6))
+            context.addLine(to: CGPoint(x: 22, y: 6))
+            context.addLine(to: CGPoint(x: 22, y: 14))
+            context.strokePath()
+        })?.withRenderingMode(.alwaysTemplate)
+        return UIBarButtonItem(image: image, style: .plain, target: self, action: #selector(self.wegramExpandPressed))
+    }()
+
+    @objc private func wegramExpandPressed() {
+        guard self.canUsePhotoToolbar, !self.isDismissing, self.wegramAlbumMenu == nil, self.isNodeLoaded, self.view.window != nil, !self.isContainerExpanded() else { return }
+        self.requestAttachmentMenuExpansion()
+    }
+
+    @objc private func wegramAlbumPressed() {
+        self.wegramAlbumButton.sendActions(for: .touchUpInside)
+    }
+
+    private func updateWegramAlbumButton() {
+        guard self.style == .wegram, case .assets(nil, .default) = self.subject else { return }
+        let allMediaBanned = self.bannedSendPhotos != nil && self.bannedSendVideos != nil
+        if self.canUsePhotoToolbar && !allMediaBanned && self.titleView.isEnabled {
+            let button = self.wegramAlbumButton
+            let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+            button.update(expanded: self.wegramAlbumMenu != nil, dark: self.presentationData.theme.overallDarkAppearance, enabled: true, chinese: chinese, moreTitle: chinese ? "更多照片选项" : "More Photo Options")
+            self.titleView.showsDisclosureIndicator = false
+            if self.wegramAlbumBarItem == nil {
+                self.wegramAlbumBarItem = UIBarButtonItem(customDisplayNode: self.wegramAlbumButtonNode)
+                self.wegramAlbumBarItem?.target = self
+                self.wegramAlbumBarItem?.action = #selector(self.wegramAlbumPressed)
+            }
+            self.wegramAlbumBarItem?.accessibilityLabel = [button.accessibilityLabel, button.accessibilityValue].compactMap { $0 }.joined(separator: ", ")
+            self.wegramExpandBarItem.accessibilityLabel = chinese ? "展开照片选择器" : "Expand Photo Picker"
+            self.wegramExpandBarItem.isEnabled = self.wegramAlbumMenu == nil && !self.isContainerExpanded()
+            if let item = self.wegramAlbumBarItem {
+                let items = self.isContainerExpanded() ? [item] : [item, self.wegramExpandBarItem]
+                if self.navigationItem.rightBarButtonItems?.elementsEqual(items, by: { $0 === $1 }) != true {
+                    self.navigationItem.rightBarButtonItems = items
+                }
+            }
+        } else {
+            self.titleView.showsDisclosureIndicator = true
+            if self.wegramAlbumBarItem != nil { self.wegramAlbumButton.isEnabled = false }
+            self.wegramExpandBarItem.isEnabled = false
+            if let item = self.wegramAlbumBarItem, self.navigationItem.rightBarButtonItems?.contains(where: { $0 === item }) == true {
+                if allMediaBanned {
+                    self.navigationItem.rightBarButtonItems = nil
+                } else {
+                    let item = UIBarButtonItem(customDisplayNode: self.moreButtonNode)
+                    item?.action = #selector(self.rightButtonPressed)
+                    item?.target = self
+                    item?.accessibilityLabel = self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "更多照片选项" : "More Photo Options"
+                    self.navigationItem.rightBarButtonItems = item.map { [$0] }
+                }
+            }
+        }
+    }
+
+    private func dismissWegramAlbumMenu() {
+        self.wegramAlbumMenu?.invalidate()
+        self.wegramAlbumMenu?.removeFromSuperview()
+        self.wegramAlbumMenu = nil
+        self.updateWegramAlbumButton()
+        self.titleView.isHighlighted = false
+    }
+
+    private func layoutWegramAlbumMenu() {
+        guard let menu = self.wegramAlbumMenu, let layout = self.validLayout else { return }
+        let top = navigationLayout(layout: layout).navigationFrame.maxY
+        menu.frame = CGRect(x: 0, y: top, width: layout.size.width, height: max(0, layout.size.height - top))
+        menu.updateLayout(size: menu.bounds.size)
+    }
+
+    private func presentWegramAlbumMenu(items: [MediaGroupItem], currentId: String?, selectGroup: @escaping (PHAssetCollection) -> Void) {
+        let limited = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .limited
+        let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        let rows = items.map { item -> WegramPhotoAlbumListView.Item in
+            let title = limited && item.collection.assetCollectionSubtype == .smartAlbumUserLibrary
+                ? (chinese ? "可访问的照片" : "Accessible Photos") : (item.collection.localizedTitle ?? "")
+            return .init(id: item.collection.localIdentifier, title: title, count: item.count, selected: item.collection.localIdentifier == currentId)
+        }
+        let menu = WegramPhotoAlbumListView(items: rows, limitedTitle: limited ? (chinese ? "微信只能访问部分照片和相册" : "Only selected photos and albums are accessible") : nil, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.baseDisplaySize, cancelTitle: self.presentationData.strings.Common_Cancel)
+        menu.loadThumbnail = { id, completed in
+            guard let asset = items.first(where: { $0.collection.localIdentifier == id })?.firstItem else { return nil }
+            let scale = min(3, UIScreen.main.scale)
+            let disposable = (assetImage(asset: asset, targetSize: CGSize(width: 56 * scale, height: 56 * scale), exact: false) |> deliverOnMainQueue).start(next: completed)
+            return { disposable.dispose() }
+        }
+        menu.select = { [weak self] id in
+            guard let self, self.view.window != nil, !self.isDismissing, let collection = items.first(where: { $0.collection.localIdentifier == id })?.collection else { return }
+            self.dismissWegramAlbumMenu()
+            selectGroup(collection)
+        }
+        menu.dismissed = { [weak self] in self?.dismissWegramAlbumMenu() }
+        self.wegramAlbumMenu = menu
+        self.updateWegramAlbumButton()
+        self.view.addSubview(menu)
+        self.layoutWegramAlbumMenu()
+        UIAccessibility.post(notification: .layoutChanged, argument: menu.tableView)
+    }
+
+    override public func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        self.dismissWegramAlbumMenu()
+    }
+
     public func presentGroupsMenu() {
+        if self.wegramAlbumMenu != nil {
+            self.dismissWegramAlbumMenu()
+            return
+        }
         self.groupsPresented()
         
         let _ = (self.groupsPromise.get()
@@ -2516,11 +2843,16 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                 return
             }
             let items = items.filter { $0.count > 0 || $0.collection.assetCollectionSubtype == .smartAlbumAllHidden }
+            let initialCollection: PHAssetCollection?
+            if case let .assets(collection, _) = self.subject {
+                initialCollection = collection
+            } else {
+                initialCollection = nil
+            }
+            let currentCollectionId = (self.selectedCollectionValue ?? initialCollection)?.localIdentifier
+                ?? items.first(where: { $0.collection.assetCollectionSubtype == .smartAlbumUserLibrary })?.collection.localIdentifier
             var dismissImpl: (() -> Void)?
-            let content: ContextControllerItemsContent = MediaGroupsContextMenuContent(
-                context: self.context,
-                items: items,
-                selectGroup: { [weak self] collection in
+            let selectGroup: (PHAssetCollection) -> Void = { [weak self] collection in
                     guard let self else {
                         return
                     }
@@ -2540,8 +2872,17 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                         self.controllerNode.isSwitchingAssetGroup = false
                     }
                 }
+            if self.style == .wegram {
+                guard self.view.window != nil, !self.isDismissing, self.wegramAlbumMenu == nil else { return }
+                self.presentWegramAlbumMenu(items: items, currentId: currentCollectionId, selectGroup: selectGroup)
+                return
+            }
+            let content: ContextControllerItemsContent = MediaGroupsContextMenuContent(
+                context: self.context,
+                items: items,
+                selectGroup: selectGroup
             )
-            
+
             self.titleView.isHighlighted = true
             let contextController = makeContextController(
                 presentationData: self.presentationData,
@@ -2655,6 +2996,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     fileprivate var selectionCount: Int32 = 0
     fileprivate func updateSelectionState(count: Int32, transition: ContainedViewLayoutTransition = .animated(duration: 0.25, curve: .easeInOut)) {
         self.selectionCount = count
+        self.updatePhotoToolbar()
         guard let layout = self.validLayout else {
             return
         }
@@ -2673,10 +3015,17 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             let title: String
             var isEnabled: Bool
             if self.controllerNode.currentDisplayMode == .selected {
-                title = "" // self.presentationData.strings.Attachment_SelectedMedia(count)
+                title = self.style == .wegram ? (self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "已选照片（\(count)）" : "Selected Photos (\(count))") : ""
                 isEnabled = false
             } else {
-                title = self.selectedCollectionValue?.localizedTitle ?? self.presentationData.strings.MediaPicker_Recents
+                if self.canUsePhotoToolbar, case .assets(nil, .default) = self.subject, self.selectedCollectionValue == nil {
+                    let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+                    let limited: Bool
+                    if case let .assets(_, _, _, access, _) = self.controllerNode.state { limited = access == .limited } else { limited = false }
+                    title = limited ? (chinese ? "可访问的照片" : "Accessible Photos") : (chinese ? "照片和视频" : "Photos and Videos")
+                } else {
+                    title = self.selectedCollectionValue?.localizedTitle ?? self.presentationData.strings.MediaPicker_Recents
+                }
                 isEnabled = true
             }
             var titleIsEnabled = isEnabled
@@ -2693,7 +3042,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             let navigationHeight = navigationLayout(layout: layout).navigationFrame.height
             self.selectedButtonNode.frame = CGRect(origin: CGPoint(x: 16.0 + 44.0 + 12.0, y: self._hasGlassStyle ? 16.0 : floorToScreenPixels((navigationHeight - selectedSize.height) / 2.0) + 1.0), size: selectedSize)
             
-            let isSelectionButtonVisible = count > 0 && self.controllerNode.currentDisplayMode == .all
+            let isSelectionButtonVisible = self.style != .wegram && count > 0 && self.controllerNode.currentDisplayMode == .all
             transition.updateAlpha(node: self.selectedButtonNode, alpha: isSelectionButtonVisible ? 1.0 : 0.0)
             transition.updateTransformScale(node: self.selectedButtonNode, scale: isSelectionButtonVisible ? 1.0 : 0.01)
             
@@ -2705,7 +3054,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             moreIsVisible = count > 0
         }
         
-        let useGlassButtons = (isBack || !self.controllerNode.scrolledToTop) && !self.controllerNode.isSwitchingAssetGroup
+        let useGlassButtons = self.style != .wegram && (isBack || !self.controllerNode.scrolledToTop) && !self.controllerNode.isSwitchingAssetGroup
         
         let barButtonSideInset: CGFloat = 16.0
     
@@ -2856,6 +3205,15 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
             }
         }
         
+        if self.style == .wegram, case .assets(nil, .default) = self.subject {
+            let label = isBack ? self.presentationData.strings.Common_Back : self.presentationData.strings.Common_Cancel
+            if self.navigationItem.leftBarButtonItem?.accessibilityLabel != label {
+                let item = UIBarButtonItem(image: wegramPhotoPickerNavigationImage(self.presentationData.theme, isBack: isBack), style: .plain, target: self, action: #selector(self.cancelPressed))
+                item.accessibilityLabel = label
+                item.isEnabled = self.navigationItem.leftBarButtonItem?.isEnabled ?? true
+                self.navigationItem.leftBarButtonItem = item
+            }
+        }
         if case .assets(_, .story) = self.subject {
             if self.selectionCount > 0 {
                 let text = self.forCollage ? self.presentationData.strings.MediaPicker_CombineIntoCollage : self.presentationData.strings.MediaPicker_CreateStory(self.selectionCount)
@@ -2873,21 +3231,34 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
         } else if self.mainButtonHidesOnSelection, let initialMainButtonState = self.initialMainButtonState {
             self.mainButtonStatePromise.set(.single(self.selectionCount > 0 ? nil : initialMainButtonState))
         }
+        self.updateWegramAlbumButton()
     }
 
     private func updateThemeAndStrings() {
         var navigationBarPresentationData: NavigationBarPresentationData
         if case .glass = style {
             navigationBarPresentationData = NavigationBarPresentationData(presentationData: self.presentationData, hideBackground: true, hideBadge: true, hideSeparator: true)
+        } else if case .wegram = style {
+            navigationBarPresentationData = NavigationBarPresentationData(theme: wegramPhotoPickerNavigationTheme(self.presentationData.theme, height: self.wegramPhotoHeaderHeight), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings))
         } else {
             navigationBarPresentationData = NavigationBarPresentationData(presentationData: self.presentationData)
         }
         self.navigationBar?.updatePresentationData(navigationBarPresentationData, transition: .immediate)
+        if self.style == .wegram, let item = self.navigationItem.leftBarButtonItem, item.action == #selector(self.cancelPressed), item.image != nil {
+            let isBack: Bool
+            if case .back = self.cancelButtonNode.state { isBack = true } else { isBack = false }
+            let updatedItem = UIBarButtonItem(image: wegramPhotoPickerNavigationImage(self.presentationData.theme, isBack: isBack), style: item.style, target: item.target, action: item.action)
+            updatedItem.accessibilityLabel = isBack ? self.presentationData.strings.Common_Back : self.presentationData.strings.Common_Cancel
+            updatedItem.isEnabled = item.isEnabled
+            self.navigationItem.leftBarButtonItem = updatedItem
+        }
         self.titleView.theme = self.presentationData.theme
         self.cancelButtonNode.theme = self.presentationData.theme
         self.moreButtonNode.theme = self.presentationData.theme
         self.selectedButtonNode.theme = self.presentationData.theme
         self.controllerNode.updatePresentationData(self.presentationData)
+        self.updatePhotoToolbar()
+        self.updateWegramAlbumButton()
     }
     
     @objc private func backPressed() {
@@ -2976,7 +3347,12 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     }
     
     @objc private func rightButtonPressed() {
-        self.moreButtonNode.buttonPressed()
+        if self.style == .wegram {
+            guard !self.isDismissing, self.view.window != nil, self.moreButtonNode.view.window != nil else { return }
+            self.searchOrMorePressed(view: self.moreButtonNode.view, gesture: nil)
+        } else {
+            self.moreButtonNode.buttonPressed()
+        }
     }
     
     public func resetForReuse() {
@@ -3008,7 +3384,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
         var updateNavigationStackImpl: ((AttachmentContainable) -> Void)?
         let groupsController = MediaGroupsScreen(context: self.context, updatedPresentationData: self.updatedPresentationData, mediaAssetsContext: self.controllerNode.mediaAssetsContext, embedded: embedded, openGroup: { [weak self] collection in
             if let strongSelf = self {
-                let mediaPicker = MediaPickerScreenImpl(context: strongSelf.context, updatedPresentationData: strongSelf.updatedPresentationData, warpContentsOnEdges: strongSelf.warpContentsOnEdges, peer: strongSelf.peer, threadTitle: strongSelf.threadTitle, chatLocation: strongSelf.chatLocation, isScheduledMessages: strongSelf.isScheduledMessages, bannedSendPhotos: strongSelf.bannedSendPhotos, bannedSendVideos: strongSelf.bannedSendVideos, subject: .assets(collection, mode), editingContext: strongSelf.interaction?.editingState, selectionContext: strongSelf.interaction?.selectionState)
+                let mediaPicker = MediaPickerScreenImpl(context: strongSelf.context, updatedPresentationData: strongSelf.updatedPresentationData, style: strongSelf.style == .wegram ? .wegram : .legacy, warpContentsOnEdges: strongSelf.warpContentsOnEdges, peer: strongSelf.peer, threadTitle: strongSelf.threadTitle, chatLocation: strongSelf.chatLocation, isScheduledMessages: strongSelf.isScheduledMessages, bannedSendPhotos: strongSelf.bannedSendPhotos, bannedSendVideos: strongSelf.bannedSendVideos, subject: .assets(collection, mode), editingContext: strongSelf.interaction?.editingState, selectionContext: strongSelf.interaction?.selectionState, photoSendingState: strongSelf.photoSendingState)
                 
                 mediaPicker.presentSchedulePicker = strongSelf.presentSchedulePicker
                 mediaPicker.presentTimerPicker = strongSelf.presentTimerPicker
@@ -3171,6 +3547,44 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                         return ContextController.Items(content: .list([]))
                     }
                     var items: [ContextMenuItem] = []
+                    if self.canUsePhotoToolbar, self.isNodeLoaded, case let .assets(_, _, _, access, _) = self.controllerNode.state, access == .limited {
+                        items.append(.action(ContextMenuActionItem(text: strings.Media_LimitedAccessSelectMore, icon: { _ in nil }, action: { [weak self] _, f in
+                            f(.default)
+                            self?.interaction?.addLimitedPhotos()
+                        })))
+                        items.append(.action(ContextMenuActionItem(text: strings.Media_LimitedAccessChangeSettings, icon: { _ in nil }, action: { [weak self] _, f in
+                            f(.default)
+                            guard let self, !self.isDismissing, self.isNodeLoaded, self.view.window != nil,
+                                  case let .assets(_, _, _, access, _) = self.controllerNode.state, access == .limited else { return }
+                            self.context.sharedContext.applicationBindings.openSettings()
+                        })))
+                        items.append(.separator)
+                    }
+                    if self.style == .wegram, selectionCount > 0 {
+                        let chinese = strings.baseLanguageCode.hasPrefix("zh")
+                        items.append(.action(ContextMenuActionItem(text: chinese ? "预览" : "Preview", icon: { _ in nil }, action: { [weak self] _, f in
+                            f(.default)
+                            guard let self, !self.isDismissing, self.isNodeLoaded, self.view.window != nil,
+                                  let item = self.interaction?.selectionState?.selectedItems().first as? TGMediaSelectableItem else { return }
+                            self.controllerNode.openSelectedMedia(item: item, immediateThumbnail: nil)
+                        })))
+                        items.append(.action(ContextMenuActionItem(text: chinese ? "已选照片（\(selectionCount)）" : "Selected Photos (\(selectionCount))", icon: { _ in nil }, action: { [weak self] _, f in
+                            f(.default)
+                            guard let self, !self.isDismissing, self.isNodeLoaded, self.view.window != nil,
+                                  let selection = self.interaction?.selectionState, selection.count() > 0 else { return }
+                            self.selectedPressed()
+                        })))
+                        items.append(.separator)
+                        if self.canUsePhotoToolbar {
+                            items.append(.action(ContextMenuActionItem(text: self.usesOriginalPhotoPanel ? (chinese ? "照片工具栏" : "Photo Toolbar") : (chinese ? "说明与发送选项" : "Caption and Send Options"), icon: { _ in nil }, action: { [weak self] _, f in
+                                f(.default)
+                                guard let self, !self.isDismissing, self.isNodeLoaded, self.view.window != nil else { return }
+                                self.usesOriginalPhotoPanel.toggle()
+                                self.updatePhotoToolbar()
+                            })))
+                            items.append(.separator)
+                        }
+                    }
                     if !hasSpoilers && price == nil {
                         items.append(.action(ContextMenuActionItem(text: selectionCount > 1 ? strings.Attachment_SendAsFiles : strings.Attachment_SendAsFile, icon: { theme in
                             return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/File"), color: theme.contextMenu.primaryColor)
@@ -3245,6 +3659,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
                                         editingContext.setSpoiler(hasGeneric, for: item)
                                     }
                                 }
+                                self.updatePhotoToolbar()
                             })))
                         }
                         if isPaidAvailable {
@@ -3309,9 +3724,13 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
     }
     
     override public func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        self.validLayout = layout
+        if self.style == .wegram, self.navigationBar?.nominalHeight != self.wegramPhotoHeaderHeight {
+            self.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: wegramPhotoPickerNavigationTheme(self.presentationData.theme, height: self.wegramPhotoHeaderHeight), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)), transition: transition)
+        }
         super.containerLayoutUpdated(layout, transition: transition)
                 
-        self.validLayout = layout
+        self.layoutWegramAlbumMenu()
         self.controllerNode.containerLayoutUpdated(layout, navigationBarHeight: navigationLayout(layout: layout).navigationFrame.maxY, transition: transition)
 
         let navigationHeight = navigationLayout(layout: layout).navigationFrame.height
@@ -3328,6 +3747,7 @@ public final class MediaPickerScreenImpl: ViewController, MediaPickerScreen, Att
 }
 
 final class MediaPickerContext: AttachmentMediaPickerContext {
+    var customBottomPanel: Signal<AttachmentCustomBottomPanel?, NoError> { self.controller?.customBottomPanelPromise.get() ?? .single(nil) }
     private weak var controller: MediaPickerScreenImpl?
     
     var selectionCount: Signal<Int, NoError> {
@@ -3415,6 +3835,7 @@ final class MediaPickerContext: AttachmentMediaPickerContext {
                 editingContext.setPrice(NSNumber(value: price), for: item)
             }
         }
+        controller.updatePhotoToolbar()
     }
     
     var hasTimers: Bool {

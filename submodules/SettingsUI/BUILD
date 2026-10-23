@@ -184,3 +184,5 @@ ios_unit_test(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/Data and Storage/WegramAutoSaveExceptionsContentView.swift", "Sources/Data and Storage/WegramDownloadCategoryContentView.swift", "Sources/Data and Storage/AutodownloadSizeMapping.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

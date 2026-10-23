@@ -67,3 +67,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramPhotoToolbarDoneContent.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

@@ -22,6 +22,7 @@ import ComponentFlow
 import BundleIconComponent
 import MultilineTextComponent
 import SearchInputPanelComponent
+import SearchBarNode
 import ButtonComponent
 import EdgeEffect
 
@@ -41,6 +42,7 @@ private enum LocationPickerEntryId: Hashable {
     case header
     case venue(String)
     case attribution
+    case more
 }
 
 private extension MapGeoAddress {
@@ -51,11 +53,12 @@ private extension MapGeoAddress {
 
 private enum LocationPickerEntry: Comparable, Identifiable {
     case city(PresentationTheme, String, String, TelegramMediaMap?, Int64?, String?, CLLocationCoordinate2D?, String?, MapGeoAddress?)
-    case location(PresentationTheme, String, String, TelegramMediaMap?, Int64?, String?, CLLocationCoordinate2D?, String?, MapGeoAddress?, Bool)
+    case location(PresentationTheme, String, String, TelegramMediaMap?, Int64?, String?, CLLocationCoordinate2D?, String?, MapGeoAddress?, Bool, Bool?)
     case liveLocation(PresentationTheme, String, String, CLLocationCoordinate2D?)
     case header(PresentationTheme, String)
-    case venue(PresentationTheme, TelegramMediaMap?, Int64?, String?, Int)
+    case venue(PresentationTheme, TelegramMediaMap?, Int64?, String?, Int, Bool?)
     case attribution(PresentationTheme, LocationAttribution)
+    case more(PresentationTheme, String)
     
     var stableId: LocationPickerEntryId {
         switch self {
@@ -67,8 +70,10 @@ private enum LocationPickerEntry: Comparable, Identifiable {
             return .liveLocation
         case .header:
             return .header
-        case let .venue(_, venue, _, _, index):
-            return .venue(venue?.venue?.id ?? "\(index)")
+        case let .venue(_, venue, _, _, index, selected):
+            return .venue(selected == nil ? (venue?.venue?.id ?? "\(index)") : WegramLocationPickerSelection.rowIdentity(venue, index: index))
+        case .more:
+            return .more
         case .attribution:
             return .attribution
         }
@@ -82,8 +87,8 @@ private enum LocationPickerEntry: Comparable, Identifiable {
                 } else {
                     return false
                 }
-            case let .location(lhsTheme, lhsTitle, lhsSubtitle, lhsVenue, lhsQueryId, lhsResultId, lhsCoordinate, lhsName, lhsAddress, lhsIsTop):
-                if case let .location(rhsTheme, rhsTitle, rhsSubtitle, rhsVenue, rhsQueryId, rhsResultId, rhsCoordinate, rhsName, rhsAddress, rhsIsTop) = rhs, lhsTheme === rhsTheme, lhsTitle == rhsTitle, lhsSubtitle == rhsSubtitle, lhsVenue?.venue?.id == rhsVenue?.venue?.id, lhsQueryId == rhsQueryId && lhsResultId == rhsResultId, locationCoordinatesAreEqual(lhsCoordinate, rhsCoordinate), lhsName == rhsName, lhsAddress == rhsAddress, lhsIsTop == rhsIsTop {
+            case let .location(lhsTheme, lhsTitle, lhsSubtitle, lhsVenue, lhsQueryId, lhsResultId, lhsCoordinate, lhsName, lhsAddress, lhsIsTop, lhsWegram):
+                if case let .location(rhsTheme, rhsTitle, rhsSubtitle, rhsVenue, rhsQueryId, rhsResultId, rhsCoordinate, rhsName, rhsAddress, rhsIsTop, rhsWegram) = rhs, lhsTheme === rhsTheme, lhsTitle == rhsTitle, lhsSubtitle == rhsSubtitle, lhsVenue?.venue?.id == rhsVenue?.venue?.id, lhsQueryId == rhsQueryId && lhsResultId == rhsResultId, locationCoordinatesAreEqual(lhsCoordinate, rhsCoordinate), lhsName == rhsName, lhsAddress == rhsAddress, lhsIsTop == rhsIsTop, lhsWegram == rhsWegram, lhsWegram != true || WegramLocationPickerSelection.sameContent(lhsVenue, rhsVenue) {
                     return true
                 } else {
                     return false
@@ -100,12 +105,15 @@ private enum LocationPickerEntry: Comparable, Identifiable {
                 } else {
                     return false
                 }
-            case let .venue(lhsTheme, lhsVenue, lhsQueryId, lhsResultId, lhsIndex):
-                if case let .venue(rhsTheme, rhsVenue, rhsQueryId, rhsResultId, rhsIndex) = rhs, lhsTheme === rhsTheme, lhsVenue?.venue?.id == rhsVenue?.venue?.id, lhsQueryId == rhsQueryId && lhsResultId == rhsResultId, lhsIndex == rhsIndex {
+            case let .venue(lhsTheme, lhsVenue, lhsQueryId, lhsResultId, lhsIndex, lhsSelected):
+                if case let .venue(rhsTheme, rhsVenue, rhsQueryId, rhsResultId, rhsIndex, rhsSelected) = rhs, lhsTheme === rhsTheme, lhsVenue?.venue?.id == rhsVenue?.venue?.id, lhsQueryId == rhsQueryId && lhsResultId == rhsResultId, lhsIndex == rhsIndex, lhsSelected == rhsSelected, lhsSelected == nil || WegramLocationPickerSelection.sameContent(lhsVenue, rhsVenue) {
                     return true
                 } else {
                     return false
                 }
+            case let .more(lhsTheme, lhsTitle):
+                if case let .more(rhsTheme, rhsTitle) = rhs { return lhsTheme === rhsTheme && lhsTitle == rhsTitle }
+                return false
             case let .attribution(lhsTheme, lhsAttribution):
                 if case let .attribution(rhsTheme, rhsAttribution) = rhs, lhsTheme === rhsTheme, lhsAttribution == rhsAttribution {
                     return true
@@ -115,50 +123,22 @@ private enum LocationPickerEntry: Comparable, Identifiable {
         }
     }
     
-    static func <(lhs: LocationPickerEntry, rhs: LocationPickerEntry) -> Bool {
-        switch lhs {
-            case .city:
-                switch rhs {
-                    case .city:
-                        return false
-                    case .location, .liveLocation, .header, .venue, .attribution:
-                        return true
-                }
-            case .location:
-                switch rhs {
-                    case .city, .location:
-                        return false
-                    case .liveLocation, .header, .venue, .attribution:
-                        return true
-                }
-            case .liveLocation:
-                switch rhs {
-                    case .city, .location, .liveLocation:
-                        return false
-                    case .header, .venue, .attribution:
-                        return true
-            }
-            case .header:
-                switch rhs {
-                    case .city, .location, .liveLocation, .header:
-                        return false
-                    case .venue, .attribution:
-                        return true
-            }
-            case let .venue(_, _, _, _, lhsIndex):
-                switch rhs {
-                    case .city, .location, .liveLocation, .header:
-                        return false
-                    case let .venue(_, _, _, _, rhsIndex):
-                        return lhsIndex < rhsIndex
-                    case .attribution:
-                        return true
-                }
-            case .attribution:
-                return false
+    private var order: (Int, Int) {
+        switch self {
+        case .city: return (0, 0)
+        case .location: return (1, 0)
+        case .liveLocation: return (2, 0)
+        case .header: return (3, 0)
+        case let .venue(_, _, _, _, index, _): return (4, index)
+        case .attribution: return (5, 0)
+        case .more: return (6, 0)
         }
     }
-    
+
+    static func <(lhs: LocationPickerEntry, rhs: LocationPickerEntry) -> Bool {
+        return lhs.order < rhs.order
+    }
+
     func item(engine: TelegramEngine, presentationData: PresentationData, interaction: LocationPickerInteraction?) -> ListViewItem {
         switch self {
             case let .city(_, title, subtitle, _, _, _, coordinate, name, address):
@@ -174,7 +154,15 @@ private enum LocationPickerEntry: Comparable, Identifiable {
                     }
                 }, highlighted: { _ in
                 })
-            case let .location(_, title, subtitle, venue, queryId, resultId, coordinate, name, address, _):
+            case let .location(_, title, subtitle, venue, queryId, resultId, coordinate, name, address, _, _):
+                if interaction?.usesWegramSelection == true {
+                    return ItemListVenueItem(presentationData: ItemListPresentationData(presentationData), engine: engine, venue: venue ?? coordinate.map { TelegramMediaMap(coordinate: $0) }, title: title, subtitle: subtitle, style: .plain, action: coordinate.map { coordinate in
+                        return {
+                            if let venue { interaction?.sendVenue(venue, queryId, resultId) }
+                            else { interaction?.sendLocation(coordinate, name, address) }
+                        }
+                    }, infoAction: ["home", "work"].contains(venue?.venue?.type ?? "") ? { interaction?.openHomeWorkInfo() } : nil, wegramSelected: true)
+                }
                 let icon: LocationActionListItemIcon
                 if let venue = venue {
                     icon = .venue(venue)
@@ -197,13 +185,15 @@ private enum LocationPickerEntry: Comparable, Identifiable {
                 })
             case let .header(_, title):
                 return LocationSectionHeaderItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .legacy, title: title)
-            case let .venue(_, venue, queryId, resultId, _):
+            case let .venue(_, venue, queryId, resultId, _, selected):
                 let venueType = venue?.venue?.type ?? ""
                 return ItemListVenueItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, engine: engine, venue: venue, style: .plain, action: venue.flatMap { venue in
                     return { interaction?.sendVenue(venue, queryId, resultId) }
                 }, infoAction: ["home", "work"].contains(venueType) ? {
                     interaction?.openHomeWorkInfo()
-                    } : nil)
+                    } : nil, wegramSelected: selected)
+            case let .more(_, title):
+                return ItemListActionItem(presentationData: ItemListPresentationData(presentationData), title: title, kind: .neutral, alignment: .center, sectionId: 0, style: .plain, action: { interaction?.openMore() })
             case let .attribution(_, attribution):
                 return LocationAttributionItem(presentationData: ItemListPresentationData(presentationData), attribution: attribution)
         }
@@ -348,6 +338,15 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
     private let shadeNode: ASDisplayNode
     private let innerShadeNode: ASDisplayNode
     
+    private let wegramCancelButton = HighlightableButtonNode()
+    private let wegramSendButton = HighlightableButtonNode()
+    private var wegramSearchBar: SearchBarNode?
+    private let wegramLocationControls = WegramLocationControls()
+    private let wegramTopShade = WegramLocationTopShade()
+    private var wegramLiveLocation: CLLocationCoordinate2D?
+    private weak var wegramMoreSheet: ActionSheetController?
+    private let wegramSendBackground = ASDisplayNode()
+
     private let cancelButton = ComponentView<Empty>()
     private let searchButton = ComponentView<Empty>()
     private let title = ComponentView<Empty>()
@@ -415,7 +414,8 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             toggleMapModeSelection: interaction.toggleMapModeSelection,
             updateMapMode: interaction.updateMapMode,
             goToUserLocation: interaction.goToUserLocation,
-            showPlacesInThisArea: interaction.showPlacesInThisArea
+            showPlacesInThisArea: interaction.showPlacesInThisArea,
+            usesWegramControls: controller.usesWegramSelection
         )
         self.headerNode.mapNode.isRotateEnabled = false
                         
@@ -435,8 +435,19 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
         
         self.backgroundColor = self.presentationData.theme.list.plainBackgroundColor
         
+        self.wegramSendBackground.isUserInteractionEnabled = false
+        self.wegramSendBackground.cornerRadius = 5
+        self.wegramSendButton.insertSubnode(self.wegramSendBackground, at: 0)
+        self.wegramCancelButton.addTarget(self, action: #selector(self.wegramCancelPressed), forControlEvents: .touchUpInside)
+        self.wegramSendButton.addTarget(self, action: #selector(self.wegramSendPressed), forControlEvents: .touchUpInside)
+
         self.addSubnode(self.listNode)
         self.addSubnode(self.headerNode)
+        self.wegramLocationControls.locate = { [weak self] in
+            self?.controller?.dismissSearchPressed()
+            self?.interaction.goToUserLocation()
+        }
+        self.wegramLocationControls.more = { [weak self] in self?.presentWegramMore() }
         
         self.listNode.addSubnode(self.emptyResultsTextNode)
         self.shadeNode.addSubnode(self.innerShadeNode)
@@ -615,6 +626,21 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             if let strongSelf = self {
                 let (foundVenues, _, foundVenuesLocation) = foundVenuesAndLocation ?? (nil, nil, nil)
                                       
+                if strongSelf.controller?.usesWegramSelection == true {
+                    let payload: WegramLocationPickerSelection.Payload?
+                    switch state.selectedLocation {
+                    case .selecting:
+                        payload = nil
+                    case let .location(coordinate, _, _):
+                        payload = .coordinate(coordinate, state.street, nil)
+                    case let .venue(venue, queryId, resultId):
+                        payload = .venue(venue, queryId, resultId)
+                    case .none:
+                        payload = [.denied, .restricted].contains(access) ? nil : userLocation.map { .coordinate($0.coordinate, state.street, nil) }
+                    }
+                    strongSelf.controller?.updateWegramSelection(payload)
+                }
+
                 var entries: [LocationPickerEntry] = []
                 switch state.selectedLocation {
                     case let .location(coordinate, address, _):
@@ -631,12 +657,12 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                         }
                         if source == .story {
                             if state.street != "" {
-                                entries.append(.location(presentationData.theme, state.street ?? presentationData.strings.Map_Locating, state.isStreet ? presentationData.strings.Location_TypeStreet : presentationData.strings.Location_TypeLocation, nil, nil, nil, coordinate, state.street, state.geoAddress, false))
+                                entries.append(.location(presentationData.theme, state.street ?? presentationData.strings.Map_Locating, state.isStreet ? presentationData.strings.Location_TypeStreet : presentationData.strings.Location_TypeLocation, nil, nil, nil, coordinate, state.street, state.geoAddress, false, nil))
                             } else if state.city != "" {
                                 entries.append(.city(presentationData.theme, state.city ?? presentationData.strings.Map_Locating, presentationData.strings.Location_TypeCity, nil, nil, nil, coordinate, state.city, state.geoAddress))
                             }
                         } else {
-                            entries.append(.location(presentationData.theme, title, address ?? presentationData.strings.Map_Locating, nil, nil, nil, coordinate, state.street, nil, true))
+                            entries.append(.location(presentationData.theme, title, address ?? presentationData.strings.Map_Locating, nil, nil, nil, coordinate, state.street, nil, true, nil))
                         }
                     case .selecting:
                         let title: String
@@ -650,7 +676,7 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                             case .pick:
                                 title = presentationData.strings.Map_SetThisLocation
                         }
-                        entries.append(.location(presentationData.theme, title, presentationData.strings.Map_Locating, nil, nil, nil, nil, nil, nil, true))
+                        entries.append(.location(presentationData.theme, title, presentationData.strings.Map_Locating, nil, nil, nil, nil, nil, nil, true, nil))
                     case let .venue(venue, queryId, resultId):
                         let title: String
                         switch strongSelf.mode {
@@ -659,7 +685,7 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                             case .pick:
                                 title = presentationData.strings.Map_SetThisPlace
                         }
-                        entries.append(.location(presentationData.theme, title, venue.venue?.title ?? "", venue, queryId, resultId, venue.coordinate, nil, nil, true))
+                        entries.append(.location(presentationData.theme, title, venue.venue?.title ?? "", venue, queryId, resultId, venue.coordinate, nil, nil, true, nil))
                     case .none:
                         let title: String
                         var coordinate = userLocation?.coordinate
@@ -698,18 +724,23 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                                 entries.append(.city(presentationData.theme, title, presentationData.strings.Location_TypeCity, nil, nil, nil, state.appxCoordinate, name, geoAddress))
                             }
                             if state.street != "" {
-                                entries.append(.location(presentationData.theme, state.street ?? presentationData.strings.Map_Locating, state.isStreet ? presentationData.strings.Location_TypeStreet : presentationData.strings.Location_TypeLocation, nil, nil, nil, coordinate, state.street, state.geoAddress, false))
+                                entries.append(.location(presentationData.theme, state.street ?? presentationData.strings.Map_Locating, state.isStreet ? presentationData.strings.Location_TypeStreet : presentationData.strings.Location_TypeLocation, nil, nil, nil, coordinate, state.street, state.geoAddress, false, nil))
                             }
                         } else {
-                            entries.append(.location(presentationData.theme, title, (userLocation?.horizontalAccuracy).flatMap { presentationData.strings.Map_AccurateTo(stringForDistance(strings: presentationData.strings, distance: $0)).string } ?? presentationData.strings.Map_Locating, nil, nil, nil, coordinate, state.street, nil, true))
+                            entries.append(.location(presentationData.theme, title, (userLocation?.horizontalAccuracy).flatMap { presentationData.strings.Map_AccurateTo(stringForDistance(strings: presentationData.strings, distance: $0)).string } ?? presentationData.strings.Map_Locating, nil, nil, nil, coordinate, state.street, nil, true, nil))
                         }
                 }
                 
-                if case .share(_, _, true) = mode {
+                if strongSelf.controller?.usesWegramSelection == true {
+                    strongSelf.wegramLiveLocation = userLocation?.coordinate
+                }
+                if case .share(_, _, true) = mode, strongSelf.controller?.usesWegramSelection != true {
                     entries.append(.liveLocation(presentationData.theme, presentationData.strings.Map_ShareLiveLocation, presentationData.strings.Map_ShareLiveLocationHelp, userLocation?.coordinate))
                 }
                 
-                entries.append(.header(presentationData.theme, presentationData.strings.Map_ChooseAPlace.uppercased()))
+                if strongSelf.controller?.usesWegramSelection != true {
+                    entries.append(.header(presentationData.theme, presentationData.strings.Map_ChooseAPlace.uppercased()))
+                }
                 
                 let displayedVenues: [(TelegramMediaMap, String)]?
                 let queryId: Int64?
@@ -730,7 +761,8 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                         } else if venue.venue?.provider == "gplaces" {
                             attribution = .google
                         }
-                        entries.append(.venue(presentationData.theme, venue, queryId, resultId, index))
+                        if strongSelf.controller?.usesWegramSelection == true, case let .venue(selected, _, _) = state.selectedLocation, WegramLocationPickerSelection.matches(selected, venue) { continue }
+                        entries.append(.venue(presentationData.theme, venue, queryId, resultId, index, strongSelf.controller?.usesWegramSelection == true ? false : nil))
                         index += 1
                     }
                     if let attribution = attribution {
@@ -738,8 +770,17 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                     }
                 } else {
                     for _ in 0 ..< 8 {
-                        entries.append(.venue(presentationData.theme, nil, nil, nil, index))
+                        entries.append(.venue(presentationData.theme, nil, nil, nil, index, strongSelf.controller?.usesWegramSelection == true ? false : nil))
                         index += 1
+                    }
+                }
+                if strongSelf.controller?.usesWegramSelection == true {
+                    entries.append(.more(presentationData.theme, presentationData.strings.Common_More))
+                    entries = entries.map { entry in
+                        if case let .location(theme, _, subtitle, venue, queryId, resultId, coordinate, name, address, flag, _) = entry {
+                            return .location(theme, venue?.venue?.title ?? name ?? presentationData.strings.Map_Location, venue?.venue?.address ?? subtitle, venue, queryId, resultId, coordinate, name, address, flag, true)
+                        }
+                        return entry
                     }
                 }
                 let previousEntries = previousEntries.swap(entries)
@@ -934,6 +975,11 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                     setupGeocoding(coordinate, false, { [weak self] geoAddress, _, address, cityName, streetName, countryCode, isStreet in
                         self?.updateState { state in
                             var state = state
+                            if self?.controller?.usesWegramSelection == true {
+                                guard case let .location(currentCoordinate, currentAddress, currentGlobal) = state.selectedLocation,
+                                      currentAddress == nil, currentGlobal == global,
+                                      locationCoordinatesAreEqual(currentCoordinate, coordinate) else { return state }
+                            }
                             
                             var shortAddress = ""
                             if let streetName {
@@ -984,6 +1030,10 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
         
         self.listNode.updateFloatingHeaderOffset = { [weak self] offset, listTransition in
             guard let self, let (layout, navigationBarHeight) = self.validLayout, self.listNode.scrollEnabled else {
+                return
+            }
+            if self.controller?.usesWegramSelection == true {
+                self.layoutEmptyResultsPlaceholder(transition: listTransition)
                 return
             }
             let overlap: CGFloat = 0.0 //6.0
@@ -1096,10 +1146,16 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
         self.shadeNode.backgroundColor = self.presentationData.theme.list.plainBackgroundColor
         self.innerShadeNode.backgroundColor = self.presentationData.theme.list.plainBackgroundColor
         self.searchContainerNode?.updatePresentationData(self.presentationData)
+        self.wegramSearchBar?.updateThemeAndStrings(theme: SearchBarNodeTheme(theme: self.presentationData.theme, hasSeparator: false), presentationTheme: self.presentationData.theme, strings: self.presentationData.strings)
+        self.wegramSearchBar?.placeholderString = NSAttributedString(string: self.presentationData.strings.Map_Search, font: Font.regular(17), textColor: self.presentationData.theme.rootController.navigationSearchBar.inputPlaceholderTextColor)
     }
     
     func updateState(_ f: (LocationPickerState) -> LocationPickerState) {
+        let previousSelection = self.state.selectedLocation
         self.state = f(self.state)
+        if self.controller?.usesWegramSelection == true, previousSelection != self.state.selectedLocation {
+            self.controller?.updateWegramSelection(nil)
+        }
         self.statePromise.set(.single(self.state))
     }
     
@@ -1140,8 +1196,14 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             return .complete()
         }
                 
-        let searchContainerNode = LocationSearchContainerNode(context: self.context, updatedPresentationData: self.controller?.updatedPresentationData, coordinate: coordinate, interaction: self.interaction, story: self.source == .story)
-        self.insertSubnode(searchContainerNode, belowSubnode: navigationBar)
+        let selectedVenue: TelegramMediaMap?
+        if case let .venue(venue, _, _) = self.state.selectedLocation { selectedVenue = venue } else { selectedVenue = nil }
+        let searchContainerNode = LocationSearchContainerNode(context: self.context, updatedPresentationData: self.controller?.updatedPresentationData, coordinate: coordinate, interaction: self.interaction, story: self.source == .story, wegramSelectedVenue: selectedVenue)
+        if self.controller?.usesWegramSelection == true {
+            self.addSubnode(searchContainerNode)
+        } else {
+            self.insertSubnode(searchContainerNode, belowSubnode: navigationBar)
+        }
         self.searchContainerNode = searchContainerNode
                 
         searchContainerNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
@@ -1153,6 +1215,7 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             self.view.insertSubview(self.bottomEdgeEffectView, belowSubview: sendButtonView)
         }
         
+        if self.controller?.usesWegramSelection == true { self.wegramSearchBar?.activate() }
         return searchContainerNode.isSearching
     }
     
@@ -1166,11 +1229,18 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
         self.searchContainerNode = nil
         
         self.deactivateInput()
+        self.wegramSearchBar?.text = ""
+        self.wegramSearchBar?.activity = false
         
         self.requestLayout(transition: .animated(duration: 0.4, curve: .spring))
     }
     
+    func updateWegramSearchActivity(_ activity: Bool) {
+        self.wegramSearchBar?.activity = activity
+    }
+
     func deactivateInput() {
+        self.wegramSearchBar?.deactivate(clear: false)
         if let searchInputView = self.searchInput?.view as? SearchInputPanelComponent.View {
             let _ = searchInputView.deactivateInput()
         }
@@ -1189,6 +1259,20 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             return
         }
         
+        if self.controller?.usesWegramSelection == true {
+            let size = self.listNode.bounds.size
+            let textSize = self.emptyResultsTextNode.updateLayout(CGSize(width: max(0, size.width - layout.safeInsets.left - layout.safeInsets.right - 32), height: .greatestFiniteMagnitude))
+            var occupiedHeight: CGFloat = 0
+            self.listNode.forEachItemNode { node in
+                if let itemNode = node as? ListViewItemNode, itemNode is ItemListVenueItemNode || itemNode is LocationActionListItemNode || itemNode is ItemListActionItemNode {
+                    occupiedHeight = max(occupiedHeight, itemNode.apparentFrame.maxY)
+                }
+            }
+            let frame = WegramLocationPickerLayout.emptyResultsFrame(size: size, textSize: textSize, occupiedHeight: occupiedHeight)
+            transition.updateAlpha(node: self.emptyResultsTextNode, alpha: frame == nil ? 0 : 1)
+            if let frame { transition.updateFrame(node: self.emptyResultsTextNode, frame: frame) }
+            return
+        }
         let topInset: CGFloat = floor((layout.size.height - navigationHeight) / 2.0 + navigationHeight)
         let headerHeight: CGFloat
         if let listOffset = self.listOffset {
@@ -1204,6 +1288,7 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
     }
     
     var isPickingLocation: Bool {
+        if self.controller?.usesWegramSelection == true { return false }
         return (self.state.selectedLocation.isCustom || self.state.forceSelection) && !self.state.searchingVenuesAround
     }
     
@@ -1214,7 +1299,7 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                 result = itemNode.liveLocationContextSourceView(extend: extend)
             }
         }
-        return result
+        return result ?? (self.controller?.usesWegramSelection == true ? self.wegramLocationControls.locateButton : nil)
     }
     
     func requestLayout(transition: ContainedViewLayoutTransition) {
@@ -1232,6 +1317,7 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             glass = true
         }
         
+        let wegramLayout = self.controller?.usesWegramSelection == true ? WegramLocationPickerLayout(size: layout.size, bottomInset: max(layout.insets(options: .input).bottom, layout.additionalInsets.bottom), navigationHeight: navigationHeight) : nil
         let isPickingLocation = self.isPickingLocation
         let optionsHeight: CGFloat = 38.0
         var actionHeight: CGFloat?
@@ -1243,10 +1329,12 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             }
         }
     
-        let topInset: CGFloat = glass ? 300.0 : 240.0
+        let topInset: CGFloat = wegramLayout == nil ? (glass ? 300.0 : 240.0) : 0
         let overlap: CGFloat = glass ? 0.0 : 6.0
         let headerHeight: CGFloat
-        if isPickingLocation, let actionHeight = actionHeight {
+        if let wegramLayout {
+            headerHeight = wegramLayout.map.height
+        } else if isPickingLocation, let actionHeight = actionHeight {
             self.listOffset = topInset
             if glass {
                 headerHeight = layout.size.height
@@ -1271,11 +1359,13 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
             scrollToItem = nil
         }
         
-        let insets = UIEdgeInsets(top: topInset, left: layout.safeInsets.left, bottom: layout.intrinsicInsets.bottom, right: layout.safeInsets.right)
-        self.listNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: scrollToItem, updateSizeAndInsets: ListViewUpdateSizeAndInsets(size: layout.size, insets: insets, headerInsets: UIEdgeInsets(top: navigationHeight, left: 0.0, bottom: layout.intrinsicInsets.bottom, right: 0.0), scrollIndicatorInsets: UIEdgeInsets(top: topInset + 3.0, left: 0.0, bottom: layout.intrinsicInsets.bottom, right: 0.0), duration: duration, curve: curve), stationaryItemRange: nil, updateOpaqueState: nil, completion: { _ in })
+        let listSize = wegramLayout?.results.size ?? layout.size
+        let bottomInset = wegramLayout == nil ? layout.intrinsicInsets.bottom : 0
+        let insets = UIEdgeInsets(top: topInset, left: layout.safeInsets.left, bottom: bottomInset, right: layout.safeInsets.right)
+        self.listNode.transaction(deleteIndices: [], insertIndicesAndItems: [], updateIndicesAndItems: [], options: [.Synchronous, .LowLatency], scrollToItem: scrollToItem, updateSizeAndInsets: ListViewUpdateSizeAndInsets(size: listSize, insets: insets, headerInsets: UIEdgeInsets(top: wegramLayout == nil ? navigationHeight : 0, left: 0.0, bottom: bottomInset, right: 0.0), scrollIndicatorInsets: UIEdgeInsets(top: topInset + 3.0, left: 0.0, bottom: bottomInset, right: 0.0), duration: duration, curve: curve), stationaryItemRange: nil, updateOpaqueState: nil, completion: { _ in })
         self.listNode.scrollEnabled = !isPickingLocation
         
-        var listFrame: CGRect = CGRect(origin: CGPoint(), size: layout.size)
+        var listFrame: CGRect = wegramLayout?.results ?? CGRect(origin: CGPoint(), size: layout.size)
         if isPickingLocation {
             listFrame.origin.y = headerHeight - topInset - overlap
         }
@@ -1295,8 +1385,13 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
         }
         
         if let searchContainerNode = self.searchContainerNode {
-            searchContainerNode.frame = CGRect(origin: CGPoint(), size: layout.size)
-            searchContainerNode.containerLayoutUpdated(ContainerViewLayout(size: layout.size, metrics: LayoutMetrics(), deviceMetrics: layout.deviceMetrics, intrinsicInsets: layout.intrinsicInsets, safeInsets: layout.safeInsets, additionalInsets: layout.additionalInsets, statusBarHeight: nil, inputHeight: layout.inputHeight, inputHeightIsInteractivellyChanging: layout.inputHeightIsInteractivellyChanging, inVoiceOver: layout.inVoiceOver, presentedInFormSheet: layout.presentedInFormSheet), navigationBarHeight: navigationHeight, transition: transition)
+            if let wegramLayout {
+                transition.updateFrame(node: searchContainerNode, frame: wegramLayout.results)
+                searchContainerNode.containerLayoutUpdated(ContainerViewLayout(size: wegramLayout.results.size, metrics: layout.metrics, deviceMetrics: layout.deviceMetrics, intrinsicInsets: .zero, safeInsets: layout.safeInsets, additionalInsets: .zero, statusBarHeight: nil, inputHeight: nil, inputHeightIsInteractivellyChanging: false, inVoiceOver: layout.inVoiceOver, presentedInFormSheet: layout.presentedInFormSheet), navigationBarHeight: 0, transition: transition)
+            } else {
+                searchContainerNode.frame = CGRect(origin: CGPoint(), size: layout.size)
+                searchContainerNode.containerLayoutUpdated(ContainerViewLayout(size: layout.size, metrics: LayoutMetrics(), deviceMetrics: layout.deviceMetrics, intrinsicInsets: layout.intrinsicInsets, safeInsets: layout.safeInsets, additionalInsets: layout.additionalInsets, statusBarHeight: nil, inputHeight: layout.inputHeight, inputHeightIsInteractivellyChanging: layout.inputHeightIsInteractivellyChanging, inVoiceOver: layout.inVoiceOver, presentedInFormSheet: layout.presentedInFormSheet), navigationBarHeight: navigationHeight, transition: transition)
+            }
         }
         
         if self.locationAccessDenied {
@@ -1331,12 +1426,18 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                 
                 placeholderTransition = .immediate
             }
-            placeholderNode.update(layout: layout, theme: self.presentationData.theme, strings: self.presentationData.strings, transition: placeholderTransition)
-            placeholderTransition.updateFrame(node: placeholderNode, frame: CGRect(origin: CGPoint(), size: layout.size))
-            
-            let placeholderFrame = CGRect(origin: CGPoint(), size: layout.size)
-            backgroundNode.update(size: placeholderFrame.size, transition: placeholderTransition)
+            let placeholderFrame = wegramLayout?.map ?? CGRect(origin: .zero, size: layout.size)
+            let placeholderLayout: ContainerViewLayout
+            if wegramLayout != nil {
+                placeholderLayout = ContainerViewLayout(size: placeholderFrame.size, metrics: layout.metrics, deviceMetrics: layout.deviceMetrics, intrinsicInsets: .zero, safeInsets: layout.safeInsets, additionalInsets: .zero, statusBarHeight: layout.statusBarHeight, inputHeight: nil, inputHeightIsInteractivellyChanging: false, inVoiceOver: layout.inVoiceOver, presentedInFormSheet: layout.presentedInFormSheet)
+            } else {
+                placeholderLayout = layout
+            }
+            placeholderNode.clipsToBounds = wegramLayout != nil
+            placeholderNode.update(layout: placeholderLayout, theme: self.presentationData.theme, strings: self.presentationData.strings, transition: placeholderTransition)
             placeholderTransition.updateFrame(node: placeholderNode, frame: placeholderFrame)
+            backgroundNode.update(size: placeholderFrame.size, transition: placeholderTransition)
+            placeholderTransition.updateFrame(node: backgroundNode, frame: placeholderFrame)
         } else {
             if let placeholderNode = self.placeholderNode {
                 self.placeholderNode = nil
@@ -1507,7 +1608,7 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                 }
             }
                         
-            if let _ = self.searchContainerNode {
+            if self.controller?.usesWegramSelection != true, let _ = self.searchContainerNode {
                 let searchInput: ComponentView<Empty>
                 if let current = self.searchInput {
                     searchInput = current
@@ -1652,8 +1753,133 @@ final class LocationPickerControllerNode: ViewControllerTracingNode, CLLocationM
                 }
             }
         }
+        self.updateWegramControls(layout: layout, transition: transition)
     }
-    
+
+    private func updateWegramControls(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        let enabled = self.controller?.usesWegramSelection == true
+        for node in [self.wegramCancelButton, self.wegramSendButton] { node.isHidden = !enabled }
+        self.wegramSearchBar?.isHidden = !enabled
+        self.wegramLocationControls.isHidden = !enabled
+        guard enabled else { return }
+        for view in [self.cancelButton.view, self.searchButton.view, self.title.view, self.subtitle.view, self.sendButton?.view] { view?.isHidden = true }
+        let foreground = UIColor.white
+        let cancelTitle = self.presentationData.strings.Common_Cancel
+        let sendTitle = self.presentationData.strings.MediaPicker_Send
+        let cancelWidth = min(110, max(64, ceil((cancelTitle as NSString).size(withAttributes: [.font: Font.regular(17)]).width) + 16))
+        let sendWidth = min(130, max(64, ceil((sendTitle as NSString).size(withAttributes: [.font: Font.semibold(17)]).width) + 24))
+        self.wegramCancelButton.setTitle(cancelTitle, with: Font.regular(17), with: foreground, for: .normal)
+        self.wegramSendButton.setTitle(sendTitle, with: Font.semibold(17), with: .white, for: .normal)
+        self.wegramCancelButton.accessibilityLabel = self.presentationData.strings.Common_Cancel
+        self.wegramSendButton.accessibilityLabel = self.presentationData.strings.MediaPicker_Send
+        let canSend = self.controller?.canConfirmWegramSelection == true
+        self.wegramSendButton.isEnabled = canSend
+        self.wegramSendBackground.backgroundColor = UIColor(rgb: 0x07c160).withAlphaComponent(canSend ? 1 : 0.45)
+        self.wegramSendBackground.frame = CGRect(x: 0, y: 5, width: sendWidth, height: 34)
+        let top = max(16, (layout.statusBarHeight ?? 0) + 4)
+        self.wegramCancelButton.frame = CGRect(x: layout.safeInsets.left + 10, y: top, width: cancelWidth, height: 44)
+        self.wegramSendButton.frame = CGRect(x: layout.size.width - layout.safeInsets.right - 16 - sendWidth, y: top, width: sendWidth, height: 44)
+        self.bottomEdgeEffectView.isHidden = true
+        self.topEdgeEffectView.isHidden = true
+        if self.wegramTopShade.superview == nil { self.headerNode.view.addSubview(self.wegramTopShade) }
+        self.headerNode.view.bringSubviewToFront(self.wegramTopShade)
+        transition.updateFrame(view: self.wegramTopShade, frame: CGRect(x: 0, y: 0, width: self.headerNode.bounds.width, height: min(self.headerNode.bounds.height, (self.validLayout?.navigationHeight ?? 0) + 52)))
+        if self.wegramLocationControls.superview == nil { self.headerNode.view.addSubview(self.wegramLocationControls) }
+        self.headerNode.view.bringSubviewToFront(self.wegramLocationControls)
+        let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        self.wegramLocationControls.update(mapSize: self.headerNode.bounds.size, safeInsets: layout.safeInsets, navigationHeight: self.validLayout?.navigationHeight ?? 0, dark: self.presentationData.theme.overallDarkAppearance, locateTitle: chinese ? "回到我的位置" : "Show My Location", moreTitle: self.presentationData.strings.Common_More)
+        if let searchContainerNode = self.searchContainerNode { self.view.bringSubviewToFront(searchContainerNode.view) }
+        let searchBar: SearchBarNode
+        if let current = self.wegramSearchBar {
+            searchBar = current
+        } else {
+            searchBar = SearchBarNode(theme: SearchBarNodeTheme(theme: self.presentationData.theme, hasSeparator: false), presentationTheme: self.presentationData.theme, strings: self.presentationData.strings, usesWegramAppearance: true, wegramContentBackground: true)
+            searchBar.placeholderString = NSAttributedString(string: self.presentationData.strings.Map_Search, font: Font.regular(17), textColor: self.presentationData.theme.rootController.navigationSearchBar.inputPlaceholderTextColor)
+            searchBar.focusUpdated = { [weak self] focused in
+                guard let self, focused, self.searchContainerNode == nil else { return }
+                self.controller?.searchPressed()
+            }
+            searchBar.textUpdated = { [weak self] query, _ in self?.controller?.updateSearchQuery(query) }
+            searchBar.cancel = { [weak self] in self?.controller?.dismissSearchPressed() }
+            self.wegramSearchBar = searchBar
+            self.addSubnode(searchBar)
+        }
+        searchBar.hasCancelButton = self.searchContainerNode != nil
+        let searchFrame = WegramLocationPickerLayout(size: layout.size, bottomInset: max(layout.insets(options: .input).bottom, layout.additionalInsets.bottom), navigationHeight: self.validLayout?.navigationHeight ?? 0).search
+        transition.updateFrame(node: searchBar, frame: searchFrame)
+        searchBar.updateLayout(boundingSize: searchFrame.size, leftInset: layout.safeInsets.left, rightInset: layout.safeInsets.right, transition: transition)
+        self.view.bringSubviewToFront(searchBar.view)
+        for node in [self.wegramCancelButton, self.wegramSendButton] {
+            if node.supernode == nil { self.addSubnode(node) }
+            self.view.bringSubviewToFront(node.view)
+        }
+    }
+
+    func presentWegramMore() {
+        guard self.controller?.canOpenWegramOptions == true, let controller = self.controller, self.view.window != nil, self.wegramMoreSheet == nil else { return }
+        self.deactivateInput()
+        let data = self.presentationData
+        var options: [(WegramLocationMenuAction, String)] = [(.map, data.strings.Map_Map), (.satellite, data.strings.Map_Satellite), (.hybrid, data.strings.Map_Hybrid), (.places, data.strings.Map_PlacesInThisArea)]
+        if case .share(_, _, true) = self.mode { options.append((.live, data.strings.Map_ShareLiveLocation)) }
+        let selected: WegramLocationMenuAction
+        switch self.state.mapMode {
+        case .map: selected = .map
+        case .satellite: selected = .satellite
+        case .hybrid: selected = .hybrid
+        }
+        let menu = WegramLocationMenu(theme: ActionSheetControllerTheme(wegramTheme: data.theme, fontSize: data.listsFontSize), options: options, selected: selected, cancelTitle: data.strings.Common_Cancel, available: { [weak self] action in
+            guard let self, self.view.window != nil, self.controller?.canOpenWegramOptions == true else { return false }
+            switch action {
+            case .share: return false
+            case .places: return self.headerNode.canShowPlacesInThisArea
+            case .live:
+                guard case .share(_, _, true) = self.mode else { return false }
+                return self.wegramLiveLocation != nil
+            default: return true
+            }
+        }, perform: { [weak self] action in
+            guard let self else { return }
+            switch action {
+            case .share: break
+            case .map: self.interaction.updateMapMode(.map)
+            case .satellite: self.interaction.updateMapMode(.satellite)
+            case .hybrid: self.interaction.updateMapMode(.hybrid)
+            case .places: self.interaction.showPlacesInThisArea()
+            case .live:
+                if let coordinate = self.wegramLiveLocation { self.interaction.sendLiveLocation(coordinate) }
+            }
+        })
+        self.wegramMoreSheet = menu.controller
+        controller.present(menu.controller, in: .window(.root))
+    }
+
+    @objc private func wegramCancelPressed() { self.controller?.cancelWegramSelection() }
+    @objc private func wegramSendPressed() { self.controller?.confirmWegramSelection() }
+
+    func selectWegramLocation(_ coordinate: CLLocationCoordinate2D, name: String?, address: MapGeoAddress?) {
+        self.controller?.dismissSearchPressed()
+        self.updateState { state in
+            var state = state
+            state.selectedLocation = .location(coordinate, address?.street, false)
+            state.street = name
+            state.geoAddress = address
+            state.displayingMapModeOptions = false
+            state.searchingVenuesAround = false
+            return state
+        }
+    }
+
+    func selectWegramVenue(_ venue: TelegramMediaMap, queryId: Int64?, resultId: String?) {
+        self.controller?.dismissSearchPressed()
+        self.updateState { state in
+            var state = state
+            state.selectedLocation = .venue(venue, queryId, resultId)
+            state.displayingMapModeOptions = false
+            state.searchingVenuesAround = false
+            return state
+        }
+    }
+
     func goToUserLocation() {
         guard let controller = self.controller else {
             return

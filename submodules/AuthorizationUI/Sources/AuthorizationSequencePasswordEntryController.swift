@@ -14,6 +14,7 @@ final class AuthorizationSequencePasswordEntryController: ViewController {
     
     private var validLayout: ContainerViewLayout?
     
+    private let usesWegramAppearance: Bool
     private let sharedContext: SharedAccountContext
     private let presentationData: PresentationData
     
@@ -43,11 +44,12 @@ final class AuthorizationSequencePasswordEntryController: ViewController {
         }
     }
     
-    init(sharedContext: SharedAccountContext, presentationData: PresentationData, back: @escaping () -> Void) {
+    init(sharedContext: SharedAccountContext, presentationData: PresentationData, usesWegramAppearance: Bool = false, back: @escaping () -> Void) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.sharedContext = sharedContext
         self.presentationData = presentationData
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: AuthorizationSequenceController.navigationBarTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: usesWegramAppearance ? NavigationBarTheme(wegramTheme: presentationData.theme) : AuthorizationSequenceController.navigationBarTheme(presentationData.theme), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
         
         self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
         
@@ -68,7 +70,7 @@ final class AuthorizationSequencePasswordEntryController: ViewController {
     }
     
     override public func loadDisplayNode() {
-        self.displayNode = AuthorizationSequencePasswordEntryControllerNode(strings: self.presentationData.strings, theme: self.presentationData.theme)
+        self.displayNode = AuthorizationSequencePasswordEntryControllerNode(strings: self.presentationData.strings, theme: self.presentationData.theme, usesWegramAppearance: self.usesWegramAppearance)
         self.displayNodeDidLoad()
         
         self.controllerNode.view.disableAutomaticKeyboardHandling = [.forward, .backward]
@@ -101,6 +103,10 @@ final class AuthorizationSequencePasswordEntryController: ViewController {
     }
     
     func updateNavigationItems() {
+        if self.usesWegramAppearance {
+            self.navigationItem.rightBarButtonItem = nil
+            return
+        }
         guard let layout = self.validLayout, layout.size.width < 360.0 else {
             return
         }

@@ -198,7 +198,7 @@ class ContactsAddItemNode: ListViewItemNode {
             
             let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: titleAttributedString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(0.0, params.width - leftInset - rightInset), height: CGFloat.infinity), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
             
-            let nodeLayout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: 50.0), insets: UIEdgeInsets(top: firstWithHeader ? 29.0 : 0.0, left: 0.0, bottom: 0.0, right: 0.0))
+            let nodeLayout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: 50.0), insets: UIEdgeInsets(top: firstWithHeader ? max(29, item.header?.height ?? 29) : 0.0, left: 0.0, bottom: 0.0, right: 0.0))
             
             let titleFrame = CGRect(origin: CGPoint(x: leftInset, y: 14.0), size: titleLayout.size)
 
@@ -239,7 +239,8 @@ class ContactsAddItemNode: ListViewItemNode {
     
     override func layoutHeaderAccessoryItemNode(_ accessoryItemNode: ListViewAccessoryItemNode) {
         let bounds = self.bounds
-        accessoryItemNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -29.0), size: CGSize(width: bounds.size.width, height: 29.0))
+        let headerHeight = max(29, self.layoutParams?.0.header?.height ?? 29)
+        accessoryItemNode.frame = CGRect(origin: CGPoint(x: 0.0, y: -headerHeight), size: CGSize(width: bounds.size.width, height: headerHeight))
     }
     
     override func animateInsertion(_ currentTimestamp: Double, duration: Double, options: ListViewItemAnimationOptions) {

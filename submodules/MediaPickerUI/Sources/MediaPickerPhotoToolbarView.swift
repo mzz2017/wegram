@@ -9,6 +9,7 @@ import GlassBackgroundComponent
 import GlassBarButtonComponent
 import PlainButtonComponent
 import BundleIconComponent
+import AttachmentUI
 
 private let toolbarButtonSide: CGFloat = 44.0
 private let toolbarSideButtonSide: CGFloat = 44.0
@@ -81,27 +82,20 @@ private final class MediaPickerPhotoToolbarImageCache {
     }
 }
 
-private func generateQualityIcon(isPhoto: Bool, highQuality: Bool, preset: Int, color: UIColor) -> UIImage? {
-    let label: String
-    if isPhoto {
-        label = highQuality ? "HD" : "SD"
-    } else {
-        switch preset {
-        case 1:
-            label = "240"
-        case 2:
-            label = "360"
-        case 3:
-            label = "480"
-        case 4:
-            label = "720"
-        case 5:
-            label = "HD"
-        default:
-            label = "480"
-        }
+private func qualityTitle(isPhoto: Bool, highQuality: Bool, preset: Int) -> String {
+    if isPhoto { return highQuality ? "HD" : "SD" }
+    switch preset {
+    case 1: return "240"
+    case 2: return "360"
+    case 3: return "480"
+    case 4: return "720"
+    case 5: return "HD"
+    default: return "480"
     }
+}
 
+private func generateQualityIcon(isPhoto: Bool, highQuality: Bool, preset: Int, color: UIColor) -> UIImage? {
+    let label = qualityTitle(isPhoto: isPhoto, highQuality: highQuality, preset: preset)
     let size = CGSize(width: isPhoto ? 24.0 : 28.0, height: 24.0)
     let lineWidth = 2.0 - UIScreenPixel
     let rect = CGRect(origin: .zero, size: size).insetBy(dx: lineWidth / 2.0, dy: lineWidth / 2.0)
@@ -198,6 +192,7 @@ private func generateTimerIcon(value: Int, color: UIColor) -> UIImage? {
 private final class MediaPickerPhotoToolbarComponent: Component {
     let context: AccountContext
     let solidBackground: Bool
+    let usesWegramAppearance: Bool
     let backButtonType: TGPhotoEditorBackButton
     let doneButtonType: TGPhotoEditorDoneButton
     let currentTabs: TGPhotoEditorTab
@@ -223,10 +218,16 @@ private final class MediaPickerPhotoToolbarComponent: Component {
     let donePressed: (() -> Void)?
     let doneLongPressed: ((Any?) -> Void)?
     let tabPressed: ((TGPhotoEditorTab) -> Void)?
+    let canPerformActions: () -> Bool
+    let previewState: (original: Bool, originalAvailable: Bool, count: Int, itemId: String?)?
+    let caption: (title: String, action: () -> Void)?
+    let selectedPhotos: (title: String, action: () -> Void)?
+    let toggleOriginal: (() -> Void)?
 
     init(
         context: AccountContext,
         solidBackground: Bool,
+        usesWegramAppearance: Bool,
         backButtonType: TGPhotoEditorBackButton,
         doneButtonType: TGPhotoEditorDoneButton,
         currentTabs: TGPhotoEditorTab,
@@ -251,10 +252,16 @@ private final class MediaPickerPhotoToolbarComponent: Component {
         cancelPressed: (() -> Void)?,
         donePressed: (() -> Void)?,
         doneLongPressed: ((Any?) -> Void)?,
-        tabPressed: ((TGPhotoEditorTab) -> Void)?
+        tabPressed: ((TGPhotoEditorTab) -> Void)?,
+        canPerformActions: @escaping () -> Bool,
+        previewState: (original: Bool, originalAvailable: Bool, count: Int, itemId: String?)?,
+        caption: (title: String, action: () -> Void)?,
+        selectedPhotos: (title: String, action: () -> Void)?,
+        toggleOriginal: (() -> Void)?
     ) {
         self.context = context
         self.solidBackground = solidBackground
+        self.usesWegramAppearance = usesWegramAppearance
         self.backButtonType = backButtonType
         self.doneButtonType = doneButtonType
         self.currentTabs = currentTabs
@@ -280,12 +287,21 @@ private final class MediaPickerPhotoToolbarComponent: Component {
         self.donePressed = donePressed
         self.doneLongPressed = doneLongPressed
         self.tabPressed = tabPressed
+        self.canPerformActions = canPerformActions
+        self.previewState = previewState
+        self.caption = caption
+        self.selectedPhotos = selectedPhotos
+        self.toggleOriginal = toggleOriginal
     }
 
     static func ==(lhs: MediaPickerPhotoToolbarComponent, rhs: MediaPickerPhotoToolbarComponent) -> Bool {
         if lhs.context !== rhs.context {
             return false
         }
+        if lhs.usesWegramAppearance != rhs.usesWegramAppearance { return false }
+        if lhs.caption?.title != rhs.caption?.title { return false }
+        if lhs.selectedPhotos?.title != rhs.selectedPhotos?.title { return false }
+        if lhs.previewState?.original != rhs.previewState?.original || lhs.previewState?.originalAvailable != rhs.previewState?.originalAvailable || lhs.previewState?.count != rhs.previewState?.count || lhs.previewState?.itemId != rhs.previewState?.itemId { return false }
         if lhs.solidBackground != rhs.solidBackground {
             return false
         }
@@ -361,6 +377,9 @@ private final class MediaPickerPhotoToolbarComponent: Component {
         private let doneButtonContextView = ContextControllerSourceView()
 
         private let buttonsBackgroundView = GlassBackgroundView()
+        private let plainButtonsContainer = UIScrollView()
+        private let doneBackgroundView = UIView()
+        private let previewControls = WegramPhotoPreviewControlsView()
         private let selectionView = UIView()
         private let infoLabel = UILabel()
         private let imageCache = MediaPickerPhotoToolbarImageCache()
@@ -377,6 +396,20 @@ private final class MediaPickerPhotoToolbarComponent: Component {
 
             self.clipsToBounds = false
             self.addSubview(self.buttonsBackgroundView)
+            self.addSubview(self.plainButtonsContainer)
+            self.addSubview(self.previewControls)
+            self.previewControls.isHidden = true
+            self.previewControls.toggleOriginal = { [weak self] in
+                guard let self, let current = self.component, current.canPerformActions(), current.usesWegramAppearance, !current.solidBackground, !current.allButtonsHidden, !current.centerButtonsHidden, current.editButtonsEnabled, current.previewState?.originalAvailable == true else { return }
+                current.toggleOriginal?()
+            }
+            self.plainButtonsContainer.contentInsetAdjustmentBehavior = .never
+            self.plainButtonsContainer.showsHorizontalScrollIndicator = false
+            self.plainButtonsContainer.showsVerticalScrollIndicator = false
+            self.plainButtonsContainer.delaysContentTouches = false
+            self.doneBackgroundView.isUserInteractionEnabled = false
+            self.doneBackgroundView.backgroundColor = UIColor(rgb: 0x07c160)
+            self.doneBackgroundView.layer.cornerRadius = 4
 
             self.selectionView.backgroundColor = UIColor(rgb: 0xffffff, alpha: 0.15)
             self.selectionView.isUserInteractionEnabled = false
@@ -422,6 +455,9 @@ private final class MediaPickerPhotoToolbarComponent: Component {
         }
 
         fileprivate func viewForTab(_ tab: TGPhotoEditorTab) -> UIView? {
+            if let component = self.component, component.usesWegramAppearance, !component.solidBackground, component.previewState != nil, component.currentTabs.contains(tab) {
+                return self.previewControls.editButton
+            }
             return self.centerButtonViews[tab.rawValue]?.view
         }
 
@@ -434,13 +470,17 @@ private final class MediaPickerPhotoToolbarComponent: Component {
 
             //let presentationData = component.context.sharedContext.currentPresentationData.with { $0 }
             let accentColor = UIColor(rgb: 0xffd300) //presentationData.theme.list.itemAccentColor
-            let selectedIconColor = UIColor.white //(rgb: 0xffd300)
+            let selectedIconColor = component.usesWegramAppearance ? UIColor(rgb: 0x07c160) : UIColor.white
 
             self.backgroundColor = .clear //component.solidBackground ? UIColor(rgb: 0x000000, alpha: 0.55) : .clear
 
-            let cancelSize = self.cancelButton.update(
-                transition: transition,
-                component: AnyComponent(
+            let presentationData = component.context.sharedContext.currentPresentationData.with { $0 }
+            let cancelIcon = AnyComponent<Empty>(BundleIconComponent(name: component.backButtonType == TGPhotoEditorBackButtonBack ? "Navigation/Back" : "Navigation/Close", tintColor: .white))
+            let cancelComponent: AnyComponent<Empty>
+            if component.usesWegramAppearance {
+                cancelComponent = AnyComponent(PlainButtonComponent(content: cancelIcon, minSize: CGSize(width: toolbarButtonSide, height: toolbarButtonSide), action: { [weak self] in self?.cancelPressed?() }, isEnabled: !component.cancelDoneButtonsHidden && !component.allButtonsHidden, animateScale: false))
+            } else {
+                cancelComponent = AnyComponent(
                     GlassBarButtonComponent(
                         size: CGSize(width: toolbarButtonSide, height: toolbarButtonSide),
                         backgroundColor: nil,
@@ -461,10 +501,9 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                             self?.cancelPressed?()
                         }
                     )
-                ),
-                environment: {},
-                containerSize: CGSize(width: toolbarButtonSide, height: toolbarButtonSide)
-            )
+                )
+            }
+            let cancelSize = self.cancelButton.update(transition: transition, component: cancelComponent, environment: {}, containerSize: CGSize(width: toolbarButtonSide, height: toolbarButtonSide))
 
             let doneIconName: String
             let doneBackgroundColor: UIColor? = UIColor(rgb: 0x0088ff)
@@ -482,9 +521,31 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                 doneIconName = "Navigation/Done"
             }
             
-            let doneSize = self.doneButton.update(
-                transition: transition,
-                component: AnyComponent(
+            let isWegramPreview = component.usesWegramAppearance && !component.solidBackground && component.previewState != nil
+            let doneFontSize: CGFloat = isWegramPreview ? 14 : 17
+            let doneComponent: AnyComponent<Empty>
+            if component.usesWegramAppearance {
+                let content: AnyComponent<Empty>
+                if component.doneButtonType == TGPhotoEditorDoneButtonSchedule || availableSize.width <= availableSize.height {
+                    content = wegramPhotoToolbarDoneContent(iconName: doneIconName, title: nil)
+                    doneWidth = availableSize.width > availableSize.height ? 72 : 44
+                } else {
+                    var title = component.doneButtonType == TGPhotoEditorDoneButtonSend ? presentationData.strings.MediaPicker_Send : presentationData.strings.Common_Done
+                    if component.doneButtonType == TGPhotoEditorDoneButtonSend, !component.solidBackground, let preview = component.previewState, preview.count > 0 {
+                        title += "(\(preview.count))"
+                    }
+                    let textWidth = max(72, ceil((title as NSString).size(withAttributes: [.font: Font.medium(doneFontSize)]).width) + 24)
+                    if textWidth > availableSize.width - 104 {
+                        content = wegramPhotoToolbarDoneContent(iconName: doneIconName, title: nil)
+                        doneWidth = 44
+                    } else {
+                        content = wegramPhotoToolbarDoneContent(iconName: doneIconName, title: title, fontSize: doneFontSize)
+                        doneWidth = textWidth
+                    }
+                }
+                doneComponent = AnyComponent(PlainButtonComponent(content: content, minSize: CGSize(width: doneWidth, height: toolbarButtonSide), action: { [weak self] in self?.donePressed?() }, isEnabled: component.doneButtonEnabled && !component.cancelDoneButtonsHidden && !component.allButtonsHidden, animateScale: false))
+            } else {
+                doneComponent = AnyComponent(
                     GlassBarButtonComponent(
                         size: CGSize(width: doneWidth, height: toolbarButtonSide),
                         backgroundColor: doneBackgroundColor,
@@ -505,10 +566,9 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                             self?.donePressed?()
                         }
                     )
-                ),
-                environment: {},
-                containerSize: CGSize(width: doneWidth, height: toolbarButtonSide)
-            )
+                )
+            }
+            let doneSize = self.doneButton.update(transition: transition, component: doneComponent, environment: {}, containerSize: CGSize(width: doneWidth, height: toolbarButtonSide))
             
 //            let doneContent: AnyComponentWithIdentity<Empty>
 //            let doneFixedSize: CGSize?
@@ -534,11 +594,17 @@ private final class MediaPickerPhotoToolbarComponent: Component {
 //                transition: transition
 //            )
 
-            let sideAlpha = component.allButtonsHidden ? 0.0 : 1.0
+            let sideAlpha = component.allButtonsHidden || (component.usesWegramAppearance && component.cancelDoneButtonsHidden) ? 0.0 : 1.0
             let sideFrames = self.sideButtonFrames(availableSize: availableSize, cancelSize: cancelSize, doneSize: doneSize, component: component)
             if let cancelButtonView = self.cancelButton.view {
+                cancelButtonView.isHidden = component.usesWegramAppearance && !component.solidBackground
                 if cancelButtonView.superview == nil {
                     self.addSubview(cancelButtonView)
+                }
+                if component.usesWegramAppearance {
+                    cancelButtonView.isAccessibilityElement = true
+                    cancelButtonView.accessibilityLabel = component.backButtonType == TGPhotoEditorBackButtonBack ? presentationData.strings.Common_Back : presentationData.strings.Common_Cancel
+                    cancelButtonView.accessibilityTraits = component.cancelDoneButtonsHidden || component.allButtonsHidden ? [.button, .notEnabled] : .button
                 }
                 transition.setAlpha(view: cancelButtonView, alpha: sideAlpha)
                 transition.setFrame(view: cancelButtonView, frame: sideFrames.cancel)
@@ -549,6 +615,22 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                 }
                 if doneButtonView.superview !== self.doneButtonContextView {
                     self.doneButtonContextView.addSubview(doneButtonView)
+                }
+                if component.usesWegramAppearance {
+                    doneButtonView.isAccessibilityElement = true
+                    let chinese = presentationData.strings.baseLanguageCode.hasPrefix("zh")
+                    doneButtonView.accessibilityLabel = component.doneButtonType == TGPhotoEditorDoneButtonSchedule ? (chinese ? "定时发送" : "Schedule Message") : (component.doneButtonType == TGPhotoEditorDoneButtonSend ? presentationData.strings.MediaPicker_Send : presentationData.strings.Common_Done)
+                    doneButtonView.accessibilityTraits = component.doneButtonEnabled ? .button : [.button, .notEnabled]
+                    doneButtonView.accessibilityCustomActions = component.doneLongPressed == nil ? nil : [UIAccessibilityCustomAction(name: chinese ? "发送选项" : "Send Options", actionHandler: { [weak self] _ in
+                        guard let self, self.window != nil, let current = self.component, current.canPerformActions(), current.doneButtonEnabled, !current.cancelDoneButtonsHidden, !current.allButtonsHidden, let action = self.doneLongPressed else { return false }
+                        action(self.doneButtonContextView)
+                        return true
+                    })]
+                }
+                self.doneBackgroundView.isHidden = !component.usesWegramAppearance
+                if component.usesWegramAppearance {
+                    doneButtonView.insertSubview(self.doneBackgroundView, at: 0)
+                    self.doneBackgroundView.frame = CGRect(origin: .zero, size: sideFrames.done.size).insetBy(dx: 0, dy: 6)
                 }
                 self.doneButtonContextView.targetViewForActivationProgress = doneButtonView
                 self.doneButtonContextView.isGestureEnabled = component.doneLongPressed != nil && component.doneButtonEnabled && !component.cancelDoneButtonsHidden && !component.allButtonsHidden
@@ -585,7 +667,7 @@ private final class MediaPickerPhotoToolbarComponent: Component {
         }
 
         private func sideButtonFrames(availableSize: CGSize, cancelSize: CGSize, doneSize: CGSize, component: MediaPickerPhotoToolbarComponent) -> (cancel: CGRect, done: CGRect) {
-            let sideInset: CGFloat = 26.0
+            let sideInset: CGFloat = component.usesWegramAppearance && !component.solidBackground && component.previewState != nil ? 16.0 : 26.0
             if availableSize.width > availableSize.height {
                 let cancelFrame = CGRect(origin: CGPoint(x: sideInset, y: 0.0), size: cancelSize)
                 let doneFrame: CGRect
@@ -605,6 +687,11 @@ private final class MediaPickerPhotoToolbarComponent: Component {
 
         private func updateCenterButtons(component: MediaPickerPhotoToolbarComponent, availableSize: CGSize, doneSize: CGSize, selectedIconColor: UIColor, accentColor: UIColor, transition: ComponentTransition) {
             let tabs = toolbarTabOrder.filter { component.currentTabs.contains($0) }
+            self.buttonsBackgroundView.isHidden = component.usesWegramAppearance
+            self.plainButtonsContainer.isHidden = !component.usesWegramAppearance
+            let buttonsContainer = component.usesWegramAppearance ? self.plainButtonsContainer : self.buttonsBackgroundView.contentView
+            let usesPreviewControls = component.usesWegramAppearance && !component.solidBackground && component.previewState != nil
+            self.previewControls.isHidden = !usesPreviewControls
             let visibleRawValues = Set(tabs.map { $0.rawValue })
 
             for (rawValue, buttonView) in Array(self.centerButtonViews) {
@@ -618,14 +705,67 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                 }
             }
 
+            if usesPreviewControls, let preview = component.previewState {
+                self.buttonsBackgroundView.isHidden = true
+                self.plainButtonsContainer.isHidden = true
+                let chinese = component.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("zh")
+                let sourceItemId = preview.itemId
+                var actions = tabs.map { tab -> UIAction in
+                    let disabled = component.disabledTabs.contains(tab) || !component.editButtonsEnabled || component.editButtonsHidden
+                    var title = self.tabTitle(tab, chinese: chinese)
+                    if tab == .qualityTab {
+                        title += " · " + qualityTitle(isPhoto: component.qualityIsPhoto, highQuality: component.qualityHighQuality, preset: component.qualityPreset)
+                    } else if tab == .timerTab {
+                        title += " · " + (component.timerValue == 0 ? (chinese ? "关闭" : "Off") : (chinese ? "\(component.timerValue)秒" : "\(component.timerValue) seconds"))
+                    }
+                    return UIAction(title: title, attributes: disabled ? .disabled : [], state: component.highlightedTabs.contains(tab) ? .on : .off, handler: { [weak self] _ in
+                        guard let self, let current = self.component, current.canPerformActions(), sourceItemId != nil, current.previewState?.itemId == sourceItemId, current.usesWegramAppearance, !current.solidBackground, current.currentTabs.contains(tab), !current.disabledTabs.contains(tab), current.editButtonsEnabled, !current.editButtonsHidden, !current.allButtonsHidden, !current.centerButtonsHidden else { return }
+                        self.tabPressed?(tab)
+                    })
+                }
+                if let caption = component.caption {
+                    actions.append(UIAction(title: caption.title, image: UIImage(systemName: "text.bubble"), handler: { [weak self] _ in
+                        guard let self, let current = self.component, current.canPerformActions(), sourceItemId != nil, current.previewState?.itemId == sourceItemId, current.usesWegramAppearance, !current.solidBackground, !current.allButtonsHidden, !current.centerButtonsHidden else { return }
+                        current.caption?.action()
+                    }))
+                }
+                if let selectedPhotos = component.selectedPhotos {
+                    actions.append(UIAction(title: selectedPhotos.title, image: UIImage(systemName: "photo.on.rectangle"), handler: { [weak self] _ in
+                        guard let self, let current = self.component, current.canPerformActions(), current.usesWegramAppearance, !current.solidBackground, !current.allButtonsHidden, !current.centerButtonsHidden else { return }
+                        current.selectedPhotos?.action()
+                    }))
+                }
+                self.previewControls.update(original: preview.original, available: preview.originalAvailable, enabled: component.editButtonsEnabled, fontSize: 17, editTitle: chinese ? "编辑" : "Edit", originalTitle: chinese ? "原图" : "Original", menu: UIMenu(children: actions), selectionManagementAvailable: component.selectedPhotos != nil || component.caption != nil)
+                let sides = self.sideButtonFrames(availableSize: availableSize, cancelSize: CGSize(width: 44, height: 44), doneSize: doneSize, component: component)
+                let layout = WegramPhotoEditorToolbarLayout(size: availableSize, cancelFrame: nil, doneFrame: sides.done, count: 0)
+                transition.setFrame(view: self.previewControls, frame: layout.viewport)
+                self.previewControls.updateLayout(size: layout.viewport.size, originalCenter: availableSize.width / 2 - layout.viewport.minX)
+                let hidden = component.allButtonsHidden || component.centerButtonsHidden
+                self.previewControls.isHidden = hidden
+                self.previewControls.isUserInteractionEnabled = !hidden && (component.editButtonsEnabled || component.selectedPhotos != nil || component.caption != nil)
+                transition.setAlpha(view: self.previewControls, alpha: hidden ? 0 : 1)
+                return
+            }
+
             guard !tabs.isEmpty else {
                 transition.setAlpha(view: self.buttonsBackgroundView, alpha: 0.0)
+                transition.setAlpha(view: self.plainButtonsContainer, alpha: 0.0)
                 transition.setAlpha(view: self.selectionView, alpha: 0.0)
                 self.buttonsBackgroundView.isUserInteractionEnabled = false
                 return
             }
 
-            let buttonFrames = self.centerButtonFrames(tabs: tabs, availableSize: availableSize, doneSize: doneSize, component: component)
+            let flatLayout: WegramPhotoEditorToolbarLayout?
+            let buttonFrames: [UInt: CGRect]
+            if component.usesWegramAppearance {
+                let sides = self.sideButtonFrames(availableSize: availableSize, cancelSize: CGSize(width: 44, height: 44), doneSize: doneSize, component: component)
+                let layout = WegramPhotoEditorToolbarLayout(size: availableSize, cancelFrame: sides.cancel, doneFrame: sides.done, count: tabs.count)
+                flatLayout = layout
+                buttonFrames = Dictionary(uniqueKeysWithValues: zip(tabs, layout.buttons).map { ($0.rawValue, $1.offsetBy(dx: layout.viewport.minX, dy: layout.viewport.minY)) })
+            } else {
+                flatLayout = nil
+                buttonFrames = self.centerButtonFrames(tabs: tabs, availableSize: availableSize, doneSize: doneSize, component: component)
+            }
             var backgroundFrame = CGRect.null
             for tab in tabs {
                 if let frame = buttonFrames[tab.rawValue] {
@@ -634,6 +774,7 @@ private final class MediaPickerPhotoToolbarComponent: Component {
             }
             if backgroundFrame.isNull {
                 transition.setAlpha(view: self.buttonsBackgroundView, alpha: 0.0)
+                transition.setAlpha(view: self.plainButtonsContainer, alpha: 0.0)
                 transition.setAlpha(view: self.selectionView, alpha: 0.0)
                 self.buttonsBackgroundView.isUserInteractionEnabled = false
                 return
@@ -645,20 +786,34 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                 height: ceil(backgroundFrame.height)
             )
 
+            if let flatLayout {
+                backgroundFrame = flatLayout.viewport
+                self.plainButtonsContainer.contentSize = flatLayout.contentSize
+            }
             let centerHidden = component.allButtonsHidden || component.centerButtonsHidden || component.editButtonsHidden
             let centerAlpha: CGFloat = centerHidden ? 0.0 : (component.editButtonsEnabled ? 1.0 : 0.2)
             self.buttonsBackgroundView.isUserInteractionEnabled = !centerHidden && component.editButtonsEnabled
             transition.setAlpha(view: self.buttonsBackgroundView, alpha: centerAlpha)
             transition.setFrame(view: self.buttonsBackgroundView, frame: backgroundFrame)
+            transition.setFrame(view: self.plainButtonsContainer, frame: backgroundFrame)
+            if let flatLayout {
+                let offset = self.plainButtonsContainer.contentOffset
+                self.plainButtonsContainer.contentOffset = CGPoint(x: max(0, min(offset.x, flatLayout.contentSize.width - flatLayout.viewport.width)), y: max(0, min(offset.y, flatLayout.contentSize.height - flatLayout.viewport.height)))
+            }
+            transition.setAlpha(view: self.plainButtonsContainer, alpha: centerAlpha)
+            self.plainButtonsContainer.isUserInteractionEnabled = !centerHidden && component.editButtonsEnabled
             
             let minSide = min(backgroundFrame.width, backgroundFrame.height)
-            self.buttonsBackgroundView.update(size: backgroundFrame.size, cornerRadius: minSide * 0.5, isDark: true, tintColor: .init(kind: .panel), isInteractive: true, isVisible: !centerHidden, transition: transition)
-
-            if self.selectionView.superview == nil {
-                self.buttonsBackgroundView.contentView.insertSubview(self.selectionView, at: 0)
-            } else {
-                self.buttonsBackgroundView.contentView.sendSubviewToBack(self.selectionView)
+            if !component.usesWegramAppearance {
+                self.buttonsBackgroundView.update(size: backgroundFrame.size, cornerRadius: minSide * 0.5, isDark: true, tintColor: .init(kind: .panel), isInteractive: true, isVisible: !centerHidden, transition: transition)
             }
+
+            if self.selectionView.superview !== buttonsContainer {
+                buttonsContainer.insertSubview(self.selectionView, at: 0)
+            } else {
+                buttonsContainer.sendSubviewToBack(self.selectionView)
+            }
+            self.selectionView.isHidden = component.usesWegramAppearance
 
             var selectionFrame: CGRect?
 
@@ -740,8 +895,23 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                 )
 
                 if let view = buttonView.view {
-                    if view.superview == nil {
-                        self.buttonsBackgroundView.contentView.addSubview(view)
+                    if view.superview !== buttonsContainer {
+                        buttonsContainer.addSubview(view)
+                    }
+                    if component.usesWegramAppearance {
+                        let chinese = component.context.sharedContext.currentPresentationData.with { $0 }.strings.baseLanguageCode.hasPrefix("zh")
+                        view.isAccessibilityElement = true
+                        view.accessibilityLabel = self.tabTitle(tab, chinese: chinese)
+                        view.accessibilityValue = nil
+                        if tab == .qualityTab, component.qualityIsPhoto {
+                            view.accessibilityValue = component.qualityHighQuality ? "HD" : "SD"
+                        } else if tab == .timerTab {
+                            view.accessibilityValue = component.timerValue == 0 ? (chinese ? "关闭" : "Off") : (chinese ? "\(component.timerValue)秒" : "\(component.timerValue) seconds")
+                        }
+                        var traits: UIAccessibilityTraits = .button
+                        if selectedVisual { traits.insert(.selected) }
+                        if isDisabled || !component.editButtonsEnabled { traits.insert(.notEnabled) }
+                        view.accessibilityTraits = traits
                     }
                     let localFrame = CGRect(
                         x: buttonFrame.minX - backgroundFrame.minX,
@@ -769,6 +939,26 @@ private final class MediaPickerPhotoToolbarComponent: Component {
                 transition.setAlpha(view: self.selectionView, alpha: centerHidden ? 0.0 : 1.0)
             } else {
                 transition.setAlpha(view: self.selectionView, alpha: 0.0)
+            }
+        }
+
+        private func tabTitle(_ tab: TGPhotoEditorTab, chinese: Bool) -> String {
+            switch tab {
+            case .cropTab: return chinese ? "裁剪" : "Crop"
+            case .toolsTab: return chinese ? "调整" : "Adjustments"
+            case .rotateTab: return chinese ? "旋转" : "Rotate"
+            case .paintTab: return chinese ? "涂鸦" : "Draw"
+            case .stickerTab: return chinese ? "贴纸" : "Stickers"
+            case .textTab: return chinese ? "文字" : "Text"
+            case .eraserTab: return chinese ? "橡皮擦" : "Eraser"
+            case .mirrorTab: return chinese ? "镜像" : "Mirror"
+            case .aspectRatioTab: return chinese ? "比例" : "Aspect Ratio"
+            case .tintTab: return chinese ? "色调" : "Tint"
+            case .blurTab: return chinese ? "模糊" : "Blur"
+            case .curvesTab: return chinese ? "曲线" : "Curves"
+            case .qualityTab: return chinese ? "画质" : "Quality"
+            case .timerTab: return chinese ? "销毁时间" : "Self-Destruct Timer"
+            default: return chinese ? "编辑" : "Edit"
             }
         }
 
@@ -887,14 +1077,19 @@ private final class MediaPickerPhotoToolbarComponent: Component {
     }
 }
 
-public func makeMediaPickerPhotoToolbarView(context: AccountContext, backButton: TGPhotoEditorBackButton, doneButton: TGPhotoEditorDoneButton, solidBackground: Bool, hasSendStarsButton: Bool) -> (UIView & TGPhotoToolbarViewProtocol)? {
-    return MediaPickerPhotoToolbarView(context: context, backButton: backButton, doneButton: doneButton, solidBackground: solidBackground, hasSendStarsButton: hasSendStarsButton)
+public func makeMediaPickerPhotoToolbarView(context: AccountContext, backButton: TGPhotoEditorBackButton, doneButton: TGPhotoEditorDoneButton, solidBackground: Bool, hasSendStarsButton: Bool, usesWegramAppearance: Bool = false, previewState: (() -> (original: Bool, originalAvailable: Bool, count: Int, itemId: String?))? = nil, toggleOriginal: (() -> Void)? = nil, caption: (() -> (title: String, action: () -> Void)?)? = nil, selectedPhotos: (() -> (title: String, action: () -> Void)?)? = nil) -> (UIView & TGPhotoToolbarViewProtocol)? {
+    return MediaPickerPhotoToolbarView(context: context, backButton: backButton, doneButton: doneButton, solidBackground: solidBackground, hasSendStarsButton: hasSendStarsButton, usesWegramAppearance: usesWegramAppearance, previewState: previewState, toggleOriginal: toggleOriginal, caption: caption, selectedPhotos: selectedPhotos)
 }
 
 final class MediaPickerPhotoToolbarView: UIView, TGPhotoToolbarViewProtocol {
     private let context: AccountContext
     private let solidBackground: Bool
+    private let usesWegramAppearance: Bool
     private let hasSendStarsButton: Bool
+    private let previewState: (() -> (original: Bool, originalAvailable: Bool, count: Int, itemId: String?))?
+    private let caption: (() -> (title: String, action: () -> Void)?)?
+    private let selectedPhotos: (() -> (title: String, action: () -> Void)?)?
+    private let toggleOriginal: (() -> Void)?
     private let rootView = ComponentView<Empty>()
 
     private var transitionedOut = false
@@ -974,12 +1169,17 @@ final class MediaPickerPhotoToolbarView: UIView, TGPhotoToolbarViewProtocol {
         return (self.rootView.view as? MediaPickerPhotoToolbarComponent.View)?.doneButtonFrame ?? .zero
     }
 
-    init(context: AccountContext, backButton: TGPhotoEditorBackButton, doneButton: TGPhotoEditorDoneButton, solidBackground: Bool, hasSendStarsButton: Bool) {
+    init(context: AccountContext, backButton: TGPhotoEditorBackButton, doneButton: TGPhotoEditorDoneButton, solidBackground: Bool, hasSendStarsButton: Bool, usesWegramAppearance: Bool = false, previewState: (() -> (original: Bool, originalAvailable: Bool, count: Int, itemId: String?))? = nil, toggleOriginal: (() -> Void)? = nil, caption: (() -> (title: String, action: () -> Void)?)? = nil, selectedPhotos: (() -> (title: String, action: () -> Void)?)? = nil) {
         self.context = context
         self.backButtonType = backButton
         self.doneButtonType = doneButton
         self.solidBackground = solidBackground
+        self.usesWegramAppearance = usesWegramAppearance
         self.hasSendStarsButton = hasSendStarsButton
+        self.previewState = previewState
+        self.caption = caption
+        self.selectedPhotos = selectedPhotos
+        self.toggleOriginal = toggleOriginal
 
         super.init(frame: .zero)
 
@@ -1127,6 +1327,7 @@ final class MediaPickerPhotoToolbarView: UIView, TGPhotoToolbarViewProtocol {
                 MediaPickerPhotoToolbarComponent(
                     context: self.context,
                     solidBackground: self.solidBackground,
+                    usesWegramAppearance: self.usesWegramAppearance && !self.hasSendStarsButton,
                     backButtonType: self.backButtonType,
                     doneButtonType: self.doneButtonType,
                     currentTabs: self.currentTabs,
@@ -1151,7 +1352,18 @@ final class MediaPickerPhotoToolbarView: UIView, TGPhotoToolbarViewProtocol {
                     cancelPressed: self.cancelPressed,
                     donePressed: self.donePressed,
                     doneLongPressed: self.doneLongPressed,
-                    tabPressed: self.tabPressed
+                    tabPressed: self.tabPressed,
+                    canPerformActions: { [weak self] in
+                        guard let self, !self.transitionedOut, self.window != nil else { return false }
+                        return wegramViewAcceptsActions(self)
+                    },
+                    previewState: self.previewState?(),
+                    caption: self.caption?(),
+                    selectedPhotos: self.selectedPhotos?(),
+                    toggleOriginal: { [weak self] in
+                        self?.toggleOriginal?()
+                        self?.update(transition: .immediate)
+                    }
                 )
             ),
             environment: {},

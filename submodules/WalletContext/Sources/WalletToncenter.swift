@@ -161,7 +161,7 @@ actor WalletEngineStatuslessHost: WalletStatuslessHost {
             throw error
         } catch let error as TonApiRequestError {
             self.logger.error("wallet_statusless_request_failed", error)
-            throw Self.failure(.other, "Telegram relay failed (\(error.code))")
+            throw Self.failure(.other, "WeGram relay failed (\(error.code))")
         } catch let error as URLError {
             self.logger.error("wallet_statusless_request_failed", error)
             throw Self.failure(walletEngineTransportKind(error.code), error.localizedDescription)
@@ -175,7 +175,7 @@ actor WalletEngineStatuslessHost: WalletStatuslessHost {
             case .invalidResponse:
                 throw Self.failure(.other, "Provider response is invalid")
             case .completedWithoutResponse:
-                throw Self.failure(.other, "Telegram relay completed without a response")
+                throw Self.failure(.other, "WeGram relay completed without a response")
             }
         } catch {
             self.logger.error("wallet_statusless_request_failed", error)
