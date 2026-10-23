@@ -192,6 +192,34 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     public let textPlaceholderNode: ImmediateTextNodeWithEntities
     
     private let glassBackgroundContainer: GlassBackgroundContainerView
+    public var usesWegramAppearance = false
+    public var wegramHasCustomInput = false
+    private var usesWegramLayout = false
+    private let wegramPanelBackground = BlurredBackgroundView(color: nil)
+    private let wegramPanelSeparator = UIView()
+    private let wegramAttachmentImage = WegramIcon.chatInputMore.image()
+    private let wegramVoiceImage = WegramIcon.chatInputVoice.image()
+    private let wegramMoreImage = WegramIcon.chatMore.image()
+    private let wegramEmojiImage = WegramIcon.chatInputEmoji.image()
+    private let wegramKeyboardImage = WegramIcon.chatInputKeyboard.image()
+    private let wegramVoiceButton = HighlightTrackingButton()
+    private let wegramSendAsReferenceNode = ContextReferenceContentNode()
+    private let wegramEmojiButton = HighlightTrackingButton()
+    private let wegramHoldLabel = UILabel()
+    private var wegramComposerMode: WegramComposerMode = .text
+    public var usesWegramAttachmentGrid: Bool { self.usesWegramControls }
+    private var usesWegramControls = false
+    private var wegramHasMediaDraft = false
+    private var wegramHasIncomingStream = false
+    private var wegramHasForward = false
+    private var wegramSendButtonWidth: CGFloat = 58
+    private var wegramIsEditing = false
+    private var wegramHasSlowmode = false
+    private var wegramHasInlineSearch = false
+    private var wegramUsesMoreButton: Bool { self.wegramHasForward || self.wegramIsEditing || self.wegramHasSlowmode || self.wegramHasInlineSearch || self.wegramHasMediaDraft || self.wegramHasIncomingStream }
+    private var wegramShowsSend: Bool {
+        return self.wegramComposerMode.showsSend(hasText: !(self.richTextInputNode?.inputContentIsEmpty ?? self.presentationInterfaceState?.interfaceState.effectiveInputState.isEmpty ?? true), hasForward: self.wegramHasForward, isEditing: self.wegramIsEditing, isInlineSearch: self.extendedSearchLayout, hasMediaDraft: self.wegramHasMediaDraft)
+    }
     
     public var textLockIconNode: ASImageNode?
     public var contextPlaceholderNode: TextNode?
@@ -294,7 +322,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     /// as-is. Injected by the panel's owner (only the monolith can reach the BrowserUI-backed parser).
     /// Takes the context explicitly so the panel does not have to capture it.
     public var pastedMarkdownParser: ((AccountContext, String) -> ChatInputContent?)?
-    public var textInputAccessoryPanel: ((_ context: AccountContext, _ chatPresentationInterfaceState: ChatPresentationInterfaceState, _ chatControllerInteraction: ChatControllerInteraction?, _ interfaceInteraction: ChatPanelInterfaceInteraction?) -> AnyComponentWithIdentity<ChatInputAccessoryPanelEnvironment>?)?
+    public var textInputAccessoryPanel: ((_ context: AccountContext, _ chatPresentationInterfaceState: ChatPresentationInterfaceState, _ chatControllerInteraction: ChatControllerInteraction?, _ interfaceInteraction: ChatPanelInterfaceInteraction?, _ usesWegramAppearance: Bool) -> AnyComponentWithIdentity<ChatInputAccessoryPanelEnvironment>?)?
     public var textInputContextPanel: ((_ context: AccountContext, _ chatPresentationInterfaceState: ChatPresentationInterfaceState, _ chatControllerInteraction: ChatControllerInteraction?, _ interfaceInteraction: ChatPanelInterfaceInteraction?, _ current: ChatInputContextPanelNode?) -> ChatInputContextPanelNode?)?
     
     public var updateActivity: () -> Void = { }
@@ -655,7 +683,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     
     private var tooltipController: TooltipScreen?
     
-    public init(context: AccountContext, presentationInterfaceState: ChatPresentationInterfaceState, presentationContext: ChatPresentationContext?, presentController: @escaping (ViewController) -> Void) {
+    public init(context: AccountContext, presentationInterfaceState: ChatPresentationInterfaceState, presentationContext: ChatPresentationContext?, usesWegramAppearance: Bool = false, presentController: @escaping (ViewController) -> Void) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.presentationInterfaceState = presentationInterfaceState
         self.presentationContext = presentationContext
         
@@ -715,7 +744,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         self.menuButtonIconNode.customColor = presentationInterfaceState.theme.chat.inputPanel.actionControlForegroundColor
         self.menuButtonTextNode = ImmediateTextNode()
         
-        self.startButton = SolidRoundedButtonNode(title: presentationInterfaceState.strings.Bot_Start, theme: SolidRoundedButtonTheme(theme: presentationInterfaceState.theme), glass: true, glassInset: true, height: 50.0, cornerRadius: 50.0 * 0.5, isShimmering: true)
+        self.startButton = SolidRoundedButtonNode(title: presentationInterfaceState.strings.Bot_Start, theme: usesWegramAppearance ? SolidRoundedButtonTheme(backgroundColor: UIColor(rgb: 0x07c160), foregroundColor: .white) : SolidRoundedButtonTheme(theme: presentationInterfaceState.theme), glass: !usesWegramAppearance, glassInset: !usesWegramAppearance, height: usesWegramAppearance ? 40.0 : 50.0, cornerRadius: usesWegramAppearance ? 5.0 : 25.0, isShimmering: !usesWegramAppearance)
         self.startButton.progressType = .embedded
         self.startButton.isHidden = true
         
@@ -764,7 +793,27 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         
         super.init()
         
+        self.wegramPanelBackground.isUserInteractionEnabled = false
+        self.wegramPanelBackground.accessibilityElementsHidden = true
+        self.wegramPanelBackground.isHidden = true
+        self.wegramPanelBackground.addSubview(self.wegramPanelSeparator)
+        self.view.addSubview(self.wegramPanelBackground)
         self.view.addSubview(self.glassBackgroundContainer)
+        self.wegramVoiceButton.isHidden = true
+        self.wegramEmojiButton.isHidden = true
+        self.wegramVoiceButton.addTarget(self, action: #selector(self.wegramVoicePressed), for: .touchUpInside)
+        self.wegramEmojiButton.addTarget(self, action: #selector(self.wegramEmojiPressed), for: .touchUpInside)
+        self.wegramVoiceButton.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(self.wegramVoiceLongPressed(_:))))
+        self.wegramVoiceButton.accessibilityHint = "长按打开更多输入方式"
+        self.wegramVoiceButton.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "录制视频消息", target: self, selector: #selector(self.wegramVideoAccessibility))]
+        self.glassBackgroundContainer.contentView.addSubview(self.wegramVoiceButton)
+        self.wegramSendAsReferenceNode.isUserInteractionEnabled = false
+        self.glassBackgroundContainer.contentView.addSubview(self.wegramSendAsReferenceNode.view)
+        self.glassBackgroundContainer.contentView.addSubview(self.wegramEmojiButton)
+        self.wegramHoldLabel.isUserInteractionEnabled = false
+        self.wegramHoldLabel.textAlignment = .center
+        self.wegramHoldLabel.isHidden = true
+        self.mediaActionButtons.micButton.addSubview(self.wegramHoldLabel)
         
         self.slowModeButton.requestUpdate = { [weak self] in
             self?.requestLayout(transition: .animated(duration: 0.2, curve: .easeInOut))
@@ -951,6 +1000,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         }
         self.mediaActionButtons.micButton.switchMode = { [weak self] in
             if let strongSelf = self, let interfaceInteraction = strongSelf.interfaceInteraction {
+                if strongSelf.usesWegramControls { return }
                 interfaceInteraction.switchMediaRecordingMode()
             }
         }
@@ -1261,7 +1311,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         
         if let presentationInterfaceState = self.presentationInterfaceState {
             richTextInputNode.refreshTextInputTypingAttributes(textColor: presentationInterfaceState.theme.chat.inputPanel.primaryTextColor, baseFontSize: baseFontSize)
-            richTextInputNode.textContainerInset = calculateTextFieldRealInsets(presentationInterfaceState: presentationInterfaceState, accessoryButtonsWidth: accessoryButtonsWidth, actionControlsWidth: self.sendActionButtons.frame.width)
+            richTextInputNode.textContainerInset = self.effectiveTextFieldRealInsets(presentationInterfaceState: presentationInterfaceState, accessoryButtonsWidth: accessoryButtonsWidth, actionControlsWidth: self.sendActionButtons.frame.width)
         }
         
         if let textInputNodeLayout = self.textInputNodeLayout, let richTextInputNode = self.richTextInputNode {
@@ -1364,6 +1414,224 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         return max(33.0, maxHeight - (textFieldInsets.top + textFieldInsets.bottom + self.textInputViewInternalInsets.top + self.textInputViewInternalInsets.bottom))
     }
     
+    private func effectiveTextFieldRealInsets(presentationInterfaceState: ChatPresentationInterfaceState, accessoryButtonsWidth: CGFloat, actionControlsWidth: CGFloat) -> UIEdgeInsets {
+        return calculateTextFieldRealInsets(presentationInterfaceState: presentationInterfaceState, accessoryButtonsWidth: self.usesWegramControls ? 0 : accessoryButtonsWidth, actionControlsWidth: self.usesWegramControls ? 0 : actionControlsWidth)
+    }
+
+    private func canUseWegramControls(interfaceState: ChatPresentationInterfaceState, additionalSideInsets: UIEdgeInsets) -> Bool {
+        guard self.usesWegramLayout,
+              self.customLeftAction == nil, self.customSecondaryLeftAction == nil, self.customRightAction == nil,
+              additionalSideInsets.left == 0, additionalSideInsets.right == 0,
+              wegramComposerSupportsSubject(interfaceState.subject) else { return false }
+        if interfaceState.interfaceState.editMessage != nil && interfaceState.editMessageState == nil { return false }
+        if interfaceState.subject != .scheduledMessages, let user = interfaceState.renderedPeer?.peer as? TelegramUser, user.botInfo != nil {
+            guard !interfaceState.peerIsBlocked, let historyState = interfaceState.chatHistoryState, case let .loaded(isEmpty, _) = historyState else { return false }
+            if isEmpty && interfaceState.chatLocation.threadId == nil { return false }
+        }
+        if !wegramComposerSupportsSecretChat(interfaceState.renderedPeer?.peer as? TelegramSecretChat) { return false }
+        // Recording temporarily removes accessory items. Keep the same gesture target alive.
+        if interfaceState.inputTextPanelState.mediaRecordingState != nil { return self.usesWegramControls }
+        return wegramComposerSupportsAccessoryItems(interfaceState.inputTextPanelState.accessoryItems)
+    }
+
+    private func setWegramComposerMode(_ mode: WegramComposerMode) {
+        guard self.usesWegramControls, let state = self.presentationInterfaceState,
+              state.inputTextPanelState.mediaRecordingState == nil, state.interfaceState.mediaDraftState == nil,
+              state.interfaceState.forwardMessageIds == nil, state.interfaceState.editMessage == nil, !self.extendedSearchLayout,
+              state.inputTextPanelState.contextPlaceholder == nil, (state.slowmodeState == nil || state.subject == .scheduledMessages) else { return }
+        self.wegramComposerMode = mode
+        if mode == .text {
+            self.interfaceInteraction?.updateInputModeAndDismissedButtonKeyboardMessageId { _ in (.text, nil) }
+            self.ensureFocused()
+        } else {
+            let wantsVideo = mode == .video
+            let isVideo: Bool
+            switch state.interfaceState.mediaRecordingMode {
+            case .audio: isVideo = false
+            case .video: isVideo = true
+            }
+            if wantsVideo != isVideo { self.interfaceInteraction?.switchMediaRecordingMode() }
+            self.ensureUnfocused()
+            self.interfaceInteraction?.updateInputModeAndDismissedButtonKeyboardMessageId { _ in (.none, nil) }
+        }
+        self.requestLayout()
+        self.updateHeight(true)
+    }
+
+    @objc private func wegramVoicePressed() {
+        if self.presentationInterfaceState?.interfaceState.mediaDraftState != nil {
+            self.attachmentButtonPressed()
+            return
+        }
+        if self.wegramUsesMoreButton {
+            self.presentWegramComposerMenu()
+            return
+        }
+        self.setWegramComposerMode(self.wegramComposerMode.togglingVoice(isRecording: self.presentationInterfaceState?.inputTextPanelState.mediaRecordingState != nil))
+    }
+
+    @objc private func wegramVideoAccessibility() -> Bool {
+        guard self.usesWegramControls, self.presentationInterfaceState?.inputTextPanelState.mediaRecordingState == nil, !self.wegramUsesMoreButton else { return false }
+        self.setWegramComposerMode(self.wegramComposerMode.selectingVideo(isRecording: false))
+        return true
+    }
+
+    public var wegramComposerShortcuts: [(action: WegramComposerShortcut, title: String, symbol: String)] {
+        guard self.usesWegramControls, let state = self.presentationInterfaceState,
+              wegramComposerSupportsSecretChat(state.renderedPeer?.peer as? TelegramSecretChat),
+              state.inputTextPanelState.mediaRecordingState == nil else { return [] }
+        var botMenu: BotMenuButton?
+        if let user = state.renderedPeer?.peer as? TelegramUser, user.botInfo != nil,
+           state.editMessageState == nil, state.sendAsPeers?.isEmpty ?? true {
+            if state.hasBotCommands { botMenu = state.botMenuButton }
+            if case .webView = state.botMenuButton { botMenu = state.botMenuButton }
+        }
+        var actions = wegramComposerShortcutActions(state.inputTextPanelState.accessoryItems, hasScheduledMessages: state.hasScheduledMessages, isTextEmpty: state.interfaceState.composeInputState.isEmpty && (self.richTextInputNode?.inputContentIsEmpty ?? true), hasSendAsPeers: !(state.sendAsPeers?.isEmpty ?? true), editMessageState: self.wegramIsEditing ? state.editMessageState : nil, botMenuButton: botMenu, showBotCommands: state.showCommands, slowmodeState: state.slowmodeState, boostsToUnrestrict: state.boostsToUnrestrict, secretChat: state.renderedPeer?.peer as? TelegramSecretChat, subject: state.subject, canStopIncomingStreamingMessage: state.canStopIncomingStreamingMessage)
+        var canViewOnce = false
+        if let user = state.renderedPeer?.peer as? TelegramUser, user.id != state.accountPeerId, user.botInfo == nil, state.sendPaidMessageStars == nil { canViewOnce = true }
+        actions.append(contentsOf: wegramRecordingShortcuts(state.interfaceState.mediaDraftState, canViewOnce: canViewOnce, viewOnce: self.viewOnce))
+        let isSelfChat = self.context.map { state.chatLocation.peerId == $0.account.peerId } ?? false
+        return actions.compactMap { action in
+            switch action {
+            case .stopIncomingStreamingMessage: return (action, state.strings.VoiceOver_Chat_Stop, "stop.circle")
+            case .recordingDelete: return (action, state.strings.Common_Delete, "trash")
+            case .recordingResume: return (action, state.strings.baseLanguageCode.hasPrefix("zh") ? "继续录音" : "Resume Recording", "mic")
+            case let .recordingViewOnce(_, selected):
+                let title = state.strings.baseLanguageCode.hasPrefix("zh") ? (selected ? "仅播放一次：开启" : "仅播放一次：关闭") : (selected ? "Play Once: On" : "Play Once: Off")
+                return (action, title, selected ? "1.circle.fill" : "1.circle")
+            default: break
+            }
+            if case .boostToUnrestrict = action {
+                return (action, state.strings.baseLanguageCode.hasPrefix("zh") ? "助力解除限制" : "Boost to Remove Restrictions", "bolt.fill")
+            }
+            if case .sendAs = action {
+                return (action, state.strings.Conversation_SendMesageAs, "person.crop.circle.badge.checkmark")
+            }
+            if case let .botMenu(menu, showCommands) = action {
+                switch menu {
+                case .commands:
+                    return (action, showCommands ? state.strings.Common_Close : state.strings.Conversation_InputMenu, showCommands ? "xmark" : "list.bullet")
+                case let .webView(title, _):
+                    return (action, title, "app")
+                }
+            }
+            if case .editMedia = action {
+                guard self.attachmentButton.isEnabled else { return nil }
+                return (action, state.strings.Conversation_EditingMessagePanelMedia, "paperclip")
+            }
+            guard case let .accessory(item) = action else { return nil }
+            guard let title = wegramComposerShortcutTitle(item, strings: state.strings, isSelfChat: isSelfChat) else { return nil }
+            let symbol: String
+            switch item {
+            case .scheduledMessages: symbol = "calendar"
+            case .messageAutoremoveTimeout: symbol = "timer"
+            case .gift: symbol = "gift"
+            case .commands: symbol = "command"
+            case .botInput(_, .bot): symbol = "keyboard"
+            case let .silentPost(value): symbol = value ? "bell.slash" : "bell"
+            case .suggestPost: symbol = "doc.badge.plus"
+            default: return nil
+            }
+            return (action, title, symbol)
+        }
+    }
+
+    @discardableResult public func performWegramComposerShortcut(_ action: WegramComposerShortcut) -> Bool {
+        guard self.isNodeLoaded, self.view.window != nil,
+              self.wegramComposerShortcuts.contains(where: { $0.action == action }), let interaction = self.interfaceInteraction else { return false }
+        switch action {
+        case .stopIncomingStreamingMessage: interaction.stopIncomingStreamingMessage(); return true
+        case .recordingDelete: self.attachmentButtonPressed(); return true
+        case .recordingResume: self.recordMorePressed(); return true
+        case .recordingViewOnce: self.viewOncePressed(); self.requestLayout(); return true
+        default: break
+        }
+        if case .boostToUnrestrict = action {
+            guard self.view.window != nil else { return false }
+            interaction.openBoostToUnrestrict()
+            return true
+        }
+        if case .sendAs = action {
+            guard self.wegramSendAsReferenceNode.view.window != nil else { return false }
+            interaction.openSendAsPeer(self.wegramSendAsReferenceNode, nil)
+            return true
+        }
+        if case .botMenu = action {
+            guard self.view.window != nil else { return false }
+            self.wegramComposerMode = .text
+            self.menuButtonPressed()
+            return true
+        }
+        if case .editMedia = action {
+            guard self.view.window != nil else { return false }
+            self.attachmentButtonPressed()
+            return true
+        }
+        guard case let .accessory(item) = action else { return false }
+        switch item {
+        case .scheduledMessages: interaction.openScheduledMessages()
+        case .messageAutoremoveTimeout: interaction.setupMessageAutoremoveTimeout()
+        case .gift: interaction.openPremiumGift()
+        case .commands, .botInput, .silentPost, .suggestPost:
+            guard let (_, button) = self.accessoryItemButtons.first(where: { $0.0 == item }) else { return false }
+            self.wegramComposerMode = .text
+            self.accessoryItemButtonPressed(button)
+        default: return false
+        }
+        return true
+    }
+
+    @objc private func wegramVoiceLongPressed(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        self.presentWegramComposerMenu()
+    }
+
+    private func presentWegramComposerMenu() {
+        guard self.usesWegramControls,
+              self.presentationInterfaceState?.inputTextPanelState.mediaRecordingState == nil,
+              let context = self.context else { return }
+        let data = context.sharedContext.currentPresentationData.with { $0 }
+        let sheet = ActionSheetController(presentationData: data)
+        var items: [ActionSheetItem] = []
+        if !self.wegramUsesMoreButton {
+            items.append(ActionSheetButtonItem(title: "视频消息", action: { [weak self, weak sheet] in
+                sheet?.dismissAnimated()
+                _ = self?.wegramVideoAccessibility()
+            }))
+        }
+        for shortcut in self.wegramComposerShortcuts {
+            items.append(ActionSheetButtonItem(title: shortcut.title, action: { [weak self, weak sheet] in
+                sheet?.dismissAnimated()
+                _ = self?.performWegramComposerShortcut(shortcut.action)
+            }))
+        }
+        if self.isAIEnabled && !self.wegramHasMediaDraft {
+            items.append(ActionSheetButtonItem(title: "AI 写作", action: { [weak self, weak sheet] in
+                sheet?.dismissAnimated()
+                self?.setWegramComposerMode(.text)
+                self?.aiButtonPressed()
+            }))
+        }
+        guard !items.isEmpty else { return }
+        sheet.setItemGroups([ActionSheetItemGroup(items: items), ActionSheetItemGroup(items: [ActionSheetButtonItem(title: data.strings.Common_Cancel, action: { [weak sheet] in sheet?.dismissAnimated() })])])
+        self.interfaceInteraction?.presentController(sheet, nil)
+    }
+
+    @objc private func wegramEmojiPressed() {
+        if self.presentationInterfaceState?.interfaceState.mediaDraftState != nil {
+            self.presentWegramComposerMenu()
+            return
+        }
+        guard self.usesWegramControls, let state = self.presentationInterfaceState,
+              state.inputTextPanelState.mediaRecordingState == nil,
+              let item = wegramComposerPrimaryInputItem(state.inputTextPanelState.accessoryItems),
+              let (_, button) = self.accessoryItemButtons.first(where: { $0.0 == item }) else { return }
+        self.wegramComposerMode = .text
+        self.accessoryItemButtonPressed(button)
+        self.requestLayout()
+        self.updateHeight(true)
+    }
+
     private func calculateTextFieldMetrics(width: CGFloat, sendActionControlsWidth: CGFloat, maxHeight: CGFloat, metrics: LayoutMetrics, bottomInset: CGFloat, interfaceState: ChatPresentationInterfaceState) -> (accessoryButtonsWidth: CGFloat, textFieldHeight: CGFloat, isOverflow: Bool) {
         let maxHeight = max(maxHeight, 40.0)
         
@@ -1394,11 +1662,11 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         }
         
         if let presentationInterfaceState = self.presentationInterfaceState {
-            textInputViewRealInsets = calculateTextFieldRealInsets(presentationInterfaceState: presentationInterfaceState, accessoryButtonsWidth: accessoryButtonsWidth, actionControlsWidth: sendActionControlsWidth)
+            textInputViewRealInsets = self.effectiveTextFieldRealInsets(presentationInterfaceState: presentationInterfaceState, accessoryButtonsWidth: accessoryButtonsWidth, actionControlsWidth: sendActionControlsWidth)
         }
         
         var hasSendAsButton = false
-        if let sendAsPeers = interfaceState.sendAsPeers, !sendAsPeers.isEmpty && interfaceState.editMessageState == nil {
+        if let sendAsPeers = interfaceState.sendAsPeers, !sendAsPeers.isEmpty && interfaceState.editMessageState == nil && !self.usesWegramControls {
             hasSendAsButton = true
         }
         
@@ -1426,11 +1694,25 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             textFieldHeight = textFieldMinHeight
         }
         
+        if self.usesWegramControls {
+            accessoryButtonsWidth = 0
+            if self.wegramComposerMode != .text || self.wegramHasMediaDraft {
+                textFieldHeight = textFieldMinHeight
+                isOverflow = false
+            }
+        }
         return (accessoryButtonsWidth, textFieldHeight, isOverflow)
     }
     
     private func textFieldInsets(metrics: LayoutMetrics, bottomInset: CGFloat) -> UIEdgeInsets {
+        if self.usesWegramControls {
+            return UIEdgeInsets(top: 8, left: WegramComposerLayout.leftInset, bottom: 8, right: WegramComposerLayout.rightInset(showsSend: self.wegramShowsSend, sendButtonWidth: self.wegramSendButtonWidth))
+        }
         var insets = UIEdgeInsets(top: 0.0, left: 8.0, bottom: 0.0, right: 8.0)
+        if self.usesWegramLayout {
+            insets.top = 8.0
+            insets.bottom = 8.0
+        }
         if let customLeftAction = self.customLeftAction, case let .toggleExpanded(isVisible, _, _) = customLeftAction, !isVisible {
         } else if let customLeftAction = self.customLeftAction, case .empty = customLeftAction {
         } else {
@@ -1453,6 +1735,9 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     
     override public func minimalHeight(interfaceState: ChatPresentationInterfaceState, metrics: LayoutMetrics) -> CGFloat {
         let textFieldMinHeight = calclulateTextFieldMinHeight(interfaceState, metrics: metrics)
+        if self.usesWegramAppearance && !(self.validLayout?.8 ?? false) {
+            return self.textInputViewInternalInsets.top + self.textInputViewInternalInsets.bottom + textFieldMinHeight + 16.0
+        }
         let minimalHeight: CGFloat = 14.0 + textFieldMinHeight
         return minimalHeight
     }
@@ -1602,6 +1887,24 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         isMediaInputExpanded: Bool
     ) -> CGFloat {
         self.isUpdating = true
+        self.usesWegramLayout = self.usesWegramAppearance && !isSecondary
+        self.usesWegramControls = self.canUseWegramControls(interfaceState: interfaceState, additionalSideInsets: additionalSideInsets)
+        self.wegramHasMediaDraft = interfaceState.interfaceState.mediaDraftState != nil
+        self.wegramHasIncomingStream = interfaceState.canStopIncomingStreamingMessage
+        self.wegramHasForward = interfaceState.interfaceState.forwardMessageIds != nil
+        self.wegramIsEditing = interfaceState.interfaceState.editMessage != nil
+        self.wegramHasSlowmode = interfaceState.slowmodeState != nil && interfaceState.subject != .scheduledMessages
+        self.wegramHasInlineSearch = self.extendedSearchLayout || interfaceState.inputTextPanelState.contextPlaceholder != nil
+        if !self.usesWegramControls || self.wegramUsesMoreButton { self.wegramComposerMode = .text }
+        if self.usesWegramControls, let recording = interfaceState.inputTextPanelState.mediaRecordingState {
+            switch recording {
+            case .audio: self.wegramComposerMode = .voice
+            case .video: self.wegramComposerMode = .video
+            case .waitingForPreview: break
+            }
+        }
+        self.sendActionButtons.usesWegramAppearance = self.usesWegramLayout
+        self.mediaActionButtons.usesWegramAppearance = self.usesWegramLayout
         defer {
             self.isUpdating = false
         }
@@ -1624,7 +1927,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         var leftInset = leftInset
         var rightInset = rightInset
         
-        let compactBottomSideInset = self.compactBottomSideInset(bottomInset: bottomInset, deviceMetrics: deviceMetrics)
+        let compactBottomSideInset = self.usesWegramLayout ? 0.0 : self.compactBottomSideInset(bottomInset: bottomInset, deviceMetrics: deviceMetrics)
         leftInset += compactBottomSideInset
         rightInset += compactBottomSideInset
         
@@ -1652,7 +1955,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                 context,
                 interfaceState,
                 self.chatControllerInteraction,
-                self.interfaceInteraction
+                self.interfaceInteraction,
+                self.usesWegramControls
             )
             contextPanelNode = self.textInputContextPanel?(
                 context,
@@ -1663,6 +1967,9 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             )
         }
         
+        let placesWegramReplyBelowInput = accessoryPanel?.id == AnyHashable("wegramReply")
+        let accessoryTopOffset: CGFloat = accessoryPanel != nil && !placesWegramReplyBelowInput ? 52.0 : 0.0
+
         var wasEditingMedia = false
         var hadMediaDraft = false
         if let interfaceState = self.presentationInterfaceState {
@@ -1769,7 +2076,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             }
         }
         
-        let inputHasText = !isRecording && !(self.richTextInputNode?.inputContentIsEmpty ?? true)
+        let inputHasText = !isRecording && (!self.usesWegramControls || self.wegramComposerMode == .text) && !(self.richTextInputNode?.inputContentIsEmpty ?? true)
         
         var hasMenuButton = false
         var menuButtonExpanded = false
@@ -1785,7 +2092,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         let mediaRecordingState = interfaceState.inputTextPanelState.mediaRecordingState
         if let sendAsPeers = interfaceState.sendAsPeers, !sendAsPeers.isEmpty && interfaceState.editMessageState == nil {
             menuButtonExpanded = false
-            displaySendAsAvatarButton = true
+            displaySendAsAvatarButton = !self.usesWegramControls
             
             var currentPeer = sendAsPeers.first(where: { $0.peer.id == interfaceState.currentSendAsPeerId})?.peer
             if currentPeer == nil {
@@ -1795,7 +2102,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                 self.sendAsAvatarNode.setPeer(context: context, theme: interfaceState.theme, peer: peer, emptyColor: interfaceState.theme.list.mediaPlaceholderColor)
             }
         } else if let peer = interfaceState.renderedPeer?.peer as? TelegramUser, let _ = peer.botInfo, shouldDisplayMenuButton && interfaceState.editMessageState == nil {
-            hasMenuButton = true
+            hasMenuButton = !self.usesWegramControls
             
             if !inputHasText {
                 switch interfaceState.inputMode {
@@ -1814,7 +2121,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         let maximumButtonWidth: CGFloat = min(430.0, width)
         let buttonHeight = self.startButton.updateLayout(width: maximumButtonWidth - buttonInset * 2.0, transition: transition)
         let buttonSize = CGSize(width: maximumButtonWidth - buttonInset * 2.0, height: buttonHeight)
-        self.startButton.frame = CGRect(origin: CGPoint(x: leftInset + floor((width - leftInset - rightInset - buttonSize.width) / 2.0), y: 6.0), size: buttonSize)
+        self.startButton.frame = CGRect(origin: CGPoint(x: leftInset + floor((width - leftInset - rightInset - buttonSize.width) / 2.0), y: self.usesWegramLayout ? 8.0 : 6.0), size: buttonSize)
         
         var hideOffset: CGPoint = .zero
         if displayBotStartButton {
@@ -1907,7 +2214,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             }
             if themeUpdated || isFirstTime {
                 self.menuButtonIconNode.customColor = interfaceState.theme.chat.inputPanel.actionControlForegroundColor
-                self.startButton.updateTheme(SolidRoundedButtonTheme(theme: interfaceState.theme))
+                self.startButton.updateTheme(self.usesWegramAppearance ? SolidRoundedButtonTheme(backgroundColor: UIColor(rgb: 0x07c160), foregroundColor: .white) : SolidRoundedButtonTheme(theme: interfaceState.theme))
                 
                 self.sendAsCloseIconView.image = generateImage(CGSize(width: 34.0, height: 34.0), rotatedContext: { size, context in
                     context.clear(CGRect(origin: CGPoint(), size: size))
@@ -2334,6 +2641,10 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             }
         }
         
+        if self.customLeftAction == nil && interfaceState.interfaceState.mediaDraftState == nil && !isEditingMedia {
+            self.attachmentButtonIcon.image = self.usesWegramLayout ? self.wegramAttachmentImage : PresentationResourcesChat.chatInputPanelAttachmentButtonImage(interfaceState.theme)
+            self.attachmentButtonIcon.tintColor = self.usesWegramLayout ? WegramNavigationColors(isDark: interfaceState.theme.overallDarkAppearance).control : interfaceState.theme.chat.inputPanel.panelControlColor
+        }
         var textFieldMinHeight: CGFloat = 33.0
         if let presentationInterfaceState = self.presentationInterfaceState {
             textFieldMinHeight = calclulateTextFieldMinHeight(presentationInterfaceState, metrics: metrics)
@@ -2412,7 +2723,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         var rightSlowModeInset: CGFloat = 0.0
         var slowModeButtonSize: CGSize = .zero
         var hasSlowmodeButton = false
-        if let presentationInterfaceState = self.presentationInterfaceState, (presentationInterfaceState.boostsToUnrestrict ?? 0) > 0, presentationInterfaceState.slowmodeState != nil {
+        if !self.usesWegramControls, let presentationInterfaceState = self.presentationInterfaceState, (presentationInterfaceState.boostsToUnrestrict ?? 0) > 0, presentationInterfaceState.slowmodeState != nil {
             slowModeButtonSize = self.slowModeButton.update(size: CGSize(width: width, height: 40.0), interfaceState: presentationInterfaceState)
             rightSlowModeInset = max(0.0, slowModeButtonSize.width + 4.0)
             hasSlowmodeButton = true
@@ -2500,8 +2811,11 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             //   (its send container is alpha 0). It is a fixed 40pt circle like the attachment button; the
             //   two were only ever equal to `minimalHeight` while the field was pinned to 17pt, and sizing
             //   the mic from the field stretched it into a pill at every other step.
-            sendActionButtonsSize = self.sendActionButtons.updateLayout(size: CGSize(width: 40.0, height: minimalHeight), isMediaInputExpanded: isMediaInputExpanded, showTitle: showTitle, currentMessageEffectId: presentationInterfaceState.interfaceState.sendMessageEffect, transition: transition, interfaceState: presentationInterfaceState)
-            mediaActionButtonsSize = self.mediaActionButtons.updateLayout(size: CGSize(width: 40.0, height: 40.0), isMediaInputExpanded: isMediaInputExpanded, showTitle: false, currentMessageEffectId: presentationInterfaceState.interfaceState.sendMessageEffect, transition: transition, interfaceState: presentationInterfaceState)
+            self.sendActionButtons.usesWegramSendButton = self.usesWegramControls
+            sendActionButtonsSize = self.sendActionButtons.updateLayout(size: CGSize(width: self.usesWegramControls ? 58 : 40, height: self.usesWegramControls ? 40 : minimalHeight), isMediaInputExpanded: isMediaInputExpanded, showTitle: showTitle, currentMessageEffectId: presentationInterfaceState.interfaceState.sendMessageEffect, transition: transition, interfaceState: presentationInterfaceState, wegramMaxSendButtonWidth: WegramComposerLayout.maximumSendButtonWidth(containerWidth: width - leftInset - rightInset))
+            self.wegramSendButtonWidth = self.usesWegramControls ? sendActionButtonsSize.width : 58
+            let recordingWidth = self.usesWegramControls && self.wegramComposerMode != .text ? width - leftInset - rightInset - WegramComposerLayout.leftInset - WegramComposerLayout.rightInset(showsSend: false) : 40
+            mediaActionButtonsSize = self.mediaActionButtons.updateLayout(size: CGSize(width: recordingWidth, height: 40.0), isMediaInputExpanded: isMediaInputExpanded, showTitle: false, currentMessageEffectId: presentationInterfaceState.interfaceState.sendMessageEffect, transition: transition, interfaceState: presentationInterfaceState)
         }
         
         var starReactionButtonSize: CGSize?
@@ -2586,14 +2900,17 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         } else {
             menuButtonOriginY = panelHeight - minimalHeight + floorToScreenPixels((minimalHeight - menuButtonHeight) / 2.0)
             if accessoryPanel != nil {
-                menuButtonOriginY += 52.0
+                menuButtonOriginY += accessoryTopOffset
             }
         }
         
+        if self.usesWegramLayout && !displayBotStartButton {
+            menuButtonOriginY -= 8.0
+        }
         let menuButtonFrame = CGRect(x: leftInset + 8.0, y: menuButtonOriginY, width: menuButtonExpanded ? menuButtonWidth : menuCollapsedButtonWidth, height: menuButtonHeight)
         transition.updateFrameAsPositionAndBounds(node: self.menuButton, frame: menuButtonFrame)
         transition.updateFrame(view: self.menuButtonBackgroundView, frame: CGRect(origin: CGPoint(), size: menuButtonFrame.size))
-        self.menuButtonBackgroundView.update(size: menuButtonFrame.size, cornerRadius: menuButtonFrame.height * 0.5, isDark: interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintWithInnerColor, transition: ComponentTransition(transition))
+        self.menuButtonBackgroundView.update(size: menuButtonFrame.size, cornerRadius: menuButtonFrame.height * 0.5, isDark: interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintWithInnerColor, isVisible: !self.usesWegramLayout, transition: ComponentTransition(transition))
         transition.updateFrame(node: self.menuButtonClippingNode, frame: CGRect(origin: CGPoint(x: 19.0, y: 0.0), size: CGSize(width: menuButtonWidth - 19.0, height: menuButtonFrame.height)))
         var menuButtonTitleTransition = transition
         if buttonTitleUpdated {
@@ -2643,6 +2960,9 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             }
         }
         
+        if self.usesWegramControls {
+            textFieldInsets = self.textFieldInsets(metrics: metrics, bottomInset: bottomInset)
+        }
         var audioRecordingItemsAlpha: CGFloat = 1.0
         if interfaceState.interfaceState.mediaDraftState != nil {
             audioRecordingItemsAlpha = 0.0
@@ -2780,7 +3100,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             let audioRecordingCancelIndicatorFrame = CGRect(
                 origin: CGPoint(
                     x: leftInset + floor((baseWidth - leftInset * 2.0 - 16.0 - audioRecordingCancelIndicator.bounds.size.width - indicatorTranslation) / 2.0),
-                    y: (accessoryPanel != nil ? 52.0 : 0.0) + panelHeight - minimalHeight + floor((minimalHeight - audioRecordingCancelIndicator.bounds.size.height) / 2.0)),
+                    y: accessoryTopOffset + panelHeight - minimalHeight + floor((minimalHeight - audioRecordingCancelIndicator.bounds.size.height) / 2.0)),
                 size: audioRecordingCancelIndicator.bounds.size)
             audioRecordingCancelIndicator.frame = audioRecordingCancelIndicatorFrame
             if self.mediaActionButtons.micButton.cancelTranslation > cancelTransformThreshold {
@@ -2827,7 +3147,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                 size: CGSize(width: baseWidth, height: panelHeight)
             )
             
-            let audioRecordingTimeFrame = CGRect(origin: CGPoint(x: hideOffset.x + leftInset + leftMenuInset + 8.0 + 34.0, y: (accessoryPanel != nil ? 52.0 : 0.0) + panelHeight - minimalHeight + floor((minimalHeight - audioRecordingTimeSize.height) / 2.0) + 1.0 - UIScreenPixel), size: audioRecordingTimeSize)
+            let audioRecordingTimeFrame = CGRect(origin: CGPoint(x: hideOffset.x + leftInset + leftMenuInset + 8.0 + 34.0, y: accessoryTopOffset + panelHeight - minimalHeight + floor((minimalHeight - audioRecordingTimeSize.height) / 2.0) + 1.0 - UIScreenPixel), size: audioRecordingTimeSize)
             
             if animateTimeSlideIn {
                 var previousAudioRecordingTimeFrame = audioRecordingTimeFrame
@@ -2996,7 +3316,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             // empty the send button is hidden (scaled to ~0), so reserving its width over-insets the field;
             // the right inset then only needs to clear the in-field accessory buttons.
             let sendButtonShown = inputHasText || hasMediaDraft || hasForward || isEditingMedia
-            textInputViewRealInsets = calculateTextFieldRealInsets(presentationInterfaceState: presentationInterfaceState, accessoryButtonsWidth: accessoryButtonsWidth, actionControlsWidth: sendButtonShown ? effectiveActionButtonsSize.width : 0.0)
+            textInputViewRealInsets = self.effectiveTextFieldRealInsets(presentationInterfaceState: presentationInterfaceState, accessoryButtonsWidth: accessoryButtonsWidth, actionControlsWidth: sendButtonShown ? effectiveActionButtonsSize.width : 0.0)
             if !sendButtonShown {
                 // Empty state: the accessory-button clearance alone still over-insets slightly; trim 10pt more.
                 textInputViewRealInsets.right = max(0.0, textInputViewRealInsets.right - 10.0)
@@ -3048,7 +3368,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                 containerSize: CGSize(width: textInputWidth, height: 10000.0)
             )
             
-            let accessoryPanelFrame = CGRect(origin: CGPoint(x: 0.0, y: contentHeight), size: accessoryPanelSize)
+            let contentLayout = WegramComposerContentLayout(fieldHeight: textInputHeight, accessoryHeight: accessoryPanelSize.height, accessoryBelow: placesWegramReplyBelowInput)
+            let accessoryPanelFrame = CGRect(origin: CGPoint(x: 0.0, y: contentLayout.accessoryOriginY), size: accessoryPanelSize)
             if let accessoryPanelComponentView = accessoryPanelView.view {
                 if accessoryPanelComponentView.superview == nil {
                     self.accessoryPanelContainer.addSubview(accessoryPanelComponentView)
@@ -3074,7 +3395,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         }
         
         if let _ = interfaceState.interfaceState.mediaDraftState {
-            let mediaPreviewPanelFrame = CGRect(origin: CGPoint(x: 0.0, y: contentHeight), size: CGSize(width: textInputWidth - effectiveActionButtonsSize.width - 8.0, height: 40.0))
+            let mediaPreviewPanelFrame = self.usesWegramControls ? CGRect(x: 0, y: max(0, textInputHeight - 40), width: textInputWidth, height: 40) : CGRect(origin: CGPoint(x: 0.0, y: contentHeight), size: CGSize(width: textInputWidth - effectiveActionButtonsSize.width - 8.0, height: 40.0))
             var mediaPreviewPanelTransition = transition
             
             let mediaPreviewPanelNode: ChatRecordingPreviewInputPanelNodeImpl
@@ -3095,9 +3416,10 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                 mediaPreviewPanelNode.tintMaskView.frame = mediaPreviewPanelFrame
                 self.textInputContainerBackgroundView.maskContentView.addSubview(mediaPreviewPanelNode.tintMaskView)
             }
+            mediaPreviewPanelNode.usesWegramAppearance = self.usesWegramControls
             transition.updateAlpha(node: mediaPreviewPanelNode, alpha: 1.0)
             transition.updateFrame(node: mediaPreviewPanelNode, frame: mediaPreviewPanelFrame)
-            transition.updateAlpha(layer: mediaPreviewPanelNode.tintMaskView.layer, alpha: 1.0)
+            transition.updateAlpha(layer: mediaPreviewPanelNode.tintMaskView.layer, alpha: self.usesWegramControls ? 0.0 : 1.0)
             transition.updateFrame(view: mediaPreviewPanelNode.tintMaskView, frame: mediaPreviewPanelFrame)
             
             let _ = mediaPreviewPanelNode.updateLayout(width: mediaPreviewPanelFrame.width, leftInset: 0.0, rightInset: 0.0, bottomInset: 0.0, additionalSideInsets: UIEdgeInsets(), maxHeight: 40.0, maxOverlayHeight: 40.0, isSecondary: false, transition: mediaPreviewPanelTransition, interfaceState: interfaceState, metrics: metrics, deviceMetrics: deviceMetrics, isMediaInputExpanded: false)
@@ -3113,22 +3435,32 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             })
         }
         
-        let textFieldTopContentOffset = contentHeight
-        
-        contentHeight += textInputHeight
-        contentHeight += textFieldInsets.bottom
+        let replyAccessoryHeight = placesWegramReplyBelowInput ? contentHeight : 0.0
+        let contentLayout = WegramComposerContentLayout(fieldHeight: textInputHeight, accessoryHeight: contentHeight, accessoryBelow: placesWegramReplyBelowInput)
+        let textFieldTopContentOffset = contentLayout.textOriginY
+
+        contentHeight = contentLayout.contentHeight
+        if !self.usesWegramLayout {
+            contentHeight += textFieldInsets.bottom
+        }
         
         let previousTextInputContainerBackgroundFrame = self.textInputContainerBackgroundView.frame
         let textInputContainerBackgroundFrame = CGRect(x: hideOffset.x + leftInset + textFieldInsets.left, y: hideOffset.y + textFieldInsets.top, width: textInputWidth, height: contentHeight)
-        let textInputFrame = textInputContainerBackgroundFrame
+        let textInputFrame = CGRect(origin: textInputContainerBackgroundFrame.origin, size: CGSize(width: textInputContainerBackgroundFrame.width, height: textInputContainerBackgroundFrame.height - replyAccessoryHeight))
         
         transition.updateFrame(view: self.accessoryPanelContainer, frame: CGRect(origin: CGPoint(), size: textInputContainerBackgroundFrame.size))
         transition.updateFrame(view: self.textInputContainerBackgroundView, frame: textInputContainerBackgroundFrame)
         
-        self.updateCounterTextNode(backgroundSize: textInputContainerBackgroundFrame.size, transition: transition)
+        self.updateCounterTextNode(backgroundSize: textInputFrame.size, transition: transition)
         
         let textInputContainerBackgroundTransition = ComponentTransition(transition)
-        self.textInputContainerBackgroundView.update(size: textInputContainerBackgroundFrame.size, cornerRadius: floor(minimalInputHeight * 0.5), isDark: interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintColor, isInteractive: true, transition: textInputContainerBackgroundTransition)
+        let inputCornerRadius: CGFloat = self.usesWegramLayout ? 5.0 : floor(minimalInputHeight * 0.5)
+        self.textInputContainerBackgroundView.update(size: textInputContainerBackgroundFrame.size, cornerRadius: inputCornerRadius, isDark: interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintColor, isInteractive: !self.usesWegramLayout, isVisible: !self.usesWegramLayout, transition: textInputContainerBackgroundTransition)
+        let inputContentView = self.textInputContainerBackgroundView.contentView
+        inputContentView.backgroundColor = self.usesWegramLayout ? (interfaceState.theme.overallDarkAppearance ? UIColor(rgb: 0x2c2c2c) : .white) : .clear
+        inputContentView.layer.cornerRadius = self.usesWegramLayout ? 5.0 : 0.0
+        inputContentView.layer.borderWidth = self.usesWegramLayout ? UIScreenPixel : 0.0
+        inputContentView.layer.borderColor = (interfaceState.theme.overallDarkAppearance ? UIColor(rgb: 0x3a3a3a) : UIColor(rgb: 0xe5e5e5)).cgColor
         
         transition.updateFrame(layer: self.textInputBackgroundNode.layer, frame: textInputContainerBackgroundFrame)
         transition.updateAlpha(node: self.textInputBackgroundNode, alpha: audioRecordingItemsAlpha)
@@ -3148,7 +3480,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         }
         
         var hasSendAsButton = false
-        if let sendAsPeers = interfaceState.sendAsPeers, !sendAsPeers.isEmpty && interfaceState.editMessageState == nil {
+        if let sendAsPeers = interfaceState.sendAsPeers, !sendAsPeers.isEmpty && interfaceState.editMessageState == nil && !self.usesWegramControls {
             hasSendAsButton = true
         }
         
@@ -3184,11 +3516,17 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             }
         }
         
-        if interfaceState.slowmodeState == nil || isScheduledMessages, let contextPlaceholder = interfaceState.inputTextPanelState.contextPlaceholder {
+        if interfaceState.slowmodeState == nil || isScheduledMessages, let sourcePlaceholder = interfaceState.inputTextPanelState.contextPlaceholder {
             let placeholderLayout = TextNode.asyncLayout(self.contextPlaceholderNode)
-            let contextPlaceholder = NSMutableAttributedString(attributedString: contextPlaceholder)
-            contextPlaceholder.addAttribute(.foregroundColor, value: placeholderColor.withAlphaComponent(1.0), range: NSRange(location: 0, length: contextPlaceholder.length))
-            let (placeholderSize, placeholderApply) = placeholderLayout(TextNodeLayoutArguments(attributedString: contextPlaceholder, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: width - leftInset - rightInset - textFieldInsets.left - textFieldInsets.right - actualTextInputViewInternalInsets.left - actualTextInputViewInternalInsets.right - accessoryButtonsWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+            let contextPlaceholder: NSAttributedString
+            if self.usesWegramControls {
+                contextPlaceholder = wegramInlinePlaceholder(sourcePlaceholder, color: placeholderColor.withAlphaComponent(1.0))
+            } else {
+                let value = NSMutableAttributedString(attributedString: sourcePlaceholder)
+                value.addAttribute(.foregroundColor, value: placeholderColor.withAlphaComponent(1.0), range: NSRange(location: 0, length: value.length))
+                contextPlaceholder = value
+            }
+            let (placeholderSize, placeholderApply) = placeholderLayout(TextNodeLayoutArguments(attributedString: contextPlaceholder, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: self.usesWegramControls ? max(0, textInputFrame.width - actualTextInputViewInternalInsets.left - actualTextInputViewInternalInsets.right) : width - leftInset - rightInset - textFieldInsets.left - textFieldInsets.right - actualTextInputViewInternalInsets.left - actualTextInputViewInternalInsets.right - accessoryButtonsWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
             let tintContextPlaceholder = NSMutableAttributedString(attributedString: contextPlaceholder)
             tintContextPlaceholder.addAttribute(.foregroundColor, value: UIColor.black, range: NSRange(location: 0, length: tintContextPlaceholder.length))
             let contextPlaceholderNode = placeholderApply()
@@ -3212,7 +3550,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             } else {
                 placeholderTransition = .immediate
             }
-            placeholderTransition.updateFrame(node: contextPlaceholderNode, frame: CGRect(origin: CGPoint(x: actualTextInputViewInternalInsets.left, y: hideOffset.y + textFieldInsets.top + actualTextInputViewInternalInsets.top + textInputViewRealInsets.top + UIScreenPixel + (accessoryPanel != nil ? 52.0 : 0.0)), size: placeholderSize.size))
+            placeholderTransition.updateFrame(node: contextPlaceholderNode, frame: CGRect(origin: CGPoint(x: actualTextInputViewInternalInsets.left, y: self.usesWegramControls ? actualTextInputViewInternalInsets.top + textInputViewRealInsets.top + UIScreenPixel + textFieldTopContentOffset : hideOffset.y + textFieldInsets.top + actualTextInputViewInternalInsets.top + textInputViewRealInsets.top + UIScreenPixel + accessoryTopOffset), size: placeholderSize.size))
             contextPlaceholderNode.view.setMonochromaticEffect(tintColor: placeholderColor)
             contextPlaceholderNode.alpha = audioRecordingItemsAlpha * placeholderColor.alpha
         } else {
@@ -3232,7 +3570,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
                 self.slowmodePlaceholderNode = slowmodePlaceholderNode
                 self.textInputContainerBackgroundView.contentView.insertSubview(slowmodePlaceholderNode.view, aboveSubview: self.textPlaceholderNode.view)
             }
-            let placeholderFrame = CGRect(origin: CGPoint(x: actualTextInputViewInternalInsets.left, y: textFieldInsets.top + actualTextInputViewInternalInsets.top + textInputViewRealInsets.top + UIScreenPixel + textFieldTopContentOffset), size: CGSize(width: width - leftInset - rightInset - textFieldInsets.left - textFieldInsets.right - actualTextInputViewInternalInsets.left - actualTextInputViewInternalInsets.right - accessoryButtonsWidth, height: 30.0))
+            let placeholderFrame = CGRect(origin: CGPoint(x: actualTextInputViewInternalInsets.left, y: (self.usesWegramControls ? 0 : textFieldInsets.top) + actualTextInputViewInternalInsets.top + textInputViewRealInsets.top + UIScreenPixel + textFieldTopContentOffset), size: CGSize(width: self.usesWegramControls ? max(0, textInputFrame.width - actualTextInputViewInternalInsets.left - actualTextInputViewInternalInsets.right) : width - leftInset - rightInset - textFieldInsets.left - textFieldInsets.right - actualTextInputViewInternalInsets.left - actualTextInputViewInternalInsets.right - accessoryButtonsWidth, height: 30.0))
             slowmodePlaceholderNode.updateState(slowmodeState)
             if slowmodePlaceholderNode.bounds.isEmpty {
                 slowmodePlaceholderNode.frame = placeholderFrame
@@ -3248,7 +3586,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
 
         if (interfaceState.slowmodeState != nil && rightSlowModeInset.isZero && !isScheduledMessages && interfaceState.editMessageState == nil) || interfaceState.inputTextPanelState.contextPlaceholder != nil {
             self.textPlaceholderNode.isHidden = true
-            self.slowmodePlaceholderNode?.isHidden = inputHasText
+            self.slowmodePlaceholderNode?.isHidden = inputHasText || (self.usesWegramControls && self.wegramHasMediaDraft)
         } else {
             self.textPlaceholderNode.isHidden = inputHasText
             self.slowmodePlaceholderNode?.isHidden = true
@@ -3263,6 +3601,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         }
         for (item, button) in self.accessoryItemButtons.reversed() {
             let buttonSize = CGSize(width: button.buttonWidth, height: minimalInputHeight)
+            button.isHidden = self.usesWegramControls
             button.updateLayout(item: item, size: buttonSize)
             let buttonFrame = CGRect(origin: CGPoint(x: nextButtonTopRight.x - buttonSize.width, y: nextButtonTopRight.y + floor((minimalInputHeight - buttonSize.height) / 2.0)), size: buttonSize)
             if button.superview == nil {
@@ -3408,6 +3747,10 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         if inputHasText || self.extendedSearchLayout || hasMediaDraft || interfaceState.interfaceState.forwardMessageIds != nil || hasSlowmodeButton || isEditingMedia {
             mediaActionButtonsFrame.origin.x = width + 8.0
         }
+        if self.usesWegramControls && self.wegramComposerMode != .text {
+            mediaActionButtonsFrame = CGRect(x: textInputFrame.minX, y: textInputFrame.maxY - mediaActionButtonsSize.height, width: textInputFrame.width, height: mediaActionButtonsSize.height)
+        }
+        self.mediaActionButtons.isHidden = self.customRightAction != nil || (self.usesWegramControls && self.wegramComposerMode == .text)
         transition.updateFrame(node: self.mediaActionButtons, frame: mediaActionButtonsFrame)
         if let (rect, containerSize) = self.absoluteRect {
             self.mediaActionButtons.updateAbsoluteRect(CGRect(x: rect.origin.x + mediaActionButtonsFrame.origin.x, y: rect.origin.y + mediaActionButtonsFrame.origin.y, width: mediaActionButtonsFrame.width, height: mediaActionButtonsFrame.height), within: containerSize, transition: transition)
@@ -3460,6 +3803,10 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             sendActionButtonsFrame.origin.x += (sendActionButtonsSize.width - 3.0 * 2.0) * 0.5 - 3.0
         }
         
+        if self.usesWegramControls {
+            sendActionButtonsFrame = WegramComposerLayout(field: textInputFrame, showsSend: self.wegramComposerMode.showsSend(hasText: inputHasText, hasForward: hasForward, isEditing: self.wegramIsEditing, isInlineSearch: self.extendedSearchLayout, hasMediaDraft: self.wegramHasMediaDraft), sendButtonWidth: self.wegramSendButtonWidth).action
+            sendActionButtonsFrame.size = sendActionButtonsSize
+        }
         transition.updateTransformScale(node: self.sendActionButtons, scale: CGPoint(x: sendActionsScale, y: sendActionsScale))
         transition.updatePosition(node: self.sendActionButtons, position: sendActionButtonsFrame.center)
         
@@ -3508,12 +3855,28 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             }
         }
         
-        let searchLayoutClearButtonSize = CGSize(width: 46.0, height: 40.0)
+        let clearHost = self.usesWegramControls ? self.glassBackgroundContainer.contentView : self.textInputContainerBackgroundView.contentView
+        if self.searchLayoutClearButton.superview !== clearHost {
+            clearHost.addSubview(self.searchLayoutClearButton)
+            clearHost.addSubview(self.searchLayoutClearButtonIcon)
+        }
+        self.searchLayoutClearButton.isUserInteractionEnabled = !self.usesWegramControls || (self.extendedSearchLayout && !self.wegramHasMediaDraft)
+        self.searchLayoutClearButton.isAccessibilityElement = !self.usesWegramControls || (self.extendedSearchLayout && !self.wegramHasMediaDraft)
+        self.searchLayoutClearButton.accessibilityLabel = interfaceState.strings.VoiceOver_Editing_ClearText
+        self.searchLayoutClearButton.accessibilityIdentifier = self.usesWegramControls ? "Wegram.Composer.ClearInlineSearch" : nil
+        self.searchLayoutClearButtonIcon.isHidden = self.usesWegramControls && self.searchActivityIndicator != nil
+        self.searchLayoutClearButtonIcon.tintMask.isHidden = self.usesWegramControls
+        self.searchLayoutClearButtonIcon.tintColor = self.usesWegramControls ? WegramNavigationColors(isDark: interfaceState.theme.overallDarkAppearance).control : interfaceState.theme.chat.inputPanel.inputControlColor
+        let searchLayoutClearButtonSize = CGSize(width: self.usesWegramControls ? 40.0 : 46.0, height: 40.0)
         self.mediaActionButtons.micButton.isHidden = additionalSideInsets.right > 0.0
         self.mediaActionButtons.micButtonTintMaskView.isHidden = self.mediaActionButtons.micButton.isHidden
 
-        let clearButtonFrame = CGRect(origin: CGPoint(x: textInputContainerBackgroundFrame.width - searchLayoutClearButtonSize.width, y: textInputFrame.maxY - 40.0 + floor((40.0 - searchLayoutClearButtonSize.height) * 0.5)), size: searchLayoutClearButtonSize)
+        let clearButtonFrame = self.usesWegramControls ? WegramComposerLayout(field: textInputFrame, showsSend: false).action : CGRect(origin: CGPoint(x: textInputContainerBackgroundFrame.width - searchLayoutClearButtonSize.width, y: textInputFrame.maxY - 40.0 + floor((40.0 - searchLayoutClearButtonSize.height) * 0.5)), size: searchLayoutClearButtonSize)
         transition.updateFrame(layer: self.searchLayoutClearButton.layer, frame: clearButtonFrame)
+        if let indicator = self.searchActivityIndicator {
+            let size = indicator.measure(CGSize(width: 100, height: 100))
+            transition.updateFrame(node: indicator, frame: CGRect(x: floor((clearButtonFrame.width - size.width) / 2), y: floor((clearButtonFrame.height - size.height) / 2), width: size.width, height: size.height))
+        }
         if let image = self.searchLayoutClearButtonIcon.image {
             let clearIconFrame = CGRect(origin: CGPoint(x: floor((searchLayoutClearButtonSize.width - image.size.width) / 2.0), y: floor((searchLayoutClearButtonSize.height - image.size.height) / 2.0)), size: image.size)
             
@@ -3525,7 +3888,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         var isAIButtonVisible = false
         var attachmentPillHeight: CGFloat = 40.0
         let inputHasNonWhitespaceText = !(self.richTextInputNode?.inputContentIsEmptyWhitespaceTrimmed ?? true)
-        if self.isAIEnabled, inputHasNonWhitespaceText, let node = self.richTextInputNode {
+        if !self.usesWegramControls, self.isAIEnabled, inputHasNonWhitespaceText, let node = self.richTextInputNode {
             let threeLineHeight = self.threeLineFieldHeight(forWidth: baseWidth, node: node, metrics: metrics, bottomInset: bottomInset, textFieldInsets: textFieldInsets)
             if textInputHeight >= threeLineHeight - 0.5 {
                 isAIButtonVisible = true
@@ -3533,9 +3896,14 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             }
         }
 
+        if self.usesWegramControls {
+            attachmentButtonX = WegramComposerLayout(field: textInputFrame, showsSend: self.wegramComposerMode.showsSend(hasText: inputHasText, hasForward: hasForward, isEditing: self.wegramIsEditing, isInlineSearch: self.extendedSearchLayout, hasMediaDraft: self.wegramHasMediaDraft), sendButtonWidth: self.wegramSendButtonWidth).action.minX
+        }
+        self.attachmentButtonBackground.isHidden = self.usesWegramControls && (inputHasText || hasForward || self.wegramIsEditing || hasMediaDraft || isRecording)
+        self.attachmentButtonDisabledNode.isHidden = !isSlowmodeActive || isMediaEnabled || (self.usesWegramControls && (inputHasText || hasForward || self.wegramIsEditing || hasMediaDraft || isRecording))
         let attachmentButtonFrame = CGRect(origin: CGPoint(x: attachmentButtonX, y: textInputFrame.maxY - attachmentPillHeight), size: CGSize(width: 40.0, height: attachmentPillHeight))
         attachmentButtonX += 40.0 + 6.0
-        self.attachmentButtonBackground.update(size: attachmentButtonFrame.size, cornerRadius: 40.0 * 0.5, isDark: interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintColor, isInteractive: true, transition: ComponentTransition(transition))
+        self.attachmentButtonBackground.update(size: attachmentButtonFrame.size, cornerRadius: 40.0 * 0.5, isDark: interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintColor, isInteractive: !self.usesWegramLayout, isVisible: !self.usesWegramLayout, transition: ComponentTransition(transition))
 
         transition.updateFrame(layer: self.attachmentButtonBackground.layer, frame: attachmentButtonFrame)
         // + tap target + disabled overlay + icon are pinned to the BOTTOM 40x40 slot of the capsule.
@@ -3688,6 +4056,10 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         if let mediaDraftState = interfaceState.interfaceState.mediaDraftState, case .audio = mediaDraftState.contentType {
             viewOnceIsVisible = true
             recordMoreIsVisible = true
+        }
+        if self.usesWegramControls && hasMediaDraft {
+            viewOnceIsVisible = false
+            recordMoreIsVisible = false
         }
                 
         /*var clippingDelta: CGFloat = 0.0
@@ -3872,7 +4244,66 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         transition.updateFrame(view: self.glassBackgroundContainer, frame: containerFrame)
         self.glassBackgroundContainer.update(size: containerFrame.size, isDark: interfaceState.theme.overallDarkAppearance, transition: ComponentTransition(transition))
         
-        return contentHeight
+        let composerLayout = WegramComposerLayout(field: textInputFrame, showsSend: self.wegramComposerMode.showsSend(hasText: inputHasText, hasForward: hasForward, isEditing: self.wegramIsEditing, isInlineSearch: self.extendedSearchLayout, hasMediaDraft: self.wegramHasMediaDraft), sendButtonWidth: self.wegramSendButtonWidth)
+        self.wegramVoiceButton.isHidden = !self.usesWegramControls || isRecording
+        self.wegramVoiceButton.isEnabled = hasMediaDraft || !self.wegramUsesMoreButton || !self.wegramComposerShortcuts.isEmpty || self.isAIEnabled
+        self.wegramEmojiButton.isHidden = !self.usesWegramControls || isRecording
+        transition.updateFrame(view: self.wegramVoiceButton, frame: composerLayout.voice)
+        transition.updateFrame(node: self.wegramSendAsReferenceNode, frame: composerLayout.voice)
+        transition.updateFrame(view: self.wegramEmojiButton, frame: composerLayout.emoji)
+        self.wegramVoiceButton.setImage(hasMediaDraft ? UIImage(bundleImageName: "Chat/Context Menu/Delete")?.withRenderingMode(.alwaysTemplate) : self.wegramUsesMoreButton ? self.wegramMoreImage : (self.wegramComposerMode == .text ? self.wegramVoiceImage : self.wegramKeyboardImage), for: .normal)
+        var emojiImage = self.wegramEmojiImage
+        let primaryInput = wegramComposerPrimaryInputItem(interfaceState.inputTextPanelState.accessoryItems)
+        for (item, button) in self.accessoryItemButtons where item == primaryInput {
+            switch item {
+            case let .input(_, mode), let .botInput(_, mode):
+                if case .keyboard = mode { emojiImage = self.wegramKeyboardImage }
+                self.wegramEmojiButton.accessibilityLabel = button.accessibilityLabel
+            default: break
+            }
+        }
+        if hasMediaDraft {
+            emojiImage = self.wegramMoreImage
+            self.wegramEmojiButton.accessibilityLabel = interfaceState.strings.Common_More
+        }
+        self.wegramEmojiButton.setImage(emojiImage, for: .normal)
+        let wegramControlColor = WegramNavigationColors(isDark: interfaceState.theme.overallDarkAppearance).control
+        self.wegramVoiceButton.tintColor = wegramControlColor
+        self.wegramEmojiButton.tintColor = wegramControlColor
+        self.wegramVoiceButton.accessibilityLabel = hasMediaDraft ? interfaceState.strings.Common_Delete : self.wegramUsesMoreButton ? interfaceState.strings.Common_More : (self.wegramComposerMode == .text ? "切换到语音输入" : "切换到键盘输入")
+        var voiceActions: [UIAccessibilityCustomAction] = []
+        if !self.wegramUsesMoreButton { voiceActions.append(UIAccessibilityCustomAction(name: "录制视频消息", target: self, selector: #selector(self.wegramVideoAccessibility))) }
+        for shortcut in self.wegramComposerShortcuts {
+            voiceActions.append(UIAccessibilityCustomAction(name: shortcut.title, actionHandler: { [weak self] _ in
+                return self?.performWegramComposerShortcut(shortcut.action) ?? false
+            }))
+        }
+        self.wegramVoiceButton.accessibilityCustomActions = voiceActions
+        let holdsRecording = self.usesWegramControls && self.wegramComposerMode != .text
+        self.textInputNodeClippingContainer.isHidden = holdsRecording || (self.usesWegramControls && hasMediaDraft)
+        self.contextPlaceholderNode?.isHidden = self.usesWegramControls && hasMediaDraft
+        self.counterTextNode.isHidden = self.usesWegramControls && hasMediaDraft
+        self.mediaActionButtons.micButton.hidesIdleIcon = holdsRecording
+        self.wegramHoldLabel.isHidden = !holdsRecording || isRecording
+        self.wegramHoldLabel.text = self.wegramComposerMode == .video ? "按住拍摄" : "按住说话"
+        self.wegramHoldLabel.font = Font.regular(chatTextInputBaseFontSize(for: interfaceState.fontSize))
+        self.wegramHoldLabel.textColor = interfaceState.theme.chat.inputPanel.primaryTextColor
+        self.wegramHoldLabel.frame = self.mediaActionButtons.micButton.bounds
+        if holdsRecording && !isRecording {
+            self.mediaActionButtons.micButton.accessibilityLabel = self.wegramHoldLabel.text
+            self.mediaActionButtons.micButton.accessibilityHint = "按住录制，上滑锁定，左滑取消"
+        }
+        if self.usesWegramControls && (self.presentationInterfaceState?.sendPaidMessageStars == nil || self.wegramIsEditing || self.wegramHasMediaDraft || self.wegramComposerMode != .text) { self.textPlaceholderNode.isHidden = true }
+        let resultHeight = contentHeight + (self.usesWegramLayout ? textFieldInsets.top + textFieldInsets.bottom : 0.0)
+        self.wegramPanelBackground.isHidden = !self.usesWegramLayout
+        self.wegramPanelBackground.updateColor(color: UIColor(rgb: interfaceState.theme.overallDarkAppearance ? 0x1e1e1e : 0xf7f7f7).withAlphaComponent(0.9), transition: transition)
+        // Custom keyboards draw their own background below the composer.
+        let panelBackgroundSize = CGSize(width: width, height: resultHeight + (self.wegramHasCustomInput ? 0.0 : bottomInset))
+        transition.updateFrame(view: self.wegramPanelBackground, frame: CGRect(origin: .zero, size: panelBackgroundSize))
+        self.wegramPanelBackground.update(size: panelBackgroundSize, transition: transition)
+        self.wegramPanelSeparator.backgroundColor = interfaceState.theme.overallDarkAppearance ? UIColor(rgb: 0x343434) : UIColor(rgb: 0xd9d9d9)
+        self.wegramPanelSeparator.frame = CGRect(x: 0, y: 0, width: width, height: UIScreenPixel)
+        return resultHeight
     }
     
     @objc private func slowModeButtonPressed() {
@@ -3955,7 +4386,8 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             return
         }
         
-        let absoluteFrame = self.viewOnceButton.view.convert(self.viewOnceButton.bounds, to: parentController.view)
+        let sourceView: UIView = self.usesWegramControls && self.wegramHasMediaDraft ? self.wegramEmojiButton : self.viewOnceButton.view
+        let absoluteFrame = sourceView.convert(sourceView.bounds, to: parentController.view)
         let location = CGRect(origin: CGPoint(x: absoluteFrame.midX - 20.0, y: absoluteFrame.midY), size: CGSize())
         
         let tooltipController = TooltipScreen(
@@ -4549,13 +4981,14 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
         if let interfaceState = self.presentationInterfaceState {
             if (interfaceState.slowmodeState != nil && !isScheduledMessages && interfaceState.editMessageState == nil) || interfaceState.inputTextPanelState.contextPlaceholder != nil {
                 self.textPlaceholderNode.isHidden = true
-                self.slowmodePlaceholderNode?.isHidden = inputHasText
+                self.slowmodePlaceholderNode?.isHidden = inputHasText || (self.usesWegramControls && self.wegramHasMediaDraft)
             } else {
                 self.textPlaceholderNode.isHidden = inputHasText
                 self.slowmodePlaceholderNode?.isHidden = true
             }
         }
         
+        if self.usesWegramControls && (self.presentationInterfaceState?.sendPaidMessageStars == nil || self.wegramIsEditing || self.wegramHasMediaDraft || self.wegramComposerMode != .text) { self.textPlaceholderNode.isHidden = true }
         if let expandButton = self.expandButton {
             let transition: ContainedViewLayoutTransition = .immediate
             let inputHasText = !(self.richTextInputNode?.inputContentIsEmptyWhitespaceTrimmed ?? true)
@@ -4616,7 +5049,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             keepSendButtonEnabled = true
         }
         
-        if self.extendedSearchLayout {
+        if self.extendedSearchLayout && !(self.usesWegramControls && self.wegramHasMediaDraft) {
             hideMicButton = true
             
             if !self.sendActionButtons.sendContainerNode.alpha.isZero {
@@ -4812,6 +5245,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
             //self.searchLayoutClearImageNode.isHidden = false
             searchActivityIndicator.removeFromSupernode()
         }
+        self.searchLayoutClearButtonIcon.isHidden = self.usesWegramControls && value
     }
     
     public func chatInputTextNodeShouldReturn(modifierFlags: UIKeyModifierFlags) -> Bool {
@@ -4896,6 +5330,11 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     }
     
     public func chatInputTextNodeDidBeginEditing() {
+        if self.usesWegramControls && self.wegramComposerMode != .text && self.presentationInterfaceState?.inputTextPanelState.mediaRecordingState == nil {
+            self.wegramComposerMode = .text
+            self.requestLayout()
+            self.updateHeight(false)
+        }
         guard let interfaceInteraction = self.interfaceInteraction, let presentationInterfaceState = self.presentationInterfaceState else {
             return
         }
@@ -5686,6 +6125,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     }
     
     @objc func searchLayoutClearButtonPressed() {
+        if self.usesWegramControls && (!self.extendedSearchLayout || self.wegramHasMediaDraft) { return }
         if let interfaceInteraction = self.interfaceInteraction {
             interfaceInteraction.updateTextInputStateAndMode { textInputState, inputMode in
                 var mentionQueryRange: NSRange?
@@ -5856,6 +6296,12 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     public func frameForAccessoryButton(_ item: ChatTextInputAccessoryItem) -> CGRect? {
         for (buttonItem, buttonNode) in self.accessoryItemButtons {
             if buttonItem == item {
+                if self.usesWegramControls {
+                    if item == wegramComposerPrimaryInputItem(self.presentationInterfaceState?.inputTextPanelState.accessoryItems ?? []) {
+                        return self.wegramEmojiButton.isHidden ? nil : self.view.convert(self.wegramEmojiButton.bounds, from: self.wegramEmojiButton)
+                    }
+                    return nil
+                }
                 return self.view.convert(buttonNode.bounds.insetBy(dx: 0.0, dy: 6.0), from: buttonNode)
             }
         }
@@ -5867,7 +6313,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     }
     
     public func frameForAttachmentButton() -> CGRect? {
-        if !self.attachmentButtonBackground.alpha.isZero {
+        if !self.attachmentButtonBackground.isHidden && !self.attachmentButtonBackground.alpha.isZero {
             return self.attachmentButtonBackground.frame.insetBy(dx: 0.0, dy: -4.0).offsetBy(dx: 0.0, dy: 0.0)
         }
         return nil
@@ -5881,7 +6327,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     }
     
     public func frameForInputActionButton() -> CGRect? {
-        if !self.mediaActionButtons.alpha.isZero && self.mediaActionButtons.frame.minX < self.bounds.width {
+        if !self.mediaActionButtons.isHidden && !self.mediaActionButtons.alpha.isZero && self.mediaActionButtons.frame.minX < self.bounds.width {
             return self.mediaActionButtons.frame.insetBy(dx: 0.0, dy: -4.0).offsetBy(dx: -3.0, dy: 0.0)
         }
         return nil
@@ -5890,6 +6336,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     public func frameForStickersButton() -> CGRect? {
         for (item, button) in self.accessoryItemButtons {
             if case let .input(_, inputMode) = item, case .stickers = inputMode {
+                if self.usesWegramControls { return self.wegramEmojiButton.isHidden ? nil : self.view.convert(self.wegramEmojiButton.bounds, from: self.wegramEmojiButton) }
                 return self.view.convert(button.bounds.insetBy(dx: 0.0, dy: 6.0), from: button)
             }
         }
@@ -5899,6 +6346,7 @@ public class ChatTextInputPanelNode: ChatInputPanelNode, ASEditableTextNodeDeleg
     public func frameForEmojiButton() -> CGRect? {
         for (item, button) in self.accessoryItemButtons {
             if case let .input(_, inputMode) = item, case .emoji = inputMode {
+                if self.usesWegramControls { return self.wegramEmojiButton.isHidden ? nil : self.view.convert(self.wegramEmojiButton.bounds, from: self.wegramEmojiButton) }
                 return self.view.convert(button.bounds.insetBy(dx: 0.0, dy: 6.0), from: button)
             }
         }

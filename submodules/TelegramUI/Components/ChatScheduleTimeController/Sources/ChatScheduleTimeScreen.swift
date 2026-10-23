@@ -587,6 +587,7 @@ private final class ChatScheduleTimeSheetContentComponent: Component {
             )
             let buttonFrame = CGRect(origin: CGPoint(x: buttonInsets.left, y: contentHeight), size: buttonSize)
             if let buttonView = self.button.view {
+                (buttonView as? ButtonComponent.View)?.updateAccessibility(label: buttonTitle, identifier: "Wegram.DatePicker.Done")
                 if buttonView.superview == nil {
                     self.addSubview(buttonView)
                 }
@@ -857,6 +858,7 @@ private final class ChatScheduleTimeSheetContentComponent: Component {
             )
             let cancelFrame = CGRect(origin: CGPoint(x: 16.0, y: 16.0), size: cancelSize)
             if let cancelView = self.cancel.view {
+                (cancelView as? GlassBarButtonComponent.View)?.updateAccessibility(label: strings.Common_Cancel, identifier: "Wegram.DatePicker.Cancel")
                 if cancelView.superview == nil {
                     self.addSubview(cancelView)
                 }

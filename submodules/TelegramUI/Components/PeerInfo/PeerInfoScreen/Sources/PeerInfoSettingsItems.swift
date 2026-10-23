@@ -83,7 +83,7 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
     
     if let settings = data.globalSettings {
         if settings.premiumGracePeriod {
-            items[.phone]!.append(PeerInfoScreenInfoItem(id: 0, title: "Your access to Telegram Premium will expire soon!", text: .markdown("Unfortunately, your latest payment didn't come through. To keep your access to exclusive features, please renew the subscription."), isWarning: true, linkAction: nil))
+            items[.phone]!.append(PeerInfoScreenInfoItem(id: 0, title: "Your access to WeGram Premium will expire soon!", text: .markdown("Unfortunately, your latest payment didn't come through. To keep your access to exclusive features, please renew the subscription."), isWarning: true, linkAction: nil))
             items[.phone]!.append(PeerInfoScreenActionItem(id: 1, text: "Restore Subscription", action: {
                 interaction.openSettings(.premiumManagement)
             }))
@@ -352,6 +352,10 @@ func settingsItems(data: PeerInfoScreenData?, context: AccountContext, presentat
         interaction.openSettings(.tips)
     }))
     
+    items[.support]!.append(PeerInfoScreenDisclosureItem(id: 3, text: "关于 WeGram", icon: PresentationResourcesSettings.faq, action: {
+        interaction.openSettings(.about)
+    }))
+
     var result: [(AnyHashable, [PeerInfoScreenItem])] = []
     for section in SettingsSection.allCases {
         if let sectionItems = items[section], !sectionItems.isEmpty {

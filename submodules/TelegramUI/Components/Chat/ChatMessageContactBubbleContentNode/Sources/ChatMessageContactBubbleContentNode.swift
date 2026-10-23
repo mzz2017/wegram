@@ -28,8 +28,10 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
     private let avatarNode: AvatarNode
     private let dateAndStatusNode: ChatMessageDateAndStatusNode
     private let titleNode: TextNode
+    private let cardLabelNode = TextNode()
     private let textNode: TextNode
     
+    private var usesWegramCard = false
     private var contact: TelegramMediaContact?
     private var contactInfo : String?
     
@@ -49,6 +51,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
         self.addSubnode(self.avatarNode)
         self.addSubnode(self.titleNode)
         self.addSubnode(self.textNode)
+        self.addSubnode(self.cardLabelNode)
         self.addSubnode(self.addButtonNode)
         self.addSubnode(self.messageButtonNode)
         
@@ -92,6 +95,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
         let statusLayout = self.dateAndStatusNode.asyncLayout()
         let makeTitleLayout = TextNode.asyncLayout(self.titleNode)
         let makeTextLayout = TextNode.asyncLayout(self.textNode)
+        let makeCardLabelLayout = TextNode.asyncLayout(self.cardLabelNode)
         let makeMessageButtonLayout = ChatMessageAttachedContentButtonNode.asyncLayout(self.messageButtonNode)
         let makeAddButtonLayout = ChatMessageAttachedContentButtonNode.asyncLayout(self.addButtonNode)
         
@@ -127,7 +131,8 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                 nameColors = nil
             }
             
-            let messageTheme = incoming ? item.presentationData.theme.theme.chat.message.incoming : item.presentationData.theme.theme.chat.message.outgoing
+            let usesWegramCard = selectedContact != nil && item.presentationData.chatBubbleCorners.usesWegramShape && item.presentationData.chatBubbleCorners.usesWegramNeutralFill
+            let messageTheme = usesWegramCard ? item.presentationData.theme.theme.chat.message.incoming : incoming ? item.presentationData.theme.theme.chat.message.incoming : item.presentationData.theme.theme.chat.message.outgoing
             let mainColor: UIColor
             var secondaryColor: UIColor?
             var tertiaryColor: UIColor?
@@ -218,7 +223,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                     
                 updatedContactInfo = info
                 
-                titleString = NSAttributedString(string: displayName, font: titleFont, textColor: mainColor)
+                titleString = NSAttributedString(string: displayName, font: usesWegramCard ? Font.regular(item.presentationData.fontSize.baseDisplaySize) : titleFont, textColor: usesWegramCard ? messageTheme.primaryTextColor : mainColor)
                 textString = NSAttributedString(string: info, font: textFont, textColor: messageTheme.primaryTextColor)
             } else {
                 updatedContactInfo = nil
@@ -227,14 +232,18 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
             let contentProperties = ChatMessageBubbleContentProperties(hidesSimpleAuthorHeader: false, headerSpacing: 0.0, hidesBackground: .never, forceFullCorners: false, forceAlignment: .none)
             
             return (contentProperties, nil, CGFloat.greatestFiniteMagnitude, { [weak self] constrainedSize, position in
+                let cardWidth = min(250, constrainedSize.width)
                 let avatarSize = CGSize(width: 40.0, height: 40.0)
                 
                 let sideInsets = layoutConstants.text.bubbleInsets.right * 2.0
                 
-                let maxTextWidth = max(1.0, constrainedSize.width - avatarSize.width - 7.0 - sideInsets)
+                let maxTextWidth = usesWegramCard ? WegramContactMessageLayout.titleWidth(cardWidth) : max(1.0, constrainedSize.width - avatarSize.width - 7.0 - sideInsets)
                 let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: textString, backgroundColor: nil, maximumNumberOfLines: 5, truncationType: .end, constrainedSize: CGSize(width: maxTextWidth, height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 
+                let label = NSAttributedString(string: WegramContactMessageLayout.label(chinese: item.presentationData.strings.baseLanguageCode.hasPrefix("zh")), font: Font.regular(floor(item.presentationData.fontSize.baseDisplaySize * 12 / 17)), textColor: messageTheme.secondaryTextColor)
+                let (cardLabelLayout, cardLabelApply) = makeCardLabelLayout(TextNodeLayoutArguments(attributedString: label, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(0, cardWidth - 24), height: .greatestFiniteMagnitude)))
+
                 var edited = false
                 if item.attributes.updatingMedia != nil {
                     edited = true
@@ -357,7 +366,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                 maxContentWidth = max(maxContentWidth, maxButtonWidth * CGFloat(buttonCount))
                 maxContentWidth = max(maxContentWidth, 220.0)
                 
-                let contentWidth = maxContentWidth + layoutConstants.text.bubbleInsets.right * 2.0
+                let contentWidth = usesWegramCard ? cardWidth : maxContentWidth + layoutConstants.text.bubbleInsets.right * 2.0
                 
                 return (contentWidth, { [weak self] boundingWidth in
                     let baseAvatarFrame = CGRect(origin: CGPoint(x: layoutConstants.text.bubbleInsets.right, y: layoutConstants.text.bubbleInsets.top), size: avatarSize)
@@ -386,7 +395,14 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                     }
                     let messageButtonFrame = CGRect(origin: CGPoint(x: layoutConstants.text.bubbleInsets.right + lineWidth, y: layoutSize.height - 24.0 - messageButtonSize.height), size: messageButtonSize)
                     let addButtonFrame = CGRect(origin: CGPoint(x: layoutConstants.text.bubbleInsets.right + lineWidth + (canMessage ? buttonWidth : 0.0), y: layoutSize.height - 24.0 - addButtonSize.height), size: addButtonSize)
-                    let avatarFrame = baseAvatarFrame.offsetBy(dx: 9.0, dy: 14.0)
+                    let cardLayout = WegramContactMessageLayout(width: boundingWidth, titleSize: titleLayout.size, labelSize: cardLabelLayout.size)
+                    if usesWegramCard {
+                        layoutSize = CGSize(width: boundingWidth, height: cardLayout.height)
+                        if let statusSizeAndApply, statusSizeAndApply.0.height > 0 {
+                            layoutSize.height += 6 + statusSizeAndApply.0.height
+                        }
+                    }
+                    let avatarFrame = usesWegramCard ? cardLayout.avatarFrame : baseAvatarFrame.offsetBy(dx: 9.0, dy: 14.0)
                     
                     var customLetters: [String] = []
                     if let selectedContact = selectedContact, selectedContact.peerId == nil {
@@ -406,6 +422,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                     return (layoutSize, { [weak self] animation, synchronousLoads, _ in
                         if let strongSelf = self {
                             strongSelf.item = item
+                            strongSelf.usesWegramCard = usesWegramCard
                             strongSelf.contact = selectedContact
                             strongSelf.contactInfo = updatedContactInfo
                             
@@ -413,22 +430,26 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                             
                             let _ = titleApply()
                             let _ = textApply()
+                            let _ = cardLabelApply()
+                            strongSelf.cardLabelNode.isHidden = !usesWegramCard
+                            strongSelf.cardLabelNode.frame = cardLayout.labelFrame
+                            strongSelf.textNode.isHidden = usesWegramCard
                             let _ = messageButtonApply(animation)
                             let _ = addButtonApply(animation)
                             
-                            strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: avatarFrame.maxX + 7.0, y: avatarFrame.minY + 1.0), size: titleLayout.size)
+                            strongSelf.titleNode.frame = usesWegramCard ? cardLayout.titleFrame : CGRect(origin: CGPoint(x: avatarFrame.maxX + 7.0, y: avatarFrame.minY + 1.0), size: titleLayout.size)
                             strongSelf.textNode.frame = CGRect(origin: CGPoint(x: avatarFrame.maxX + 7.0, y: avatarFrame.minY + 20.0), size: textLayout.size)
                             
-                            strongSelf.addButtonNode.frame = addButtonFrame
-                            strongSelf.addButtonNode.isHidden = !canAdd && canMessage
-                            strongSelf.messageButtonNode.frame = messageButtonFrame
-                            strongSelf.messageButtonNode.isHidden = !canMessage
+                            strongSelf.addButtonNode.frame = usesWegramCard ? .zero : addButtonFrame
+                            strongSelf.addButtonNode.isHidden = usesWegramCard || (!canAdd && canMessage)
+                            strongSelf.messageButtonNode.frame = usesWegramCard ? .zero : messageButtonFrame
+                            strongSelf.messageButtonNode.isHidden = usesWegramCard || !canMessage
                             
                             let backgroundInsets = layoutConstants.text.bubbleInsets
-                            let backgroundFrame = CGRect(origin: CGPoint(x: backgroundInsets.left, y: backgroundInsets.top + 5.0), size: CGSize(width: boundingWidth - layoutConstants.text.bubbleInsets.right * 2.0, height: layoutSize.height - 34.0))
+                            let backgroundFrame = usesWegramCard ? CGRect(x: 0, y: 0, width: boundingWidth, height: cardLayout.height) : CGRect(origin: CGPoint(x: backgroundInsets.left, y: backgroundInsets.top + 5.0), size: CGSize(width: boundingWidth - layoutConstants.text.bubbleInsets.right * 2.0, height: layoutSize.height - 34.0))
                             
                             if let statusSizeAndApply = statusSizeAndApply {
-                                strongSelf.dateAndStatusNode.frame = CGRect(origin: CGPoint(x: layoutConstants.text.bubbleInsets.left, y: backgroundFrame.maxY + 3.0), size: statusSizeAndApply.0)
+                                strongSelf.dateAndStatusNode.frame = CGRect(origin: CGPoint(x: layoutConstants.text.bubbleInsets.left, y: backgroundFrame.maxY + (usesWegramCard ? 6 : 3.0)), size: statusSizeAndApply.0)
                                 if strongSelf.dateAndStatusNode.supernode == nil {
                                     strongSelf.addSubnode(strongSelf.dateAndStatusNode)
                                     statusSizeAndApply.1(.None)
@@ -456,11 +477,14 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                             }
                             
                             if let peerId = selectedContact?.peerId, let peer = item.message.peers[peerId] {
-                                strongSelf.avatarNode.setPeer(context: item.context, theme: item.presentationData.theme.theme, peer: EnginePeer(peer), emptyColor: avatarPlaceholderColor, synchronousLoad: synchronousLoads)
+                                strongSelf.avatarNode.setPeer(context: item.context, theme: item.presentationData.theme.theme, peer: EnginePeer(peer), emptyColor: avatarPlaceholderColor, clipStyle: usesWegramCard ? .none : .round, synchronousLoad: synchronousLoads)
                             } else {
-                                strongSelf.avatarNode.setCustomLetters(customLetters)
+                                strongSelf.avatarNode.setCustomLetters(customLetters, clipStyle: usesWegramCard ? .none : .round)
                             }
                             
+                            strongSelf.avatarNode.cornerRadius = usesWegramCard ? 4 : 0
+                            strongSelf.avatarNode.clipsToBounds = usesWegramCard
+
                             if let forwardInfo = item.message.forwardInfo, forwardInfo.flags.contains(.isImported) {
                                 strongSelf.dateAndStatusNode.pressed = {
                                     guard let strongSelf = self, let item = strongSelf.item else {
@@ -480,7 +504,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                             }
                             
                             var pattern: MessageInlineBlockBackgroundView.Pattern?
-                            if let contactPeer, let backgroundEmojiId = contactPeer.backgroundEmojiId {
+                            if !usesWegramCard, let contactPeer, let backgroundEmojiId = contactPeer.backgroundEmojiId {
                                 pattern = MessageInlineBlockBackgroundView.Pattern(
                                     context: item.context,
                                     fileId: backgroundEmojiId,
@@ -506,7 +530,9 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                                 backgroundView.update(size: backgroundFrame.size, isTransparent: false, primaryColor: mainColor, secondaryColor: secondaryColor, thirdColor: tertiaryColor, backgroundColor: nil, pattern: pattern, patternTopRightPosition: patternTopRightPosition, animation: .None)
                             }
                             
-                            let separatorFrame = CGRect(origin: CGPoint(x: backgroundFrame.minX + 9.0, y: backgroundFrame.maxY - 36.0), size: CGSize(width: backgroundFrame.width - 18.0, height: UIScreenPixel))
+                            backgroundView.displaysFillAndLine = !usesWegramCard
+
+                            let separatorFrame = usesWegramCard ? cardLayout.separatorFrame : CGRect(origin: CGPoint(x: backgroundFrame.minX + 9.0, y: backgroundFrame.maxY - 36.0), size: CGSize(width: backgroundFrame.width - 18.0, height: UIScreenPixel))
                             
                             let actionButtonSeparator: SimpleLayer
                             if let current = strongSelf.actionButtonSeparator {
@@ -519,7 +545,7 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
                                 actionButtonSeparator.frame = separatorFrame
                             }
                             
-                            actionButtonSeparator.backgroundColor = mainColor.withMultipliedAlpha(0.2).cgColor
+                            actionButtonSeparator.backgroundColor = (usesWegramCard ? messageTheme.secondaryTextColor.withMultipliedAlpha(0.2) : mainColor.withMultipliedAlpha(0.2)).cgColor
                         }
                     })
                 })
@@ -540,10 +566,10 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
     }
     
     override public func tapActionAtPoint(_ point: CGPoint, gesture: TapLongTapOrDoubleTapGesture, isEstimating: Bool) -> ChatMessageBubbleContentTapAction {
-        if self.messageButtonNode.frame.contains(point) {
+        if !self.messageButtonNode.isHidden && self.messageButtonNode.frame.contains(point) {
             return ChatMessageBubbleContentTapAction(content: .ignore)
         }
-        if self.addButtonNode.frame.contains(point) {
+        if !self.addButtonNode.isHidden && self.addButtonNode.frame.contains(point) {
             return ChatMessageBubbleContentTapAction(content: .ignore)
         }
         if self.dateAndStatusNode.supernode != nil, let _ = self.dateAndStatusNode.hitTest(self.view.convert(point, to: self.dateAndStatusNode.view), with: nil) {
@@ -554,6 +580,10 @@ public class ChatMessageContactBubbleContentNode: ChatMessageBubbleContentNode {
     
     @objc private func contactTap(_ recognizer: UITapGestureRecognizer) {
         if case .ended = recognizer.state {
+            if self.usesWegramCard {
+                self.addButtonPressed()
+                return
+            }
             if let item = self.item {
                 var selectedContact: TelegramMediaContact?
                 for media in item.message.media {

@@ -581,3 +581,9 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramMomentsCoverStore.swift", "Sources/WegramMomentsHeaderView.swift", "Sources/WegramMomentCell.swift", "Sources/WegramMomentActionsOverlay.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramAttachmentInputNode.swift", "Sources/WegramAttachmentLayout.swift", "Sources/WegramVoiceInputView.swift", "Sources/WegramSavedConfirmationView.swift", "Sources/WegramSavedAttachmentCardView.swift"], visibility = ["//visibility:public"])
+
+exports_files(["Sources/ChatInterfaceStateNavigationButtons.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

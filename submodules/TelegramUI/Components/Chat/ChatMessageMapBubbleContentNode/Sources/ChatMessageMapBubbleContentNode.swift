@@ -21,6 +21,12 @@ private let textFont = Font.regular(14.0)
 
 public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
     private let imageNode: TransformImageNode
+    private let wegramPinNode = ASImageNode()
+    private let wegramLiveIconNode = ASImageNode()
+    private var usesWegramLiveLocation = false
+    private var mediaHidden = false
+    private var hiddenMedia: [EngineRawMedia]?
+    private var appliedSnapshotSize: CGSize?
     private let pinNode: ChatMessageLiveLocationPositionNode
     private let dateAndStatusNode: ChatMessageDateAndStatusNode
     private let titleNode: TextNode
@@ -43,7 +49,12 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
         super.init(lottieSettings: lottieSettings)
         
         self.addSubnode(self.imageNode)
+        self.wegramPinNode.isUserInteractionEnabled = false
+        self.wegramPinNode.contentMode = .scaleToFill
+        self.imageNode.addSubnode(self.wegramPinNode)
         self.addSubnode(self.pinNode)
+        self.wegramLiveIconNode.isUserInteractionEnabled = false
+        self.addSubnode(self.wegramLiveIconNode)
     }
     
     override public func accessibilityActivate() -> Bool {
@@ -76,6 +87,7 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
         let makeTextLayout = TextNode.asyncLayout(self.textNode)
         
         let previousMedia = self.media
+        let previousSnapshotSize = self.appliedSnapshotSize
         
         return { [weak self] item, layoutConstants, preparePosition, _, constrainedSize, _ in
             var selectedMedia: TelegramMediaMap?
@@ -99,8 +111,18 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 incoming = false
             }
             
+            let usesWegramCard = item.presentationData.chatBubbleCorners.usesWegramShape && item.presentationData.chatBubbleCorners.usesWegramNeutralFill
+                && selectedMedia.map(WegramMapMessageLayout.supports) == true && item.message.media.contains(where: { $0 is TelegramMediaMap })
+            let usesWegramLive = item.presentationData.chatBubbleCorners.usesWegramShape && !item.presentationData.chatBubbleCorners.usesWegramNeutralFill
+                && selectedMedia.map(WegramLiveLocationMessageLayout.supports) == true && item.message.media.contains(where: { $0 is TelegramMediaMap })
+                && item.message.groupingKey == nil && item.associatedData.subject == nil && !item.associatedData.isRecentActions
+                && !item.presentationData.isPreview && item.message.adAttribute == nil && item.attributes.updatingMedia == nil
+            let messageTheme = item.presentationData.chatBubbleCorners.messageColors(theme: item.presentationData.theme.theme, incoming: incoming)
+
             let bubbleInsets: UIEdgeInsets
-            if case .color = item.presentationData.theme.wallpaper {
+            if usesWegramCard || usesWegramLive {
+                bubbleInsets = .zero
+            } else if case .color = item.presentationData.theme.wallpaper {
                 bubbleInsets = UIEdgeInsets()
             } else {
                 bubbleInsets = layoutConstants.image.bubbleInsets
@@ -111,7 +133,11 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
             
             let imageSize: CGSize
             if let selectedMedia = selectedMedia {
-                if activeLiveBroadcastingTimeout != nil || selectedMedia.venue != nil {
+                if usesWegramCard {
+                    imageSize = WegramMapMessageLayout.imageSize(width: constrainedSize.width)
+                    titleString = NSAttributedString(string: WegramMapMessageLayout.title(selectedMedia, fallback: item.presentationData.strings.Message_Location), font: Font.regular(item.presentationData.fontSize.baseDisplaySize), textColor: messageTheme.primaryTextColor)
+                    textString = NSAttributedString(string: WegramMapMessageLayout.address(selectedMedia), font: Font.regular(floor(item.presentationData.fontSize.baseDisplaySize * 12 / 17)), textColor: messageTheme.secondaryTextColor)
+                } else if activeLiveBroadcastingTimeout != nil || selectedMedia.venue != nil {
                     let fitWidth: CGFloat = min(constrainedSize.width, layoutConstants.image.maxDimensions.width)
                     
                     imageSize = CGSize(width: fitWidth, height: floor(fitWidth * 0.5))
@@ -131,33 +157,35 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 }
                 
                 if selectedMedia.liveBroadcastingTimeout != nil {
-                    titleString = NSAttributedString(string: item.presentationData.strings.Message_LiveLocation, font: liveTitleFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
+                    if usesWegramLive {
+                        titleString = NSAttributedString(string: WegramLiveLocationMessageLayout.title(active: activeLiveBroadcastingTimeout != nil, chinese: item.presentationData.strings.baseLanguageCode.hasPrefix("zh")), font: Font.regular(item.presentationData.fontSize.baseDisplaySize), textColor: activeLiveBroadcastingTimeout != nil ? messageTheme.primaryTextColor : messageTheme.secondaryTextColor)
+                        textString = nil
+                    } else {
+                        titleString = NSAttributedString(string: item.presentationData.strings.Message_LiveLocation, font: liveTitleFont, textColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.primaryTextColor : item.presentationData.theme.theme.chat.message.outgoing.primaryTextColor)
+                    }
                 }
             } else {
                 imageSize = CGSize(width: 75.0, height: 75.0)
             }
             
             var updateImageSignal: Signal<(TransformImageArguments) -> DrawingContext?, NoError>?
-            if let selectedMedia = selectedMedia, previousMedia == nil || !previousMedia!.isEqual(to: selectedMedia) {
-                var updated = true
-                if let previousMedia = previousMedia {
-                    if previousMedia.latitude.isEqual(to: selectedMedia.latitude) && previousMedia.longitude.isEqual(to: selectedMedia.longitude) {
-                        updated = false
-                    }
-                }
-                if updated {
+            if let selectedMedia {
+                let coordinateChanged = previousMedia == nil || previousMedia!.latitude != selectedMedia.latitude || previousMedia!.longitude != selectedMedia.longitude
+                if coordinateChanged || previousSnapshotSize != imageSize {
                     updateImageSignal = chatMapSnapshotImage(engine: item.context.engine, resource: MapSnapshotMediaResource(latitude: selectedMedia.latitude, longitude: selectedMedia.longitude, width: Int32(imageSize.width), height: Int32(imageSize.height)))
                 }
             }
-            
+
             let maximumWidth: CGFloat
-            if activeLiveBroadcastingTimeout != nil || selectedMedia?.venue != nil {
+            if usesWegramLive {
+                maximumWidth = min(250, constrainedSize.width)
+            } else if activeLiveBroadcastingTimeout != nil || selectedMedia?.venue != nil {
                 maximumWidth = imageSize.width + bubbleInsets.left + bubbleInsets.right
             } else {
                 maximumWidth = imageSize.width + bubbleInsets.left + bubbleInsets.right
             }
             
-            let contentProperties = ChatMessageBubbleContentProperties(hidesSimpleAuthorHeader: true, headerSpacing: 5.0, hidesBackground: (activeLiveBroadcastingTimeout == nil && selectedMedia?.venue == nil) ? .emptyWallpaper : .never, forceFullCorners: false, forceAlignment: .none)
+            let contentProperties = ChatMessageBubbleContentProperties(hidesSimpleAuthorHeader: !(usesWegramCard || usesWegramLive), headerSpacing: usesWegramCard || usesWegramLive ? 0 : 5.0, hidesBackground: !(usesWegramCard || usesWegramLive) && (activeLiveBroadcastingTimeout == nil && selectedMedia?.venue == nil) ? .emptyWallpaper : .never, forceFullCorners: false, forceAlignment: .none)
             
             var mode: ChatMessageLiveLocationPositionNode.Mode = .location(selectedMedia)
             if let selectedMedia = selectedMedia, let peer = item.message.author {
@@ -171,7 +199,13 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 let imageCorners: ImageCorners
                 let maxTextWidth: CGFloat
                 
-                if activeLiveBroadcastingTimeout != nil || selectedMedia?.venue != nil {
+                if usesWegramLive {
+                    imageCorners = ImageCorners()
+                    maxTextWidth = WegramLiveLocationMessageLayout.textWidth(constrainedSize.width)
+                } else if usesWegramCard {
+                    imageCorners = ImageCorners(topLeft: .Corner(0), topRight: .Corner(0), bottomLeft: .Corner(4), bottomRight: .Corner(4))
+                    maxTextWidth = max(0, imageSize.width - 24)
+                } else if activeLiveBroadcastingTimeout != nil || selectedMedia?.venue != nil {
                     var relativePosition = position
                     if case let .linear(top, _) = position {
                         relativePosition = .linear(top: top, bottom: .Neighbour(false, .text, .default))
@@ -185,8 +219,8 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                     imageCorners = chatMessageBubbleImageContentCorners(relativeContentPosition: position, normalRadius: layoutConstants.image.defaultCornerRadius, mergedRadius: layoutConstants.image.mergedCornerRadius, mergedWithAnotherContentRadius: layoutConstants.image.contentMergedCornerRadius, layoutConstants: layoutConstants, chatPresentationData: item.presentationData)
                 }
                 
-                let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(1.0, maxTextWidth), height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
-                let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: textString, backgroundColor: nil, maximumNumberOfLines: 2, truncationType: .end, constrainedSize: CGSize(width: max(1.0, maxTextWidth), height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+                let (titleLayout, titleApply) = makeTitleLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: usesWegramLive ? 2 : 1, truncationType: .end, constrainedSize: CGSize(width: max(1.0, maxTextWidth), height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+                let (textLayout, textApply) = makeTextLayout(TextNodeLayoutArguments(attributedString: textString, backgroundColor: nil, maximumNumberOfLines: usesWegramCard ? 1 : 2, truncationType: .end, constrainedSize: CGSize(width: max(1.0, maxTextWidth), height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 
                 var edited = false
                 if item.attributes.updatingMedia != nil {
@@ -233,7 +267,7 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 } else {
                     switch position {
                     case .linear(_, .None), .linear(_, .Neighbour(true, _, _)):
-                        if selectedMedia?.venue != nil || activeLiveBroadcastingTimeout != nil {
+                        if usesWegramCard || usesWegramLive || selectedMedia?.venue != nil || activeLiveBroadcastingTimeout != nil {
                             if incoming {
                                 statusType = .BubbleIncoming
                             } else {
@@ -280,7 +314,7 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                         dateText: dateText,
                         type: statusType,
                         layoutInput: .standalone(reactionSettings: shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) ? ChatMessageDateAndStatusNode.StandaloneReactionSettings() : nil),
-                        constrainedSize: CGSize(width: constrainedSize.width, height: CGFloat.greatestFiniteMagnitude),
+                        constrainedSize: CGSize(width: usesWegramLive ? min(250, constrainedSize.width) : usesWegramCard ? imageSize.width : constrainedSize.width, height: CGFloat.greatestFiniteMagnitude),
                         availableReactions: item.associatedData.availableReactions,
                         savedMessageTags: item.associatedData.savedMessageTags,
                         reactions: dateReactionsAndPeers.reactions,
@@ -305,14 +339,16 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                 }
               
                 let contentWidth: CGFloat
-                if let selectedMedia = selectedMedia, selectedMedia.liveBroadcastingTimeout != nil || selectedMedia.venue != nil {
+                if usesWegramLive {
+                    contentWidth = WegramLiveLocationMessageLayout.width(available: constrainedSize.width, title: titleLayout.size.width, status: statusSize.width)
+                } else if let selectedMedia = selectedMedia, selectedMedia.liveBroadcastingTimeout != nil || selectedMedia.venue != nil {
                     contentWidth = imageSize.width + bubbleInsets.left + bubbleInsets.right
                 } else {
                     contentWidth = imageSize.width + bubbleInsets.left + bubbleInsets.right
                 }
                 
                 return (contentWidth, { [weak self] boundingWidth in
-                    let arguments = TransformImageArguments(corners: imageCorners, imageSize: imageSize, boundingSize: imageSize, intrinsicInsets: UIEdgeInsets(), emptyColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.mediaPlaceholderColor : item.presentationData.theme.theme.chat.message.outgoing.mediaPlaceholderColor)
+                    let arguments = TransformImageArguments(corners: imageCorners, imageSize: imageSize, boundingSize: imageSize, intrinsicInsets: UIEdgeInsets(), emptyColor: usesWegramCard ? messageTheme.mediaPlaceholderColor : incoming ? item.presentationData.theme.theme.chat.message.incoming.mediaPlaceholderColor : item.presentationData.theme.theme.chat.message.outgoing.mediaPlaceholderColor)
                     
                     let imageLayoutSize = CGSize(width: imageSize.width + bubbleInsets.left + bubbleInsets.right, height: imageSize.height + bubbleInsets.top + bubbleInsets.bottom)
                     
@@ -323,7 +359,17 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                     
                     let imageFrame: CGRect
                     
-                    if activeLiveBroadcastingTimeout != nil || selectedMedia?.venue != nil {
+                    let cardLayout = WegramMapMessageLayout(width: imageSize.width, titleSize: titleLayout.size, addressSize: textLayout.size, statusSize: statusSize)
+                    let liveLayout = WegramLiveLocationMessageLayout(width: boundingWidth, titleSize: titleLayout.size, statusSize: statusSize, incoming: incoming)
+                    if usesWegramLive {
+                        layoutSize = CGSize(width: boundingWidth, height: liveLayout.height)
+                        imageFrame = baseImageFrame
+                        statusFrame = liveLayout.statusFrame
+                    } else if usesWegramCard {
+                        layoutSize = CGSize(width: boundingWidth, height: cardLayout.height)
+                        imageFrame = baseImageFrame.offsetBy(dx: cardLayout.imageFrame.minX, dy: cardLayout.imageFrame.minY)
+                        statusFrame = cardLayout.statusFrame
+                    } else if activeLiveBroadcastingTimeout != nil || selectedMedia?.venue != nil {
                         layoutSize = CGSize(width: imageLayoutSize.width + bubbleInsets.left, height: imageLayoutSize.height + 1.0 + titleLayout.size.height + 1.0 + textLayout.size.height + 10.0)
 
                         imageFrame = baseImageFrame.offsetBy(dx: bubbleInsets.left, dy: bubbleInsets.top)
@@ -341,8 +387,24 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                         if let strongSelf = self {
                             strongSelf.item = item
                             strongSelf.media = selectedMedia
-                            
+                            strongSelf.mediaHidden = strongSelf.hiddenMedia?.contains(where: { hidden in selectedMedia.map { hidden.isEqual(to: $0) } ?? false }) ?? false
+                            strongSelf.usesWegramLiveLocation = usesWegramLive
+                            strongSelf.imageNode.isHidden = usesWegramLive || strongSelf.mediaHidden
+                            strongSelf.wegramLiveIconNode.isHidden = !usesWegramLive || strongSelf.mediaHidden
+                            strongSelf.titleNode.isHidden = usesWegramLive && strongSelf.mediaHidden
+                            strongSelf.textNode.isHidden = usesWegramLive && strongSelf.mediaHidden
+                            strongSelf.dateAndStatusNode.isHidden = usesWegramLive && strongSelf.mediaHidden
+                            if usesWegramLive {
+                                let iconColor = activeLiveBroadcastingTimeout == nil ? messageTheme.secondaryTextColor : incoming ? UIColor(rgb: 0x07c160) : UIColor.white.withAlphaComponent(0.65)
+                                strongSelf.wegramLiveIconNode.image = WegramLiveLocationMessageLayout.icon(color: iconColor)
+                                strongSelf.wegramLiveIconNode.frame = liveLayout.iconFrame
+                            }
                             strongSelf.imageNode.frame = imageFrame
+                            strongSelf.imageNode.clipsToBounds = usesWegramCard
+                            strongSelf.pinNode.isHidden = usesWegramCard || usesWegramLive
+                            strongSelf.wegramPinNode.isHidden = !usesWegramCard
+                            if usesWegramCard { strongSelf.wegramPinNode.image = WegramMapMessageLayout.pinImage }
+
                             
                             var transition: ContainedViewLayoutTransition = .immediate
                             if case let .System(duration, _) = animation {
@@ -352,9 +414,18 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                             let _ = titleApply()
                             let _ = textApply()
                             
-                            transition.updateAlpha(node: strongSelf.dateAndStatusNode, alpha: activeLiveBroadcastingTimeout != nil ? 0.0 : 1.0)
+                            transition.updateAlpha(node: strongSelf.dateAndStatusNode, alpha: activeLiveBroadcastingTimeout != nil && !usesWegramLive ? 0.0 : 1.0)
                             
-                            if let selectedMedia = selectedMedia, selectedMedia.liveBroadcastingTimeout != nil {
+                            if usesWegramLive {
+                                strongSelf.titleNode.frame = liveLayout.titleFrame
+                                strongSelf.textNode.frame = .zero
+                                transition.updateAlpha(node: strongSelf.titleNode, alpha: 1)
+                            } else if usesWegramCard {
+                                strongSelf.titleNode.frame = cardLayout.titleFrame
+                                strongSelf.textNode.frame = cardLayout.addressFrame
+                                transition.updateAlpha(node: strongSelf.titleNode, alpha: 1.0)
+                                transition.updateAlpha(node: strongSelf.textNode, alpha: 1.0)
+                            } else if let selectedMedia = selectedMedia, selectedMedia.liveBroadcastingTimeout != nil {
                                 strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: imageFrame.minX + 7.0, y: imageFrame.maxY + 6.0), size: titleLayout.size)
                                 strongSelf.textNode.frame = CGRect(origin: CGPoint(x: imageFrame.minX + 7.0, y: imageFrame.maxY + 6.0 + titleLayout.size.height), size: textLayout.size)
                                 transition.updateAlpha(node: strongSelf.titleNode, alpha: activeLiveBroadcastingTimeout != nil ? 1.0 : 0.0)
@@ -374,7 +445,7 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                                     strongSelf.addSubnode(strongSelf.dateAndStatusNode)
                                 }
                                 statusApply(animation)
-                                strongSelf.dateAndStatusNode.frame = statusFrame.offsetBy(dx: imageFrame.minX, dy: imageFrame.minY)
+                                strongSelf.dateAndStatusNode.frame = usesWegramCard || usesWegramLive ? statusFrame : statusFrame.offsetBy(dx: imageFrame.minX, dy: imageFrame.minY)
                             } else if strongSelf.dateAndStatusNode.supernode != nil {
                                 strongSelf.dateAndStatusNode.removeFromSupernode()
                             }
@@ -396,6 +467,7 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                             }
                             
                             if let updateImageSignal = updateImageSignal {
+                                strongSelf.appliedSnapshotSize = imageSize
                                 strongSelf.imageNode.setSignal(updateImageSignal)
                             }
                             
@@ -470,10 +542,21 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
                                 }
                             }
                             
+                            strongSelf.liveTimerNode?.isHidden = usesWegramLive
+                            strongSelf.liveTextNode?.isHidden = usesWegramLive
                             imageApply()
                             
                             strongSelf.pinNode.frame = CGRect(origin: CGPoint(x: imageFrame.minX + floor((imageFrame.size.width - pinSize.width) / 2.0), y: imageFrame.minY + floor(imageFrame.size.height * 0.5 - 10.0 - pinSize.height / 2.0)), size: pinSize)
                             
+                            if usesWegramCard {
+                                let originalPinFrame = strongSelf.pinNode.frame.offsetBy(dx: -imageFrame.minX, dy: -imageFrame.minY)
+                                if let frame = WegramMapMessageLayout.pinFrame(originalFrame: originalPinFrame, mapSize: imageFrame.size) {
+                                    strongSelf.wegramPinNode.frame = frame
+                                    strongSelf.wegramPinNode.isHidden = false
+                                } else {
+                                    strongSelf.wegramPinNode.isHidden = true
+                                }
+                            }
                             pinApply()
                             
                             if let forwardInfo = item.message.forwardInfo, forwardInfo.flags.contains(.isImported) {
@@ -507,6 +590,8 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
     
     override public func transitionNode(messageId: EngineMessage.Id, media: EngineRawMedia, adjustRect: Bool) -> (ASDisplayNode, CGRect, () -> (UIView?, UIView?))? {
         if self.item?.message.id == messageId, let currentMedia = self.media, currentMedia.isEqual(to: media) {
+            // The compact live bubble has no map image to expand.
+            if self.usesWegramLiveLocation { return nil }
             let imageNode = self.imageNode
             return (self.imageNode, self.imageNode.bounds, { [weak imageNode] in
                 return (imageNode?.view.snapshotContentTree(unhide: true), nil)
@@ -516,6 +601,7 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
     }
     
     override public func updateHiddenMedia(_ media: [EngineRawMedia]?) -> Bool {
+        self.hiddenMedia = media
         var mediaHidden = false
         if let currentMedia = self.media, let media = media {
             for item in media {
@@ -526,7 +612,14 @@ public class ChatMessageMapBubbleContentNode: ChatMessageBubbleContentNode {
             }
         }
         
-        self.imageNode.isHidden = mediaHidden
+        self.mediaHidden = mediaHidden
+        self.imageNode.isHidden = self.usesWegramLiveLocation || mediaHidden
+        if self.usesWegramLiveLocation {
+            self.wegramLiveIconNode.isHidden = mediaHidden
+            self.titleNode.isHidden = mediaHidden
+            self.textNode.isHidden = mediaHidden
+            self.dateAndStatusNode.isHidden = mediaHidden
+        }
         return mediaHidden
     }
     

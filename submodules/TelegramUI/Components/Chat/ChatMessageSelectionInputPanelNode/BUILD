@@ -1,5 +1,7 @@
 load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 
+exports_files(["Sources/WegramMessageSelectionBar.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
 swift_library(
     name = "ChatMessageSelectionInputPanelNode",
     module_name = "ChatMessageSelectionInputPanelNode",

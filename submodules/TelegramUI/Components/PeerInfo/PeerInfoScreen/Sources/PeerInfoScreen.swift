@@ -166,6 +166,7 @@ enum PeerInfoSettingsSection {
     case notificationsAndSounds
     case privacyAndSecurity
     case passwordSetup
+    case twoStepVerification
     case dataAndStorage
     case appearance
     case language
@@ -191,6 +192,7 @@ enum PeerInfoSettingsSection {
     case stars
     case ton
     case wallet
+    case about
 }
 
 enum PeerInfoReportType {
@@ -249,6 +251,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
     var refreshMessageTagStatsDisposable: Disposable?
     
     var searchDisplayController: SearchDisplayController?
+    private var wegramMemberSearchActive = false
     
     private var _interaction: PeerInfoInteraction?
     var interaction: PeerInfoInteraction {
@@ -420,7 +423,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             break
         }
         
-        self.paneContainerNode = PeerInfoPaneContainerNode(context: context, updatedPresentationData: controller.updatedPresentationData, peerId: peerId, chatLocation: chatLocation, sharedMediaFromForumTopic: sharedMediaFromForumTopic, chatLocationContextHolder: chatLocationContextHolder, isMediaOnly: self.isMediaOnly, initialPaneKey: initialPaneKey, initialStoryFolderId: switchToStoryFolder, initialGiftCollectionId: switchToGiftCollection, switchToMediaTarget: switchToMediaTarget)
+        self.paneContainerNode = PeerInfoPaneContainerNode(context: context, updatedPresentationData: controller.updatedPresentationData, peerId: peerId, chatLocation: chatLocation, sharedMediaFromForumTopic: sharedMediaFromForumTopic, chatLocationContextHolder: chatLocationContextHolder, isMediaOnly: self.isMediaOnly, initialPaneKey: initialPaneKey, initialStoryFolderId: switchToStoryFolder, initialGiftCollectionId: switchToGiftCollection, switchToMediaTarget: switchToMediaTarget, usesWegramContactStoriesFallback: controller.wegramContactInitialStories)
         
         super.init()
         
@@ -3318,7 +3321,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
         })
     }
     
-    private func requestDeleteContact() {
+    func requestDeleteContact() {
         let actionSheet = ActionSheetController(presentationData: self.presentationData)
         let dismissAction: () -> Void = { [weak actionSheet] in
             actionSheet?.dismissAnimated()
@@ -3943,7 +3946,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
         self.controller?.push(controller)
     }
     
-    private func editingOpenNameColorSetup() {
+    fileprivate func editingOpenNameColorSetup() {
         guard let controller = self.controller, !controller.presentAccountFrozenInfoIfNeeded() else {
             return
         }
@@ -4525,7 +4528,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
         })
     }
     
-    func openLeavePeer(delete: Bool) {
+    func openLeavePeer(delete: Bool, wegramCanProceed: (() -> Bool)? = nil) {
         let _ = (self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: self.peerId))
         |> deliverOnMainQueue).startStandalone(next: { [weak self] peer in
             guard let strongSelf = self, let peer = peer else {
@@ -4565,15 +4568,21 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
                 actionText = strongSelf.presentationData.strings.PeerInfo_AlertLeaveAction
             }
             
-            strongSelf.view.endEditing(true)
-
-            strongSelf.controller?.present(textAlertController(context: strongSelf.context, title: title, text: text, actions: [
-                TextAlertAction(type: .destructiveAction, title: actionText, action: {
-                    self?.deletePeerChat(peer: peer, globally: delete)
-                }),
-                TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {
-                })
-            ], parseMarkdown: true), in: .window(.root))
+            let leave: () -> Void = { [weak self] in
+                guard wegramCanProceed?() ?? true else { return }
+                self?.deletePeerChat(peer: peer, globally: delete)
+            }
+            if let wegramCanProceed {
+                guard wegramCanProceed() else { return }
+                strongSelf.view.endEditing(true)
+                strongSelf.controller?.present(wegramConfirmationController(updatedPresentationData: strongSelf.controller?.updatedPresentationData ?? (initial: strongSelf.presentationData, signal: strongSelf.context.sharedContext.presentationData), title: title, text: text, cancelTitle: strongSelf.presentationData.strings.Common_Cancel, actionTitle: actionText, parseMarkdown: true, action: leave), in: .window(.root))
+            } else {
+                strongSelf.view.endEditing(true)
+                strongSelf.controller?.present(textAlertController(context: strongSelf.context, title: title, text: text, actions: [
+                    TextAlertAction(type: .destructiveAction, title: actionText, action: leave),
+                    TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {})
+                ], parseMarkdown: true), in: .window(.root))
+            }
         })
     }
     
@@ -4893,7 +4902,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
         }
     }
     
-    func activateSearch() {
+    func activateSearch(members: Bool = false) {
         guard let (layout, navigationBarHeight) = self.validLayout, self.searchDisplayController == nil else {
             return
         }
@@ -4909,6 +4918,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             return
         }
         
+        self.wegramMemberSearchActive = members
         self.headerNode.navigationButtonContainer.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.3, timingFunction: CAMediaTimingFunctionName.easeOut.rawValue)
         
         if self.isSettings {
@@ -4995,15 +5005,15 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
                     fieldStyle: .glass
                 )
             }
-        } else if let currentPaneKey = self.paneContainerNode.currentPaneKey, case .members = currentPaneKey {
-            self.searchDisplayController = SearchDisplayController(presentationData: self.presentationData, mode: .navigation, placeholder: self.presentationData.strings.Common_Search, hasBackground: true, hasSeparator: true, contentNode: ChannelMembersSearchContainerNode(context: self.context, forceTheme: nil, peerId: self.peerId, mode: .searchMembers, filters: [], searchContext: self.groupMembersSearchContext, openPeer: { [weak self] peer, participant in
+        } else if members || self.paneContainerNode.currentPaneKey == .members {
+            self.searchDisplayController = SearchDisplayController(presentationData: self.presentationData, mode: .navigation, placeholder: self.presentationData.strings.Common_Search, hasBackground: true, hasSeparator: true, contentNode: ChannelMembersSearchContainerNode(context: self.context, forceTheme: nil, peerId: self.peerId, mode: .searchMembers, filters: [], searchContext: self.groupMembersSearchContext, usesWegramAppearance: members, openPeer: { [weak self] peer, participant in
                 self?.openPeer(peerId: peer.id, navigation: .info(nil))
             }, updateActivity: { _ in
             }, pushController: { [weak self] c in
                 self?.controller?.push(c)
             }), cancel: { [weak self] in
                 self?.deactivateSearch()
-            }, fieldStyle: .glass)
+            }, fieldStyle: .glass, usesWegramAppearance: members)
         } else if let currentPaneKey = self.paneContainerNode.currentPaneKey, case .savedMessagesChats = currentPaneKey {
             let contentNode = ChatListSearchContainerNode(context: self.context, animationCache: self.context.animationCache, animationRenderer: self.context.animationRenderer, filter: [.removeSearchHeader], requestPeerType: nil, location: .savedMessagesChats(peerId: self.context.account.peerId), folder: nil, displaySearchFilters: false, hasDownloads: false, initialFilter: .chats, openPeer: { [weak self] peer, _, _, _ in
                 guard let self else {
@@ -5133,6 +5143,7 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             return
         }
         self.searchDisplayController = nil
+        self.wegramMemberSearchActive = false
         searchDisplayController.deactivate(placeholder: nil)
         
         controller.dismissAllTooltips()
@@ -5781,6 +5792,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             |> filter { $0 }
             |> take(1))
         }
+        self.controller?.updateWegramMe(layout: layout, transition: transition)
+        self.controller?.updateWegramContact(layout: layout, transition: transition)
+        self.controller?.updateWegramGroup(layout: layout, transition: transition)
     }
     
     private func updateBackgroundColor() {
@@ -5870,9 +5884,15 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
             self.paneContainerNode.update(size: self.paneContainerNode.bounds.size, sideInset: layout.safeInsets.left, topInset: paneContainerTopInset, bottomInset: bottomInset, deviceMetrics: layout.deviceMetrics, visibleHeight: visibleHeight, expansionFraction: self.initialExpandPanes ? 1.0 : effectiveAreaExpansionFraction, presentationData: self.presentationData, data: self.data, areTabsHidden: self.headerNode.customNavigationContentNode != nil, disableTabSwitching: disableTabSwitching, navigationHeight: navigationHeight, transition: transition)
           
             transition.updateFrame(node: self.headerNode.navigationButtonContainer, frame: CGRect(origin: CGPoint(x: layout.safeInsets.left, y: layout.statusBarHeight ?? 0.0), size: CGSize(width: layout.size.width - layout.safeInsets.left * 2.0, height: navigationBarHeight)))
-            var searchBarContainerY: CGFloat = layout.statusBarHeight ?? 0.0
-            searchBarContainerY += floor((navigationBarHeight - 44.0) * 0.5) + 2.0
-            transition.updateFrame(node: self.headerNode.searchBarContainer, frame: CGRect(origin: CGPoint(x: layout.safeInsets.left, y: searchBarContainerY), size: CGSize(width: layout.size.width - layout.safeInsets.left * 2.0, height: navigationBarHeight)))
+            let searchBarContainerFrame: CGRect
+            if self.wegramMemberSearchActive {
+                // The WeGram search bar applies the safe insets internally.
+                searchBarContainerFrame = CGRect(x: 0, y: layout.statusBarHeight ?? 0, width: layout.size.width, height: 52)
+            } else {
+                let y = (layout.statusBarHeight ?? 0) + floor((navigationBarHeight - 44.0) * 0.5) + 2.0
+                searchBarContainerFrame = CGRect(x: layout.safeInsets.left, y: y, width: layout.size.width - layout.safeInsets.left * 2.0, height: navigationBarHeight)
+            }
+            transition.updateFrame(node: self.headerNode.searchBarContainer, frame: searchBarContainerFrame)
             transition.updateFrame(node: self.headerNode.searchContainer, frame: CGRect(origin: CGPoint(), size: layout.size))
                         
             var leftNavigationButtons: [PeerInfoHeaderNavigationButtonSpec] = []
@@ -5882,7 +5902,9 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
                 rightNavigationButtons.append(PeerInfoHeaderNavigationButtonSpec(key: .done, isForExpandedView: false))
             } else {
                 if self.isSettings {
-                    leftNavigationButtons.append(PeerInfoHeaderNavigationButtonSpec(key: .qrCode, isForExpandedView: false))
+                    if self.controller?.parent is TabBarController {
+                        leftNavigationButtons.append(PeerInfoHeaderNavigationButtonSpec(key: .qrCode, isForExpandedView: false))
+                    }
                     rightNavigationButtons.append(PeerInfoHeaderNavigationButtonSpec(key: .search, isForExpandedView: false))
                     rightNavigationButtons.append(PeerInfoHeaderNavigationButtonSpec(key: .edit, isForExpandedView: false))
                 } else if self.isMyProfile {
@@ -6301,10 +6323,11 @@ final class PeerInfoScreenNode: ViewControllerTracingNode, PeerInfoScreenNodePro
         self.headerNode.navigationButtonContainer.performAction?(.selectionDone, nil, nil)
     }
     
-    func openAvatarGallery(peer: EnginePeer, entries: [AvatarGalleryEntry], centralEntry: AvatarGalleryEntry?, animateTransition: Bool) {
+    func openAvatarGallery(peer: EnginePeer, entries: [AvatarGalleryEntry], centralEntry: AvatarGalleryEntry?, animateTransition: Bool, usesWegramProfileLayout: Bool = false) {
         let entriesPromise = Promise<[AvatarGalleryEntry]>(entries)
-        let galleryController = AvatarGalleryController(context: self.context, peer: peer, sourceCorners: .round, remoteEntries: entriesPromise, skipInitial: true, centralEntryIndex: centralEntry.flatMap { entries.firstIndex(of: $0) }, replaceRootController: { controller, ready in
-        })
+        let needsInitialEntries = usesWegramProfileLayout && entries.isEmpty
+        let galleryController = AvatarGalleryController(context: self.context, peer: peer, sourceCorners: usesWegramProfileLayout ? .roundRect(6) : .round, remoteEntries: needsInitialEntries ? nil : entriesPromise, skipInitial: !needsInitialEntries, centralEntryIndex: centralEntry.flatMap { entries.firstIndex(of: $0) }, replaceRootController: { controller, ready in
+        }, usesWegramProfileLayout: usesWegramProfileLayout)
         galleryController.openAvatarSetup = { [weak self] completion in
             self?.controller?.openAvatarForEditing(fromGallery: true, completion: { _ in
                 completion()
@@ -6398,6 +6421,25 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
     private var tabBarItemDisposable: Disposable?
 
     var avatarPickerHolder: Any?
+    var wegramMeView: WegramMeView?
+    public var wegramPinnedMessageMenuItem: ((ViewController) -> ContextMenuItem?)?
+    var wegramGroupDetailsEnabled = true
+    private var wegramGroupView: WegramGroupContentView?
+    private var wegramGroupAvatars: [Int64: AvatarNode] = [:]
+    private let wegramGroupMembersDisposable = MetaDisposable()
+    private var wegramGroupMembersContext: PeerInfoMembersContext?
+    private var wegramGroupMembersState: PeerInfoMembersState?
+    private let wegramGroupPinStateDisposable = MetaDisposable()
+    private var wegramGroupPinObserving = false
+    private var wegramGroupPinObservationGeneration = 0
+    private var wegramGroupIsPinned: Bool?
+    private var wegramGroupPinIsBusy = false
+    private var wegramInitialGroupCall = false
+    private let wegramInitialGroupCallDisposable = MetaDisposable()
+    var wegramContactDetailsEnabled = true
+    fileprivate var wegramContactInitialStories = false
+    private var wegramContactView: WegramContactContentView?
+    private var wegramContactAvatar: AvatarNode?
     
     var controllerNode: PeerInfoScreenNode {
         return self.displayNode as! PeerInfoScreenNode
@@ -6677,13 +6719,9 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
                 )
             }
             
-            let icon: UIImage?
-            if useSpecialTabBarIcons() {
-                icon = UIImage(bundleImageName: "Chat List/Tabs/Holiday/IconSettings")
-            } else {
-                icon = UIImage(bundleImageName: "Chat List/Tabs/IconSettings")
-            }
-            
+            let icon = WegramIcon.me.image()
+            let selectedIcon = WegramIcon.me.image(selected: true)
+
             let tabBarItem: Signal<(String, UIImage?, UIImage?, String?, Bool, Bool), NoError> = combineLatest(queue: .mainQueue(), self.context.sharedContext.presentationData, notificationsAuthorizationStatus.get(), notificationsWarningSuppressed.get(), context.engine.notices.getServerProvidedSuggestions(), accountTabBarAvatar, accountTabBarAvatarBadge)
             |> map { presentationData, notificationsAuthorizationStatus, notificationsWarningSuppressed, suggestions, accountTabBarAvatar, accountTabBarAvatarBadge -> (String, UIImage?, UIImage?, String?, Bool, Bool) in
                 let notificationsWarning = shouldDisplayNotificationsPermissionWarning(status: notificationsAuthorizationStatus, suppressed:  notificationsWarningSuppressed)
@@ -6693,15 +6731,15 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
                 if accountTabBarAvatarBadge > 0 {
                     otherAccountsBadge = compactNumericCountString(Int(accountTabBarAvatarBadge), decimalSeparator: presentationData.dateTimeFormat.decimalSeparator)
                 }
-                return (presentationData.strings.Settings_Title, accountTabBarAvatar?.0 ?? icon, accountTabBarAvatar?.1 ?? icon, notificationsWarning || phoneNumberWarning || passwordWarning ? "!" : otherAccountsBadge, accountTabBarAvatar != nil, presentationData.reduceMotion)
+                return (presentationData.strings.Settings_Title, icon, selectedIcon, notificationsWarning || phoneNumberWarning || passwordWarning ? "!" : otherAccountsBadge, false, presentationData.reduceMotion)
             }
             
-            self.tabBarItemDisposable = (tabBarItem |> deliverOnMainQueue).startStrict(next: { [weak self] title, image, selectedImage, badgeValue, isAvatar, reduceMotion in
+            self.tabBarItemDisposable = (tabBarItem |> deliverOnMainQueue).startStrict(next: { [weak self] _, image, selectedImage, badgeValue, isAvatar, _ in
                 if let strongSelf = self {
-                    strongSelf.tabBarItem.title = title
+                    strongSelf.tabBarItem.title = "我"
                     strongSelf.tabBarItem.image = image
                     strongSelf.tabBarItem.selectedImage = selectedImage
-                    strongSelf.tabBarItem.animationName = isAvatar || reduceMotion ? nil : "TabSettings"
+                    strongSelf.tabBarItem.animationName = nil
                     strongSelf.tabBarItem.ringSelection = isAvatar
                     strongSelf.tabBarItem.badgeValue = badgeValue
                 }
@@ -6717,7 +6755,16 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
         }
         
         self.scrollToTop = { [weak self] in
-            self?.controllerNode.scrollToTop()
+            guard let self else { return }
+            if let view = self.wegramMeView, !view.isHidden {
+                view.scrollToTop()
+            } else if let view = self.wegramGroupView, !view.isHidden {
+                view.scrollToTop()
+            } else if let view = self.wegramContactView, !view.isHidden {
+                view.scrollToTop()
+            } else {
+                self.controllerNode.scrollToTop()
+            }
         }
         
         let presentationDataSignal: Signal<PresentationData, NoError>
@@ -6829,6 +6876,9 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
     }
     
     deinit {
+        self.wegramInitialGroupCallDisposable.dispose()
+        self.wegramGroupMembersDisposable.dispose()
+        self.wegramGroupPinStateDisposable.dispose()
         self.readyInternalDisposable?.dispose()
         self.presentationDataDisposable?.dispose()
         self.accountsAndPeersDisposable?.dispose()
@@ -6836,7 +6886,7 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
     }
     
     override public func loadDisplayNode() {
-        var initialPaneKey: PeerInfoPaneKey?
+        var initialPaneKey: PeerInfoPaneKey? = self.wegramContactInitialStories ? .stories : nil
         if self.switchToRecommendedChannels {
             initialPaneKey = .similarChannels
         } else if let _ = self.switchToGiftsTarget {
@@ -6909,6 +6959,7 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
     
     override public func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        self.wegramInitialGroupCallDisposable.set(nil)
 
         self.controllerNode.logoutConfirmationDisposable.set(nil)
         
@@ -6939,6 +6990,10 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
     }
     
     public func openAvatars() {
+        self.openAvatars(usesWegramProfileLayout: false)
+    }
+
+    public func openAvatars(usesWegramProfileLayout: Bool) {
         let _ = (self.context.engine.data.get(
             TelegramEngine.EngineData.Item.Peer.Peer(id: self.peerId)
         )
@@ -6946,7 +7001,11 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
             guard let self, let peer else {
                 return
             }
-            self.controllerNode.openAvatarGallery(peer: peer, entries: self.controllerNode.headerNode.avatarListNode.listContainerNode.galleryEntries, centralEntry: nil, animateTransition: false)
+            if usesWegramProfileLayout && peer.profileImageRepresentations.isEmpty {
+                self.openAvatarForEditing()
+                return
+            }
+            self.controllerNode.openAvatarGallery(peer: peer, entries: self.controllerNode.headerNode.avatarListNode.listContainerNode.galleryEntries, centralEntry: nil, animateTransition: false, usesWegramProfileLayout: usesWegramProfileLayout)
         })
     }
     
@@ -7073,6 +7132,20 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
     override public func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         
+        if self.wegramInitialGroupCall {
+            self.wegramInitialGroupCall = false
+            self.wegramInitialGroupCallDisposable.set((self.ready.get()
+            |> filter { $0 }
+            |> take(1)
+            |> deliverOnMainQueue).start(next: { [weak self] _ in
+                guard let self, self.isNodeLoaded, self.view.window != nil,
+                      (self.navigationController as? NavigationController)?.topViewController === self,
+                      !self.wegramGroupDetailsEnabled, self.wegramGroupCallAvailable,
+                      self.controllerNode.headerNode.buttonNodes[.voiceChat] != nil else { return }
+                self.controllerNode.performButtonAction(key: .voiceChat, buttonNode: nil, gesture: nil)
+            }))
+        }
+
         DispatchQueue.main.async { [weak self] in
             self?.didAppear = true
         }
@@ -7237,7 +7310,7 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
         self.controllerNode.deactivateSearch()
     }
     
-    public static func openSavedMessagesMoreMenu(context: AccountContext, sourceController: ViewController, isViewingAsTopics: Bool, sourceView: UIView, gesture: ContextGesture?) {
+    public static func openSavedMessagesMoreMenu(context: AccountContext, sourceController: ViewController, isViewingAsTopics: Bool, sourceView: UIView, gesture: ContextGesture?, additionalItems: (() -> [ContextMenuItem])? = nil) {
         let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: context.account.peerId))
         |> deliverOnMainQueue).startStandalone(next: { [sourceController] peer in
             guard let peer else {
@@ -7246,7 +7319,10 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
             
             let strings = context.sharedContext.currentPresentationData.with { $0 }.strings
             
-            var items: [ContextMenuItem] = []
+            var items: [ContextMenuItem] = additionalItems?() ?? []
+            if additionalItems == nil, let controller = sourceController as? PeerInfoScreenImpl, let item = controller.wegramPinnedMessageMenuItem?(controller) {
+                items.append(item)
+            }
             
             items.append(.action(ContextMenuActionItem(text: strings.Chat_SavedMessagesModeMenu_ViewAsChats, icon: { theme in
                 if !isViewingAsTopics {
@@ -7323,6 +7399,205 @@ public final class PeerInfoScreenImpl: ViewController, PeerInfoScreen, KeyShortc
     
     public func cancelItemSelection() {
         self.controllerNode.cancelItemSelection()
+    }
+}
+
+extension PeerInfoScreenImpl {
+    private var canDisplayWegramContact: Bool {
+        guard self.wegramContactDetailsEnabled, !self.isSettings, !self.isMyProfile,
+              self.peerId != self.context.account.peerId, self.peerId.namespace == Namespaces.Peer.CloudUser,
+              !self.avatarInitiallyExpanded, self.reactionSourceMessageId == nil, self.sourceMessageId == nil,
+              self.callMessages.isEmpty, self.hintGroupInCommon == nil, self.requestsContext == nil,
+              !self.switchToRecommendedChannels, self.switchToGiftsTarget == nil,
+              !self.switchToGroupsInCommon, self.switchToStoryFolder == nil, self.switchToMediaTarget == nil,
+              self.sharedMediaFromForumTopic == nil, case .peer = self.chatLocation,
+              let data = self.controllerNode.data, data.isContact,
+              case let .user(user) = data.peer, user.id == self.peerId,
+              user.botInfo == nil, !user.isDeleted, !user.flags.contains(.isSupport),
+              user.restrictionInfo == nil, let peer = data.peer,
+              !peer.isScam, !peer.isFake, !peer.isVerified else {
+            return false
+        }
+        return true
+    }
+
+    fileprivate func updateWegramContact(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        guard !self.isSettings, !self.isMyProfile else { return }
+        let node = self.controllerNode
+        let visible = self.canDisplayWegramContact && !node.state.isEditing && !node.headerNode.isAvatarExpanded && node.searchDisplayController == nil
+        if visible && self.wegramContactView == nil {
+            let view = WegramContactContentView(frame: .zero)
+            view.open = { [weak self] action in self?.performWegramContactAction(action) }
+            let avatar = AvatarNode(font: avatarPlaceholderFont(size: 26))
+            avatar.cornerRadius = 6
+            avatar.clipsToBounds = true
+            view.avatarHost.addSubnode(avatar)
+            self.wegramContactAvatar = avatar
+            self.wegramContactView = view
+            node.view.addSubview(view)
+        }
+        guard let view = self.wegramContactView else { return }
+        view.isHidden = !visible
+        node.scrollNode.isHidden = visible
+        node.headerNode.isHidden = visible
+        node.edgeEffectView.isHidden = visible
+        node.scrollNode.view.accessibilityElementsHidden = visible
+        node.headerNode.view.accessibilityElementsHidden = visible
+        self.navigationBar?.isHidden = visible
+        guard visible, let data = node.data, let peer = data.peer else { return }
+        let buttons = peerInfoHeaderButtons(peer: peer, cachedData: data.cachedData, isOpenedFromChat: false, isExpanded: true, videoCallsEnabled: layout.size.width > 320, isSecretChat: false, isContact: data.isContact, threadInfo: nil)
+        let content = WegramContactContent(name: peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder), username: peer.addressName, about: (data.cachedData as? CachedUserData)?.about, hasPhoto: !peer.profileImageRepresentations.isEmpty, hasStories: data.availablePanes.contains(.stories), canCall: buttons.contains(.call))
+        view.load(content, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.itemListBaseFontSize, chinese: self.presentationData.strings.baseLanguageCode.hasPrefix("zh"), statusHeight: layout.statusBarHeight ?? 0, bottomInset: layout.intrinsicInsets.bottom)
+        transition.updateFrame(view: view, frame: CGRect(x: layout.safeInsets.left, y: 0, width: layout.size.width - layout.safeInsets.left - layout.safeInsets.right, height: layout.size.height))
+        self.wegramContactAvatar?.setPeer(context: self.context, theme: self.presentationData.theme, peer: peer, clipStyle: .none, displayDimensions: CGSize(width: 64, height: 64))
+        self.wegramContactAvatar?.frame = CGRect(x: 0, y: 0, width: 64, height: 64)
+        self.wegramContactAvatar?.updateSize(size: CGSize(width: 64, height: 64))
+        node.view.bringSubviewToFront(view)
+    }
+
+    private func performWegramContactAction(_ action: WegramContactContentView.Action) {
+        if action == .back { self.dismiss(); return }
+        guard self.canDisplayWegramContact, self.wegramContactView?.isHidden == false, self.displayNode.view.window != nil,
+              let data = self.controllerNode.data, let peer = data.peer else { return }
+        switch action {
+        case .back: break
+        case .more:
+            self.openWegramContactSettings()
+        case .details:
+            self.openWegramFullContact(stories: false)
+        case .edit:
+            self.openWegramRemarkEditor()
+        case .avatar:
+            guard !peer.profileImageRepresentations.isEmpty else { return }
+            self.openAvatars()
+        case .stories:
+            guard data.availablePanes.contains(.stories) else { return }
+            self.openWegramFullContact(stories: true)
+        case .message:
+            self.controllerNode.performButtonAction(key: .message, buttonNode: nil, gesture: nil)
+        case .call:
+            let keys = self.wegramContactCallButtons()
+            guard keys.contains(.call) else { return }
+            let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+            let menu = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: self.presentationData.theme, fontSize: self.presentationData.listsFontSize))
+            var items: [ActionSheetItem] = []
+            for (key, title) in [(PeerInfoHeaderButtonKey.videoCall, chinese ? "视频通话" : "Video Call"), (.call, chinese ? "语音通话" : "Voice Call")] where keys.contains(key) {
+                items.append(ActionSheetButtonItem(title: title, action: { [weak self, weak menu] in
+                    menu?.dismissAnimated()
+                    guard let self, self.canDisplayWegramContact, self.displayNode.view.window != nil,
+                          self.wegramContactView?.isHidden == false, self.wegramContactCallButtons().contains(key) else { return }
+                    self.controllerNode.performButtonAction(key: key, buttonNode: nil, gesture: nil)
+                }))
+            }
+            menu.setItemGroups([ActionSheetItemGroup(items: items), ActionSheetItemGroup(items: [ActionSheetButtonItem(title: self.presentationData.strings.Common_Cancel, action: { [weak menu] in menu?.dismissAnimated() })])])
+            self.present(menu, in: .window(.root))
+        }
+    }
+    /// 设置备注: WeChat's 编辑备注 page over Telegram's contact name and private note, saved with the same calls
+    /// and device-contact sync as Telegram's editor (`performAction(.edit)`), which stays reachable for the rest.
+    private func openWegramRemarkEditor() {
+        guard let data = self.controllerNode.data, let peer = data.peer, case let .user(user) = peer, data.isContact else { return }
+        let context = self.context
+        let note = (data.cachedData as? CachedUserData)?.note
+        var noteLimit = 128
+        if let config = context.currentAppConfiguration.with({ $0 }).data, let value = config["contact_note_length_limit"] as? Double {
+            noteLimit = Int(value)
+        }
+        let initial = WegramRemarkEditorController.Initial(
+            name: peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder),
+            phone: user.phone.flatMap { $0.isEmpty ? nil : formatPhoneNumber(context: context, number: $0) },
+            note: note?.text ?? "",
+            noteIsFormatted: !(note?.entities.isEmpty ?? true),
+            noteLimit: noteLimit
+        )
+        let peerId = user.id
+        let controller = WegramRemarkEditorController(presentationData: self.presentationData, initial: initial, save: { [weak self] draft, completion in
+            // A single 备注名 has no first/last split, so a changed one becomes the first name.
+            let nameChanged = draft.name != initial.name
+            let nameSignal: Signal<Never, Bool> = nameChanged ? (context.engine.contacts.updateContactName(peerId: peerId, firstName: draft.name, lastName: "") |> mapError { _ in true } |> ignoreValues) : .complete()
+            let noteSignal: Signal<Never, Bool> = draft.note != initial.note ? (context.engine.contacts.updateContactNote(peerId: peerId, text: draft.note, entities: []) |> mapError { _ in true }) : .complete()
+            let _ = combineLatest(queue: Queue.mainQueue(), nameSignal, noteSignal).startStandalone(error: { _ in
+                completion(false)
+                guard let self else { return }
+                self.present(textAlertController(context: context, title: nil, text: self.presentationData.strings.Login_UnknownError, actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+            }, completed: {
+                completion(true)
+                guard nameChanged else { return }
+                let _ = (getUserPeer(engine: context.engine, peerId: peerId)
+                |> mapToSignal { peer -> Signal<Void, NoError> in
+                    guard case let .user(peer) = peer, let phone = peer.phone, !phone.isEmpty else {
+                        return .complete()
+                    }
+                    return (context.sharedContext.contactDataManager?.basicDataForNormalizedPhoneNumber(DeviceContactNormalizedPhoneNumber(rawValue: formatPhoneNumber(context: context, number: phone))) ?? .single([]))
+                    |> take(1)
+                    |> mapToSignal { records -> Signal<Void, NoError> in
+                        var signals: [Signal<DeviceContactExtendedData?, NoError>] = []
+                        if let contactDataManager = context.sharedContext.contactDataManager {
+                            for (id, basicData) in records {
+                                signals.append(contactDataManager.appendContactData(DeviceContactExtendedData(basicData: DeviceContactBasicData(firstName: draft.name, lastName: "", phoneNumbers: basicData.phoneNumbers), middleName: "", prefix: "", suffix: "", organization: "", jobTitle: "", department: "", emailAddresses: [], urls: [], addresses: [], birthdayDate: nil, socialProfiles: [], instantMessagingProfiles: [], note: ""), to: id))
+                            }
+                        }
+                        return combineLatest(signals)
+                        |> mapToSignal { _ -> Signal<Void, NoError> in
+                            return .complete()
+                        }
+                    }
+                }).startStandalone()
+            })
+        }, openFullEditor: { [weak self] in
+            guard let self, self.canDisplayWegramContact else { return }
+            self.controllerNode.headerNode.navigationButtonContainer.performAction?(.edit, nil, nil)
+        })
+        (self.navigationController as? NavigationController)?.pushViewController(controller)
+    }
+
+    /// ••• → WeChat's contact 设置 page. Telegram's full profile stays one tap away on the 朋友资料 row.
+    private func openWegramContactSettings() {
+        guard let data = self.controllerNode.data, case let .user(user) = data.peer, let navigationController = self.navigationController as? NavigationController else { return }
+        let peerId = user.id
+        var pinnedItem: ContextMenuActionItem?
+        if case let .action(item)? = self.wegramPinnedMessageMenuItem?(self) { pinnedItem = item }
+        // Rows whose Telegram flow assumes the profile is on top (pinned messages, delete) return to it first.
+        let returnToProfile: () -> Bool = { [weak self] in
+            guard let self, let navigationController = self.navigationController as? NavigationController,
+                  navigationController.viewControllers.contains(where: { $0 === self }) else { return false }
+            let _ = navigationController.popToViewController(self, animated: false)
+            return true
+        }
+        let actions = WegramContactSettingsController.Actions(
+            editRemark: { [weak self] in self?.openWegramRemarkEditor() },
+            share: user.phone.flatMap { phone in phone.isEmpty ? nil : { [weak self] in self?.controllerNode.openShareContact(peer: user, phone: phone) } },
+            pinned: pinnedItem.map { item in (title: item.text, open: {
+                guard returnToProfile() else { return }
+                item.action?(ContextMenuActionItem.Action(controller: nil, dismissWithResult: { _ in }, updateAction: { _, _ in }))
+            }) },
+            // Telegram's own gate for its Start Secret Chat item (`PeerInfoScreenPerformButtonAction`).
+            secretChat: user.id.namespace == Namespaces.Peer.CloudUser && user.id != self.context.account.peerId && user.botInfo == nil && !user.flags.contains(.isSupport) && (data.cachedData as? CachedUserData)?.sendPaidMessageStars == nil ? { [weak self] in
+                guard returnToProfile() else { return }
+                self?.controllerNode.openStartSecretChat()
+            } : nil,
+            setBlocked: { [weak self] block in self?.controllerNode.updateBlocked(block: block) },
+            report: { [weak self] in self?.controllerNode.openReport(type: .default, contextController: nil, backAction: nil) },
+            delete: { [weak self] in
+                guard returnToProfile() else { return }
+                self?.controllerNode.requestDeleteContact()
+            }
+        )
+        let isBlocked = self.context.engine.data.subscribe(TelegramEngine.EngineData.Item.Peer.IsBlocked(id: peerId))
+        |> map { $0.knownValue ?? false }
+        navigationController.pushViewController(WegramContactSettingsController(presentationData: self.presentationData, isBlocked: isBlocked, actions: actions))
+    }
+
+    private func wegramContactCallButtons() -> [PeerInfoHeaderButtonKey] {
+        guard let data = self.controllerNode.data else { return [] }
+        return peerInfoHeaderButtons(peer: data.peer, cachedData: data.cachedData, isOpenedFromChat: false, isExpanded: true, videoCallsEnabled: (self.validLayout?.layout.size.width ?? 0) > 320, isSecretChat: false, isContact: data.isContact, threadInfo: nil)
+    }
+    private func openWegramFullContact(stories: Bool) {
+        let controller = PeerInfoScreenImpl(context: self.context, updatedPresentationData: self.updatedPresentationData, peerId: self.peerId, avatarInitiallyExpanded: false, isOpenedFromChat: self.isOpenedFromChat, reactionSourceMessageId: nil, callMessages: [])
+        controller.wegramContactDetailsEnabled = false
+        controller.wegramContactInitialStories = stories
+        controller.wegramPinnedMessageMenuItem = self.wegramPinnedMessageMenuItem
+        self.push(controller)
     }
 }
 
@@ -7523,4 +7798,343 @@ struct ClearPeerHistory {
             }
         }
     }
+}
+
+
+extension PeerInfoScreenImpl {
+    private var wegramGroupQRCodeInvite: ExportedInvitation? {
+        guard let data = self.controllerNode.data, peerInfoCanAddMembers(peer: data.peer),
+              let invite = (data.cachedData as? CachedGroupData)?.exportedInvitation ?? (data.cachedData as? CachedChannelData)?.exportedInvitation,
+              case let .link(link, _, permanent, _, revoked, _, _, startDate, expireDate, usageLimit, _, _, pricing) = invite,
+              !link.isEmpty, permanent, !revoked, startDate == nil, expireDate == nil, usageLimit == nil, pricing == nil else { return nil }
+        return invite
+    }
+
+    private var currentWegramGroupMembers: [PeerInfoMember] {
+        guard let members = self.controllerNode.data?.members else { return [] }
+        switch members {
+        case let .shortList(_, list): return list
+        case let .longList(context):
+            return context === self.wegramGroupMembersContext ? (self.wegramGroupMembersState?.members ?? []) : []
+        }
+    }
+
+    private var canUseWegramGroupDetails: Bool {
+        guard self.wegramGroupDetailsEnabled, !self.isSettings, !self.isMyProfile,
+              !self.avatarInitiallyExpanded, self.reactionSourceMessageId == nil, self.sourceMessageId == nil,
+              self.callMessages.isEmpty, self.hintGroupInCommon == nil, self.requestsContext == nil,
+              !self.switchToRecommendedChannels, self.switchToGiftsTarget == nil,
+              !self.switchToGroupsInCommon, self.switchToStoryFolder == nil, self.switchToMediaTarget == nil,
+              self.sharedMediaFromForumTopic == nil, case .peer = self.chatLocation,
+              let data = self.controllerNode.data, let peer = data.peer,
+              !peer.isScam, !peer.isFake, !peer.isVerified,
+              data.peerNotificationSettings != nil, data.globalNotificationSettings != nil,
+              data.members != nil else { return false }
+        switch peer {
+        case let .legacyGroup(group):
+            return group.membership == .Member && group.migrationReference == nil
+        case let .channel(channel):
+            guard case .group = channel.info, channel.participationStatus == .member,
+                  !channel.isForumOrMonoForum, channel.restrictionInfo == nil else { return false }
+            return true
+        default: return false
+        }
+    }
+
+    fileprivate func updateWegramGroup(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
+        guard !self.isSettings, !self.isMyProfile else { return }
+        let node = self.controllerNode
+        let observePin = self.canUseWegramGroupDetails
+        if self.wegramGroupPinObserving != observePin {
+            self.wegramGroupPinObserving = observePin
+            self.wegramGroupPinObservationGeneration &+= 1
+            let generation = self.wegramGroupPinObservationGeneration
+            self.wegramGroupIsPinned = nil
+            self.wegramGroupPinStateDisposable.set(nil)
+            if observePin {
+                self.wegramGroupPinStateDisposable.set((self.context.engine.data.subscribe(
+                    TelegramEngine.EngineData.Item.Messages.ChatListGroup(id: self.peerId),
+                    TelegramEngine.EngineData.Item.Messages.ChatListIndex(id: self.peerId)
+                ) |> deliverOnMainQueue).start(next: { [weak self] group, index in
+                    guard let self, self.wegramGroupPinObserving, self.wegramGroupPinObservationGeneration == generation else { return }
+                    if group != nil, case let .chatList(index) = index { self.wegramGroupIsPinned = index.pinningIndex != nil }
+                    else { self.wegramGroupIsPinned = nil }
+                    if let layout = self.validLayout?.layout { self.updateWegramGroup(layout: layout, transition: .immediate) }
+                }))
+            }
+        }
+        let membersContext: PeerInfoMembersContext?
+        if self.canUseWegramGroupDetails, case let .longList(context) = node.data?.members { membersContext = context }
+        else { membersContext = nil }
+        if self.wegramGroupMembersContext !== membersContext {
+            self.wegramGroupMembersContext = membersContext
+            self.wegramGroupMembersState = nil
+            self.wegramGroupMembersDisposable.set(nil)
+            if let membersContext {
+                self.wegramGroupMembersDisposable.set((membersContext.state |> deliverOnMainQueue).start(next: { [weak self, weak membersContext] state in
+                    guard let self, let membersContext, self.wegramGroupMembersContext === membersContext else { return }
+                    self.wegramGroupMembersState = state
+                    if let layout = self.validLayout?.layout {
+                        self.updateWegramGroup(layout: layout, transition: .immediate)
+                    }
+                }))
+            }
+        }
+        let visible = self.canUseWegramGroupDetails && !self.currentWegramGroupMembers.isEmpty && !node.state.isEditing && !node.headerNode.isAvatarExpanded && node.searchDisplayController == nil
+        if visible && self.wegramGroupView == nil {
+            let view = WegramGroupContentView(frame: .zero)
+            view.open = { [weak self] action in self?.performWegramGroupAction(action) }
+            view.configureAvatar = { [weak self] id, host in
+                guard let self, self.wegramGroupView?.membersExpanded == true,
+                      let member = self.currentWegramGroupMembers.first(where: { $0.id.toInt64() == id }) else { return }
+                self.configureWegramGroupAvatar(member: member, host: host)
+            }
+            view.releaseAvatar = { [weak self] id, host in
+                guard let self, let avatar = self.wegramGroupAvatars[id], avatar.view.superview === host else { return }
+                self.wegramGroupAvatars.removeValue(forKey: id)?.removeFromSupernode()
+            }
+            view.loadMore = { [weak self] in
+                guard let self, self.wegramGroupView?.isHidden == false, self.wegramGroupView?.membersExpanded == true,
+                      self.displayNode.view.window != nil, (self.navigationController as? NavigationController)?.topViewController === self,
+                      self.canUseWegramGroupDetails, case let .longList(context) = self.controllerNode.data?.members,
+                      context === self.wegramGroupMembersContext,
+                      case .ready(canLoadMore: true) = self.wegramGroupMembersState?.dataState else { return false }
+                context.loadMore()
+                return true
+            }
+            self.wegramGroupView = view
+            node.view.addSubview(view)
+        }
+        guard let view = self.wegramGroupView else { return }
+        view.isHidden = !visible
+        node.scrollNode.isHidden = visible
+        node.headerNode.isHidden = visible
+        node.edgeEffectView.isHidden = visible
+        node.scrollNode.view.accessibilityElementsHidden = visible
+        node.headerNode.view.accessibilityElementsHidden = visible
+        self.navigationBar?.isHidden = visible
+        guard visible, let data = node.data, let peer = data.peer else { return }
+        transition.updateFrame(view: view, frame: CGRect(x: layout.safeInsets.left, y: 0, width: layout.size.width - layout.safeInsets.left - layout.safeInsets.right, height: layout.size.height))
+        let members = self.currentWegramGroupMembers
+        let count: Int
+        if case let .legacyGroup(group) = peer { count = group.participantCount }
+        else { count = Int((data.cachedData as? CachedChannelData)?.participantsSummary.memberCount ?? Int32(members.count)) }
+        let previewMembers = wegramGroupPreviewMembers(members, canAddMembers: peerInfoCanAddMembers(peer: peer), expanded: view.membersExpanded, columns: view.memberColumns, isOwner: { if case .creator = $0.role { return true }; return false })
+        let about: String?
+        if let cached = data.cachedData as? CachedGroupData { about = cached.about ?? "" }
+        else if let cached = data.cachedData as? CachedChannelData { about = cached.about ?? "" }
+        else { about = nil }
+        let hasMoreMembers: Bool
+        if case .ready(canLoadMore: true) = self.wegramGroupMembersState?.dataState { hasMoreMembers = true }
+        else { hasMoreMembers = false }
+        let membersLoading: Bool
+        if case .loading = self.wegramGroupMembersState?.dataState { membersLoading = true }
+        else { membersLoading = false }
+        let managementRequests = Int(data.requests?.count ?? 0)
+        let managementActions = wegramGroupManagementActions(peer: peer, pendingRequests: managementRequests)
+        let content = WegramGroupContent(name: peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder), about: about, members: previewMembers.map { .init(id: $0.id.toInt64(), name: $0.peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder)) }, memberCount: count, canAddMembers: peerInfoCanAddMembers(peer: peer), hasMoreMembers: hasMoreMembers, canShowQRCode: !(peer.addressName?.isEmpty ?? true) || self.wegramGroupQRCodeInvite != nil, isPinned: self.wegramGroupIsPinned, pinIsBusy: self.wegramGroupPinIsBusy, isMuted: peerInfoIsChatMuted(peer: peer, peerNotificationSettings: data.peerNotificationSettings, threadNotificationSettings: nil, globalNotificationSettings: data.globalNotificationSettings), canClearHistory: self.wegramGroupHistoryPermissions.map { $0.canClearForMyself != nil || $0.canClearForEveryone != nil } ?? false, canManageGroup: !managementActions.isEmpty, managementRequestCount: managementActions.contains(.requests) ? managementRequests : 0)
+        view.update(content, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.itemListBaseFontSize, chinese: self.presentationData.strings.baseLanguageCode.hasPrefix("zh"), statusHeight: layout.statusBarHeight ?? 0, bottomInset: layout.intrinsicInsets.bottom, membersLoading: membersLoading)
+        view.layoutIfNeeded()
+        if view.membersExpanded {
+            view.table.layoutIfNeeded()
+            view.requestExpandedMembersIfNeeded()
+        } else {
+            for id in Array(self.wegramGroupAvatars.keys) where view.avatarHosts[id] == nil {
+                self.wegramGroupAvatars.removeValue(forKey: id)?.removeFromSupernode()
+            }
+            for member in previewMembers {
+                guard let host = view.avatarHosts[member.id.toInt64()] else { continue }
+                self.configureWegramGroupAvatar(member: member, host: host)
+            }
+        }
+        node.view.bringSubviewToFront(view)
+    }
+
+    private func configureWegramGroupAvatar(member: PeerInfoMember, host: UIView) {
+        let avatar: AvatarNode
+        if let current = self.wegramGroupAvatars[member.id.toInt64()] { avatar = current }
+        else {
+            avatar = AvatarNode(font: avatarPlaceholderFont(size: 20))
+            avatar.cornerRadius = 4
+            avatar.clipsToBounds = true
+            self.wegramGroupAvatars[member.id.toInt64()] = avatar
+        }
+        if avatar.view.superview !== host { host.addSubnode(avatar) }
+        avatar.setPeer(context: self.context, theme: self.presentationData.theme, peer: member.peer, clipStyle: .none, displayDimensions: CGSize(width: 48, height: 48))
+        avatar.frame = CGRect(x: 0, y: 0, width: 48, height: 48)
+        avatar.updateSize(size: CGSize(width: 48, height: 48))
+    }
+
+    private func performWegramGroupAction(_ action: WegramGroupContentView.Action) {
+        guard self.wegramGroupView?.isHidden == false, self.displayNode.view.window != nil,
+              (self.navigationController as? NavigationController)?.topViewController === self else { return }
+        if action == .back { self.dismiss(); return }
+        guard self.canUseWegramGroupDetails, !self.currentWegramGroupMembers.isEmpty, let data = self.controllerNode.data, let peer = data.peer else { return }
+        switch action {
+        case .back: break
+        case .details:
+            guard !self.presentAccountFrozenInfoIfNeeded() else { return }
+            self.push(WegramGroupTitleController(context: self.context, peer: peer, updatedPresentationData: self.updatedPresentationData))
+        case .about:
+            if canEditPeerInfo(context: self.context, peer: peer, chatLocation: self.chatLocation, threadData: data.threadData) {
+                guard !self.presentAccountFrozenInfoIfNeeded() else { return }
+                self.push(WegramGroupDescriptionController(context: self.context, peer: peer, updatedPresentationData: self.updatedPresentationData))
+            } else {
+                self.push(WegramGroupDescriptionViewer(context: self.context, peerId: peer.id, updatedPresentationData: self.updatedPresentationData, fullDetails: { [weak self] in
+                    guard let self else { return nil }
+                    let controller = PeerInfoScreenImpl(context: self.context, updatedPresentationData: self.updatedPresentationData, peerId: self.peerId, avatarInitiallyExpanded: false, isOpenedFromChat: self.isOpenedFromChat, reactionSourceMessageId: nil, callMessages: [])
+                    controller.wegramGroupDetailsEnabled = false
+                    return controller
+                }))
+            }
+        case .management:
+            guard !wegramGroupManagementActions(peer: peer).isEmpty else { return }
+            self.push(WegramGroupManagementController(context: self.context, peerId: peer.id, pendingRequests: Int(data.requests?.count ?? 0), requestsContext: data.requestsContext, updatedPresentationData: self.updatedPresentationData, fullDetails: { [weak self] in
+                guard let self else { return nil }
+                let controller = PeerInfoScreenImpl(context: self.context, updatedPresentationData: self.updatedPresentationData, peerId: self.peerId, avatarInitiallyExpanded: false, isOpenedFromChat: self.isOpenedFromChat, reactionSourceMessageId: nil, callMessages: [])
+                controller.wegramGroupDetailsEnabled = false
+                return controller
+            }))
+        case .clearHistory:
+            self.openWegramGroupClearHistory()
+        case .leave:
+            self.controllerNode.openLeavePeer(delete: false, wegramCanProceed: { [weak self] in
+                guard let self, self.canPerformWegramGroupAction else { return false }
+                return !self.presentAccountFrozenInfoIfNeeded()
+            })
+        case .more:
+            self.openWegramGroupSettings()
+        case .allMembers:
+            guard let view = self.wegramGroupView else { return }
+            for avatar in self.wegramGroupAvatars.values { avatar.removeFromSupernode() }
+            self.wegramGroupAvatars.removeAll()
+            view.setMembersExpanded(!view.membersExpanded)
+            if let layout = self.validLayout?.layout { self.updateWegramGroup(layout: layout, transition: .immediate) }
+        case .qr:
+            if !(peer.addressName?.isEmpty ?? true) {
+                self.controllerNode.openQrCode()
+            } else if let invite = self.wegramGroupQRCodeInvite {
+                self.present(QrCodeScreen(context: self.context, updatedPresentationData: self.updatedPresentationData, subject: .invite(invite: invite, type: .group)), in: .window(.root))
+            }
+        case .searchMembers: self.controllerNode.activateSearch(members: true)
+        case .search: self.controllerNode.performButtonAction(key: .search, buttonNode: nil, gesture: nil)
+        case .addMember:
+            guard peerInfoCanAddMembers(peer: peer) else { return }
+            self.controllerNode.openAddMember()
+        case let .member(id):
+            guard let member = self.currentWegramGroupMembers.first(where: { $0.id.toInt64() == id }) else { return }
+            if let controller = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: nil, peer: member.peer, mode: .generic, avatarInitiallyExpanded: false, fromChat: false, requestsContext: nil) { self.push(controller) }
+        case let .pin(pinned):
+            self.setWegramGroupPinned(pinned)
+        case let .mute(muted):
+            let _ = self.context.engine.peers.updatePeerMuteSetting(peerId: peer.id, threadId: nil, muteInterval: muted ? Int32.max : 0).startStandalone()
+        }
+    }
+    private var canPerformWegramGroupAction: Bool {
+        self.isNodeLoaded && self.wegramGroupView?.isHidden == false && self.displayNode.view.window != nil && (self.navigationController as? NavigationController)?.topViewController === self && self.canUseWegramGroupDetails && !self.currentWegramGroupMembers.isEmpty
+    }
+
+    private var wegramGroupHistoryPermissions: ClearPeerHistory? {
+        guard let data = self.controllerNode.data, let peer = data.peer, let chatPeer = data.chatPeer else { return nil }
+        return ClearPeerHistory(context: self.context, peer: peer._asPeer(), chatPeer: chatPeer, cachedData: data.cachedData)
+    }
+
+    private func openWegramGroupClearHistory() {
+        guard self.canPerformWegramGroupAction, !self.presentAccountFrozenInfoIfNeeded(), let permissions = self.wegramGroupHistoryPermissions, let peer = self.controllerNode.data?.peer else { return }
+        let begin: (InteractiveHistoryClearingType) -> Void = { [weak self] type in
+            guard let self, self.canPerformWegramGroupAction, !self.presentAccountFrozenInfoIfNeeded(), let current = self.wegramGroupHistoryPermissions else { return }
+            switch type {
+            case .forEveryone: guard current.canClearForEveryone != nil else { return }
+            case .forLocalPeer: guard current.canClearForMyself != nil else { return }
+            case .scheduledMessages: return
+            }
+            self.controllerNode.openChatWithClearedHistory(type: type)
+        }
+        var actions: [(title: String, action: () -> Void)] = []
+        if permissions.canClearForEveryone != nil {
+            actions.append((title: self.presentationData.strings.Conversation_DeleteMessagesForEveryone, action: { begin(.forEveryone) }))
+        }
+        if permissions.canClearForMyself != nil {
+            actions.append((title: self.presentationData.strings.Conversation_DeleteMessagesForMe, action: { begin(.forLocalPeer) }))
+        }
+        guard !actions.isEmpty else { return }
+        self.view.endEditing(true)
+        self.present(wegramConfirmationController(updatedPresentationData: self.updatedPresentationData ?? (initial: self.presentationData, signal: self.context.sharedContext.presentationData), title: self.presentationData.strings.PeerInfo_ClearMessages, text: self.presentationData.strings.PeerInfo_ClearConfirmationGroup(peer.compactDisplayTitle).string, cancelTitle: self.presentationData.strings.Common_Cancel, actions: actions), in: .window(.root))
+    }
+
+    private var wegramGroupCallAvailable: Bool {
+        guard let data = self.controllerNode.data, wegramIsOrdinaryJoinedGroup(peer: data.peer),
+              data.cachedData is CachedGroupData || data.cachedData is CachedChannelData else { return false }
+        return peerInfoHeaderButtons(peer: data.peer, cachedData: data.cachedData, isOpenedFromChat: false, isExpanded: true, videoCallsEnabled: false, isSecretChat: false, isContact: data.isContact, threadInfo: nil).contains(.voiceChat)
+    }
+
+    private func openWegramGroupSettings() {
+        guard self.canPerformWegramGroupAction else { return }
+        // WeGram does not let users theme chats, so group appearance (colours, chat theme) is not offered.
+        let canChangeAppearance = false
+        guard canChangeAppearance || self.wegramGroupCallAvailable else {
+            self.openWegramFullGroup()
+            return
+        }
+        let sheet = wegramGroupSettingsMenu(updatedPresentationData: self.updatedPresentationData ?? (initial: self.presentationData, signal: self.context.sharedContext.presentationData), canCall: self.wegramGroupCallAvailable, canChangeAppearance: canChangeAppearance, selected: { [weak self] action in
+            guard let self, self.canPerformWegramGroupAction else { return }
+            switch action {
+            case .call:
+                guard self.wegramGroupCallAvailable else { return }
+                self.openWegramFullGroup(openGroupCall: true)
+            case .appearance:
+                guard case let .channel(channel) = self.controllerNode.data?.peer, channel.hasPermission(.changeInfo) else { return }
+                self.controllerNode.editingOpenNameColorSetup()
+            case .fullDetails:
+                self.openWegramFullGroup()
+            }
+        })
+        self.present(sheet, in: .window(.root))
+    }
+
+    private func openWegramFullGroup(openGroupCall: Bool = false) {
+        let controller = PeerInfoScreenImpl(context: self.context, updatedPresentationData: self.updatedPresentationData, peerId: self.peerId, avatarInitiallyExpanded: false, isOpenedFromChat: self.isOpenedFromChat, reactionSourceMessageId: nil, callMessages: [])
+        controller.wegramGroupDetailsEnabled = false
+        controller.wegramInitialGroupCall = openGroupCall
+        self.push(controller)
+    }
+
+    private func setWegramGroupPinned(_ pinned: Bool) {
+        guard !self.wegramGroupPinIsBusy, self.wegramGroupIsPinned != nil else { return }
+        self.wegramGroupPinIsBusy = true
+        if let layout = self.validLayout?.layout { self.updateWegramGroup(layout: layout, transition: .immediate) }
+        let context = self.context
+        let peerId = self.peerId
+        let _ = (context.engine.data.get(TelegramEngine.EngineData.Item.Messages.ChatListGroup(id: peerId))
+        |> mapToSignal { group -> Signal<TogglePeerChatPinnedResult?, NoError> in
+            guard let group else { return .single(nil) }
+            let location = TogglePeerChatPinnedLocation.group(group._asGroup())
+            return context.engine.peers.getPinnedItemIds(location: location)
+            |> take(1)
+            |> mapToSignal { ids -> Signal<TogglePeerChatPinnedResult?, NoError> in
+                if ids.contains(.peer(peerId)) == pinned { return .single(.done) }
+                return context.engine.peers.toggleItemPinned(location: location, itemId: .peer(peerId)) |> map(Optional.init)
+            }
+        }
+        |> deliverOnMainQueue).startStandalone(next: { [weak self] result in
+            guard let self else { return }
+            self.wegramGroupPinIsBusy = false
+            if let layout = self.validLayout?.layout { self.updateWegramGroup(layout: layout, transition: .immediate) }
+            guard self.canUseWegramGroupDetails, self.wegramGroupView?.isHidden == false,
+                  self.displayNode.view.window != nil, (self.navigationController as? NavigationController)?.topViewController === self,
+                  case let .limitExceeded(count, _) = result else { return }
+            if self.controllerNode.data?.accountIsPremium == true {
+                self.push(PremiumLimitScreen(context: context, subject: .pins, count: Int32(count), action: { true }))
+            } else {
+                var replaceImpl: ((ViewController) -> Void)?
+                let controller = PremiumLimitScreen(context: context, subject: .pins, count: Int32(count), action: {
+                    replaceImpl?(PremiumIntroScreen(context: context, source: .pinnedChats))
+                    return true
+                })
+                self.push(controller)
+                replaceImpl = { [weak controller] next in controller?.replace(with: next) }
+            }
+        })
+    }
+
 }

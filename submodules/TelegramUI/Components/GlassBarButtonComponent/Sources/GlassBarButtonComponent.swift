@@ -79,6 +79,11 @@ public final class GlassBarButtonComponent: Component {
     }
 
     public final class View: UIView, ComponentTaggedView {
+        public func updateAccessibility(label: String, identifier: String) {
+            self.containerView.accessibilityLabel = label
+            self.containerView.accessibilityIdentifier = identifier
+        }
+
         public func matches(tag: Any) -> Bool {
             if let component = self.component, let componentTag = component.tag {
                 let tag = tag as AnyObject

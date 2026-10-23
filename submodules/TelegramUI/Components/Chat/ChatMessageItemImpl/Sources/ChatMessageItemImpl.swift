@@ -20,6 +20,7 @@ import ChatMessageBubbleItemNode
 
 public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible {
     public let presentationData: ChatPresentationData
+    public let usesWegramMessageLayout: Bool
     public let context: AccountContext
     public let chatLocation: ChatLocation
     public let associatedData: ChatMessageItemAssociatedData
@@ -111,6 +112,7 @@ public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible
         self.content = content
         self.disableDate = disableDate || !controllerInteraction.chatIsRotated
         self.additionalContent = additionalContent
+        self.usesWegramMessageLayout = wegramMessageLayoutIsSupported(presentationData: presentationData, content: content, chatLocation: chatLocation, associatedData: associatedData, accountPeerId: context.account.peerId, isRotated: controllerInteraction.chatIsRotated)
         
         var avatarHeader: ChatMessageAvatarHeader?
         let incoming = content.effectivelyIncoming(self.context.account.peerId)
@@ -203,7 +205,7 @@ public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible
             isScheduledMessages = true
         }
         
-        self.dateHeader = ChatMessageDateHeader(timestamp: content.index.timestamp, separableThreadId: nil, scheduled: isScheduledMessages, displayHeader: nil, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context, action: { timestamp, alreadyThere in
+        self.dateHeader = ChatMessageDateHeader(timestamp: content.index.timestamp, separableThreadId: nil, scheduled: isScheduledMessages, displayHeader: nil, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context, timeGroupTimestamp: content.firstMessageAttributes.wegramTimeGroupTimestamp, action: { timestamp, alreadyThere in
             var calendar = NSCalendar.current
             calendar.timeZone = TimeZone(abbreviation: "UTC")!
             let date = Date(timeIntervalSince1970: TimeInterval(timestamp))
@@ -215,7 +217,7 @@ public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible
         })
         
         if let headerSeparableThreadId, let headerDisplayPeer, !(associatedData.subject?.isService ?? false) {
-            self.topicHeader = ChatMessageDateHeader(timestamp: content.index.timestamp, separableThreadId: headerSeparableThreadId, scheduled: false, displayHeader: headerDisplayPeer, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context, action: { _, _ in
+            self.topicHeader = ChatMessageDateHeader(timestamp: content.index.timestamp, separableThreadId: headerSeparableThreadId, scheduled: false, displayHeader: headerDisplayPeer, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context, timeGroupTimestamp: content.firstMessageAttributes.wegramTimeGroupTimestamp, action: { _, _ in
                 controllerInteraction.updateChatLocationThread(headerSeparableThreadId, nil)
             })
         } else {
@@ -270,6 +272,16 @@ public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible
                     
                     avatarHeader = ChatMessageAvatarHeader(timestamp: content.index.timestamp, peerId: effectiveAuthor.id, peer: effectiveAuthor, messageReference: MessageReference(message), message: message, presentationData: presentationData, context: context, controllerInteraction: controllerInteraction, storyStats: storyStats)
                 }
+            }
+        }
+        if self.usesWegramMessageLayout {
+            let message = content.firstMessage
+            // In Saved Messages a forwarded message sits on the left under its original author, the
+            // same peer the Telegram layout shows; `message.author` there is the account itself.
+            let savedAuthor = incoming && messagePeerId == context.account.peerId ? effectiveAuthor : nil
+            let avatarPeer = savedAuthor ?? message.author ?? (incoming ? nil : message.peers[context.account.peerId])
+            if let avatarPeer {
+                avatarHeader = ChatMessageAvatarHeader(timestamp: content.index.timestamp, peerId: avatarPeer.id, peer: avatarPeer, messageReference: MessageReference(message), message: message, presentationData: presentationData, context: context, controllerInteraction: controllerInteraction, storyStats: nil, usesWegramLayout: true, isOutgoing: !incoming, wegramTopInset: !self.disableDate && content.firstMessageAttributes.wegramStartsTimeGroup ? max(ChatMessageItemLayoutConstants.compact.timestampHeaderHeight, self.dateHeader.height) : 0.0)
             }
         }
         self.avatarHeader = avatarHeader
@@ -463,7 +475,7 @@ public final class ChatMessageItemImpl: ChatMessageItem, CustomStringConvertible
             }
         }
 
-        return (mergedTop, mergedBottom, dateAtBottom)
+        return self.usesWegramMessageLayout ? (.none, .none, dateAtBottom) : (mergedTop, mergedBottom, dateAtBottom)
     }
     
     public func updateNode(async: @escaping (@escaping () -> Void) -> Void, node: @escaping () -> ListViewItemNode, params: ListViewItemLayoutParams, neighbors: ListViewItemNeighbors, animation: ListViewItemUpdateAnimation, completion: @escaping (ListViewItemNodeLayout, @escaping (ListViewItemApply) -> Void) -> Void) {

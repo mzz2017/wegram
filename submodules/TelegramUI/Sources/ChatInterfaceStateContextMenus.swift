@@ -1189,7 +1189,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
         }
         
         if !isPinnedMessages, !isReplyThreadHead, data.canReply {
-            actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_ContextMenuReply, icon: { theme in
+            actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.reply.identifier, text: chatPresentationInterfaceState.strings.Conversation_ContextMenuReply, icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Reply"), color: theme.actionSheet.primaryTextColor)
             }, action: { c, _ in
                 interfaceInteraction.setupReplyMessage(messages[0].id, nil, { transition, completed in
@@ -1352,7 +1352,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
             if !isExpired {
                 if !isPoll {
                     if !isCopyProtected {
-                        actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_ContextMenuCopy, icon: { theme in
+                        actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.copy.identifier, text: chatPresentationInterfaceState.strings.Conversation_ContextMenuCopy, icon: { theme in
                             return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Copy"), color: theme.actionSheet.primaryTextColor)
                         }, action: { _, f in
                             if let diceEmoji = diceEmoji {
@@ -1634,7 +1634,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
         }
         
         if data.canEdit && !isPinnedMessages && !isMigrated {
-            actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_MessageDialogEdit, icon: { theme in
+            actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.edit.identifier, text: chatPresentationInterfaceState.strings.Conversation_MessageDialogEdit, icon: { theme in
                 return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Edit"), color: theme.actionSheet.primaryTextColor)
             }, action: { c, f in
                 if let _ = activeTodo {
@@ -1947,7 +1947,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
 
         if data.messageActions.options.contains(.forward) {
             if !isCopyProtected {
-                actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_ContextMenuForward, icon: { theme in
+                actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.forward.identifier, text: chatPresentationInterfaceState.strings.Conversation_ContextMenuForward, icon: { theme in
                     return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Forward"), color: theme.actionSheet.primaryTextColor)
                 }, action: { _, f in
                     interfaceInteraction.forwardMessages(selectAll || isImage ? messages : [message])
@@ -2099,7 +2099,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                     iconName = "Chat/Context Menu/DeletePaid"
                 }
                 
-                actions.append(.action(ContextMenuActionItem(text: title, textColor: .destructive, icon: { theme in
+                actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.delete.identifier, text: title, textColor: .destructive, icon: { theme in
                     return generateTintedImage(image: UIImage(bundleImageName: iconName), color: theme.actionSheet.destructiveActionTextColor)
                 }, action: { controller, f in
                     if isEditing {
@@ -2130,7 +2130,7 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
                     actions.append(.separator)
                 }
 
-                actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_ContextMenuSelect, icon: { theme in
+                actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.select.identifier, text: chatPresentationInterfaceState.strings.Conversation_ContextMenuSelect, icon: { theme in
                     return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Select"), color: theme.actionSheet.primaryTextColor)
                 }, action: { _, f in
                     interfaceInteraction.beginMessageSelection(selectAll ? messages.map { $0.id } : [message.id], { transition in
@@ -2479,6 +2479,88 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
             }
         }
         
+        if case .standard(.default) = chatPresentationInterfaceState.mode,
+           messages.count == 1,
+           let node = messageNode as? ChatMessageBubbleItemNode,
+           node.item?.usesWegramMessageLayout == true,
+           !controllerInteraction.isSidePanelOpen,
+           let expanded = node.voicePlaybackProgressState(messageId: message.id) {
+            let chinese = chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("zh")
+            let title = WegramVoiceMessageLayout.progressActionTitle(chinese: chinese, expanded: expanded)
+            actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.playbackProgress.identifier, text: title, icon: { theme in
+                return UIImage(systemName: "waveform")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+            }, action: { [weak node] controller, _ in
+                controller?.dismiss(completion: { [weak node] in
+                    node?.toggleVoicePlaybackProgressFromMenu(messageId: message.id)
+                })
+            })))
+        }
+
+        if case .standard(.default) = chatPresentationInterfaceState.mode,
+           messages.count == 1,
+           let node = messageNode as? ChatMessageBubbleItemNode,
+           node.item?.usesWegramMessageLayout == true,
+           !controllerInteraction.isSidePanelOpen,
+           node.canTranscribeAudio(messageId: message.id) {
+            let chinese = chatPresentationInterfaceState.strings.baseLanguageCode.hasPrefix("zh")
+            let expanded = node.hasExpandedAudioTranscription()
+            let title = WegramVoiceMessageLayout.transcriptionActionTitle(chinese: chinese, expanded: expanded)
+            actions.append(.action(ContextMenuActionItem(id: WegramMessageMenuAction.transcribe.identifier, text: title, icon: { theme in
+                return UIImage(systemName: "text.bubble")?.withTintColor(theme.contextMenu.primaryColor, renderingMode: .alwaysOriginal)
+            }, action: { [weak node] controller, _ in
+                controller?.dismiss(completion: { [weak node] in
+                    node?.transcribeAudioFromMenu(messageId: message.id)
+                })
+            })))
+        }
+
+        if case .standard(.default) = chatPresentationInterfaceState.mode,
+           case .peer = chatPresentationInterfaceState.chatLocation,
+           chatPresentationInterfaceState.subject == nil,
+           messageNode is ChatMessageBubbleItemNode,
+           messageNode?.item?.usesWegramMessageLayout == true,
+           !controllerInteraction.isSidePanelOpen,
+           !isAction, !isExpired, message.adAttribute == nil {
+            actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.Conversation_Info, icon: { theme in
+                return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Info"), color: theme.contextMenu.primaryColor)
+            }, action: { c, _ in
+                c?.dismiss(completion: {
+                    let presentationData = context.sharedContext.currentPresentationData.with { $0 }
+                    let strings = presentationData.strings
+                    let timestamp = wegramMessageDetailTimestamp(message.timestamp, locale: localeWithStrings(strings), timeZone: .current, uses24HourTime: presentationData.dateTimeFormat.timeFormat == .military)
+                    let status = WegramMessageDeliveryStatus.resolve(
+                        incoming: message.effectivelyIncoming(context.account.peerId),
+                        failed: message.flags.contains(.Failed),
+                        sending: (message.flags.isSending && !message.isSentOrAcknowledged) || updatingMessageMedia[message.id] != nil,
+                        read: isMessageRead
+                    )
+                    var lines: [String] = []
+                    switch status {
+                    case .failed: lines.append(strings.VoiceOver_Chat_Failed)
+                    case .sending: lines.append(strings.VoiceOver_Chat_Sending)
+                    case .read: lines.append(strings.Conversation_ChecksTooltip_Read)
+                    case .sent: lines.append(strings.Conversation_ChecksTooltip_Delivered)
+                    case nil: break
+                    }
+                    if status == .failed || status == .sending {
+                        lines.append(timestamp)
+                    } else {
+                        lines.append(strings.Chat_PrivateMessageSentTimestamp_Date(timestamp).string)
+                    }
+                    if let edit = message.attributes.compactMap({ $0 as? EditedMessageAttribute }).first(where: { !$0.isHidden && $0.date != 0 }) {
+                        let editedTimestamp = wegramMessageDetailTimestamp(edit.date, locale: localeWithStrings(strings), timeZone: .current, uses24HourTime: presentationData.dateTimeFormat.timeFormat == .military)
+                        lines.append(strings.Chat_PrivateMessageEditTimestamp_Date(editedTimestamp).string)
+                    }
+                    controllerInteraction.presentController(textAlertController(
+                        context: context,
+                        title: strings.Conversation_Info,
+                        text: lines.joined(separator: "\n\n"),
+                        actions: [TextAlertAction(type: .defaultAction, title: strings.Common_OK, action: {})]
+                    ), nil)
+                })
+            })))
+        }
+
         return ContextController.Items(content: .list(actions), tip: nil)
     }
 }

@@ -11,6 +11,9 @@ public enum ChatMessageEntryContentType {
 }
 
 public struct ChatMessageEntryAttributes: Equatable {
+    public var wegramTimeGroupTimestamp: Int32? = nil
+    // The message is the first row of its time group, so the group's date pill sits above it.
+    public var wegramStartsTimeGroup: Bool = false
     public var rank: CachedChannelAdminRank?
     public var isContact: Bool
     public var contentTypeHint: ChatMessageEntryContentType
@@ -58,8 +61,8 @@ public enum ChatInfoData: Equatable {
 public enum ChatHistoryEntry: Identifiable, Comparable {
     case MessageEntry(EngineRawMessage, ChatPresentationData, Bool, EngineMessageHistoryEntryLocation?, ChatHistoryMessageSelection, ChatMessageEntryAttributes)
     case MessageGroupEntry(Int64, [(EngineRawMessage, Bool, ChatHistoryMessageSelection, ChatMessageEntryAttributes, EngineMessageHistoryEntryLocation?)], ChatPresentationData)
-    case UnreadEntry(EngineMessage.Index, ChatPresentationData)
-    case ReplyCountEntry(EngineMessage.Index, Bool, Int, ChatPresentationData)
+    case UnreadEntry(EngineMessage.Index, ChatPresentationData, timeGroup: Int32? = nil)
+    case ReplyCountEntry(EngineMessage.Index, Bool, Int, ChatPresentationData, timeGroup: Int32? = nil)
     case ChatInfoEntry(ChatInfoData, ChatPresentationData)
     
     public var stableId: UInt64 {
@@ -97,9 +100,9 @@ public enum ChatHistoryEntry: Identifiable, Comparable {
             return message.index
         case let .MessageGroupEntry(_, messages, _):
             return messages[messages.count - 1].0.index
-        case let .UnreadEntry(index, _):
+        case let .UnreadEntry(index, _, _):
             return index
-        case let .ReplyCountEntry(index, _, _, _):
+        case let .ReplyCountEntry(index, _, _, _, _):
             return index
         case let .ChatInfoEntry(infoData, _):
             switch infoData {
@@ -117,9 +120,9 @@ public enum ChatHistoryEntry: Identifiable, Comparable {
                 return message.index
             case let .MessageGroupEntry(_, messages, _):
                 return messages[0].0.index
-            case let .UnreadEntry(index, _):
+            case let .UnreadEntry(index, _, _):
                 return index
-            case let .ReplyCountEntry(index, _, _, _):
+            case let .ReplyCountEntry(index, _, _, _, _):
                 return index
             case let .ChatInfoEntry(infoData, _):
                 switch infoData {
@@ -282,14 +285,14 @@ public enum ChatHistoryEntry: Identifiable, Comparable {
                 } else {
                     return false
                 }
-            case let .UnreadEntry(lhsIndex, lhsPresentationData):
-                if case let .UnreadEntry(rhsIndex, rhsPresentationData) = rhs, lhsIndex == rhsIndex, lhsPresentationData === rhsPresentationData {
+            case let .UnreadEntry(lhsIndex, lhsPresentationData, lhsTimeGroup):
+                if case let .UnreadEntry(rhsIndex, rhsPresentationData, rhsTimeGroup) = rhs, lhsIndex == rhsIndex, lhsTimeGroup == rhsTimeGroup, lhsPresentationData === rhsPresentationData {
                     return true
                 } else {
                     return false
                 }
-            case let .ReplyCountEntry(lhsIndex, lhsIsComments, lhsCount, lhsPresentationData):
-                if case let .ReplyCountEntry(rhsIndex, rhsIsComments, rhsCount, rhsPresentationData) = rhs, lhsIndex == rhsIndex, lhsIsComments == rhsIsComments, lhsCount == rhsCount, lhsPresentationData === rhsPresentationData {
+            case let .ReplyCountEntry(lhsIndex, lhsIsComments, lhsCount, lhsPresentationData, lhsTimeGroup):
+                if case let .ReplyCountEntry(rhsIndex, rhsIsComments, rhsCount, rhsPresentationData, rhsTimeGroup) = rhs, lhsIndex == rhsIndex, lhsIsComments == rhsIsComments, lhsCount == rhsCount, lhsTimeGroup == rhsTimeGroup, lhsPresentationData === rhsPresentationData {
                     return true
                 } else {
                     return false

@@ -846,28 +846,8 @@ func infoItems(
     }
     
     if let peer = data.peer, let members = data.members, case let .shortList(_, memberList) = members {
-        var canAddMembers = false
-        if case let .legacyGroup(group) = data.peer {
-            switch group.role {
-                case .admin, .creator:
-                    canAddMembers = true
-                case .member:
-                    break
-            }
-            if !group.hasBannedPermission(.banAddMembers) {
-                canAddMembers = true
-            }
-        } else if case let .channel(channel) = data.peer {
-            switch channel.info {
-            case .broadcast:
-                break
-            case .group:
-                if channel.flags.contains(.isCreator) || channel.hasPermission(.inviteMembers) {
-                    canAddMembers = true
-                }
-            }
-        }
-        
+        let canAddMembers = peerInfoCanAddMembers(peer: data.peer)
+
         if canAddMembers {
             items[.peerMembers]!.append(PeerInfoScreenActionItem(id: 0, text: presentationData.strings.GroupInfo_AddParticipant, color: .accent, icon: UIImage(bundleImageName: "Contact List/AddMemberIcon"), alignment: .peerList, action: {
                 interaction.openAddMember()
@@ -1864,4 +1844,20 @@ func editingItems(data: PeerInfoScreenData?, boostStatus: ChannelBoostStatus?, s
         }
     }
     return result
+}
+
+func peerInfoCanAddMembers(peer: EnginePeer?) -> Bool {
+    var canAddMembers = false
+    if case let .legacyGroup(group) = peer {
+        switch group.role {
+        case .admin, .creator: canAddMembers = true
+        case .member: break
+        }
+        if !group.hasBannedPermission(.banAddMembers) { canAddMembers = true }
+    } else if case let .channel(channel) = peer {
+        if case .group = channel.info, channel.flags.contains(.isCreator) || channel.hasPermission(.inviteMembers) {
+            canAddMembers = true
+        }
+    }
+    return canAddMembers
 }

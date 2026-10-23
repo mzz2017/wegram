@@ -19,6 +19,19 @@ import MessageInlineBlockBackgroundView
 import CheckNode
 import EmojiTextAttachmentView
 
+func wegramReplyPreviewText(_ text: NSAttributedString, color: UIColor) -> NSAttributedString {
+    let normalized = NSMutableAttributedString(attributedString: text)
+    let string = text.string as NSString
+    for index in 0 ..< string.length {
+        if let scalar = UnicodeScalar(Int(string.character(at: index))), CharacterSet.newlines.contains(scalar) {
+            normalized.replaceCharacters(in: NSRange(location: index, length: 1), with: "\n")
+        }
+    }
+    let preview = NSMutableAttributedString(attributedString: foldLineBreaks(normalized))
+    preview.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: preview.length))
+    return preview
+}
+
 public enum ChatMessageReplyInfoType {
     case bubble(incoming: Bool)
     case standalone
@@ -90,6 +103,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
         public let animationCache: AnimationCache?
         public let animationRenderer: MultiAnimationRenderer?
         public let associatedData: ChatMessageItemAssociatedData
+        public let isWegramStyle: Bool
         
         public init(
             presentationData: ChatPresentationData,
@@ -106,7 +120,8 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
             constrainedSize: CGSize,
             animationCache: AnimationCache?,
             animationRenderer: MultiAnimationRenderer?,
-            associatedData: ChatMessageItemAssociatedData
+            associatedData: ChatMessageItemAssociatedData,
+            isWegramStyle: Bool = false
         ) {
             self.presentationData = presentationData
             self.strings = strings
@@ -123,6 +138,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
             self.animationCache = animationCache
             self.animationRenderer = animationRenderer
             self.associatedData = associatedData
+            self.isWegramStyle = isWegramStyle
         }
     }
     
@@ -142,7 +158,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
     private var textNode: TextNodeWithEntities?
     private var dustNode: InvisibleInkDustNode?
     private var imageNode: TransformImageNode?
-    private var previousMediaReference: AnyMediaReference?
+    private var previousThumbnail: ReplyThumbnailState?
     private var expiredStoryIconView: UIImageView?
     private var checkLayer: CheckLayer?
     private var giftEmojiLayer: InlineStickerItemLayer?
@@ -150,8 +166,16 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
     private var currentProgressDisposable: Disposable?
     
     public var isQuoteExpanded: Bool = false
-    
-    override public init() {
+    private var isWegramStyle: Bool
+
+    public func expandQuoteIfNeeded(isQuote: Bool) -> Bool {
+        guard !self.isWegramStyle, isQuote, !self.isQuoteExpanded else { return false }
+        self.isQuoteExpanded = true
+        return true
+    }
+
+    public init(isWegramStyle: Bool = false) {
+        self.isWegramStyle = isWegramStyle
         self.backgroundView = MessageInlineBlockBackgroundView(frame: CGRect())
         
         self.contentNode = ASDisplayNode()
@@ -187,7 +211,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
         let titleNodeLayout = TextNode.asyncLayout(maybeNode?.titleNode)
         let textNodeLayout = TextNodeWithEntities.asyncLayout(maybeNode?.textNode)
         let imageNodeLayout = TransformImageNode.asyncLayout(maybeNode?.imageNode)
-        let previousMediaReference = maybeNode?.previousMediaReference
+        let previousThumbnail = maybeNode?.previousThumbnail
         
         let isQuoteExpanded = maybeNode?.isQuoteExpanded ?? false
         
@@ -466,7 +490,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                     text = quote.text
                     messageEntities = quote.entities
                 } else {
-                    text = foldLineBreaks(message.text)
+                    text = arguments.isWegramStyle ? message.text : foldLineBreaks(message.text)
                     messageEntities = message.textEntitiesAttribute?.entities ?? []
                 }
                 
@@ -627,10 +651,10 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
             
             var imageTextInset: CGFloat = 0.0
             if let _ = imageDimensions {
-                imageTextInset += floor(arguments.presentationData.fontSize.baseDisplaySize * 32.0 / 17.0)
+                imageTextInset += arguments.isWegramStyle ? 32.0 : floor(arguments.presentationData.fontSize.baseDisplaySize * 32.0 / 17.0)
             }
             
-            let maximumTextWidth = max(0.0, arguments.constrainedSize.width - 8.0 - imageTextInset)
+            let maximumTextWidth = max(0.0, arguments.constrainedSize.width - (arguments.isWegramStyle ? 24.0 : 8.0) - imageTextInset)
             
             var contrainedTextSize = CGSize(width: maximumTextWidth, height: arguments.constrainedSize.height)
             
@@ -669,6 +693,22 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 messageText = NSAttributedString(string: arguments.presentationData.strings.Conversation_Summary_Text, font: textFont, textColor: titleColor)
             }
             
+            let wegramAccessories = WegramReplyAccessoryLayout(hasStatus: isExpiredStory || isStory || isPoll, hasCheck: todoItemCompleted != nil, hasGift: giftEmojiFileId != nil)
+            if arguments.isWegramStyle {
+                let gray = arguments.presentationData.theme.theme.overallDarkAppearance ? UIColor.white.withAlphaComponent(0.5) : UIColor(rgb: 0x777777)
+                titleString = NSAttributedString(string: titleString.string + "：", font: textFont, textColor: gray)
+                messageText = wegramReplyPreviewText(messageText, color: gray)
+                leftInset = 10.0
+                textLeftInset = 0.0
+                textCutout = nil
+                textCutoutWidth = 0.0
+                maxTitleNumberOfLines = 1
+                maxTextNumberOfLines = 1
+                additionalTitleWidth = 0.0
+                isQuote = false
+                contrainedTextSize.width = wegramAccessories.authorMaxWidth(constrainedWidth: arguments.constrainedSize.width, hasImage: imageDimensions != nil)
+            }
+
             let (titleLayout, titleApply) = titleNodeLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: maxTitleNumberOfLines, truncationType: .end, constrainedSize: CGSize(width: contrainedTextSize.width - additionalTitleWidth, height: contrainedTextSize.height), alignment: .natural, cutout: nil, insets: textInsets))
             if isExpiredStory || isStory || isPoll {
                 contrainedTextSize.width -= 26.0
@@ -678,11 +718,14 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 textCutout = nil
             }
             
+            if arguments.isWegramStyle {
+                adjustedConstrainedTextSize.width = max(0.0, arguments.constrainedSize.width - titleLayout.size.width - 24.0 - wegramAccessories.leadingInset - wegramAccessories.trailingInset)
+            }
             let (textLayout, textApply) = textNodeLayout(TextNodeLayoutArguments(attributedString: messageText, backgroundColor: nil, maximumNumberOfLines: maxTextNumberOfLines, truncationType: .end, constrainedSize: adjustedConstrainedTextSize, alignment: .natural, lineSpacing: 0.07, cutout: textCutout, insets: textInsets))
             
             let imageSide: CGFloat
             let titleLineHeight: CGFloat = titleLayout.linesRects().first?.height ?? 12.0
-            imageSide = titleLineHeight * 2.0
+            imageSide = arguments.isWegramStyle ? wegramAccessories.thumbnailSide(constrainedWidth: arguments.constrainedSize.width) : titleLineHeight * 2.0
             
             var applyImage: (() -> TransformImageNode)?
             if let imageDimensions = imageDimensions {
@@ -700,13 +743,6 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 }
             }
             
-            var mediaUpdated = false
-            if let updatedMediaReference = updatedMediaReference, let previousMediaReference = previousMediaReference {
-                mediaUpdated = !updatedMediaReference.media.isEqual(to: previousMediaReference.media)
-            } else if (updatedMediaReference != nil) != (previousMediaReference != nil) {
-                mediaUpdated = true
-            }
-            
             let hasSpoiler: Bool
             if let message = arguments.message {
                 hasSpoiler = message.attributes.contains(where: { $0 is MediaSpoilerMessageAttribute })
@@ -714,6 +750,9 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 hasSpoiler = false
             }
             
+            let thumbnailState = ReplyThumbnailState(reference: updatedMediaReference, isSpoiler: hasSpoiler)
+            let mediaUpdated = thumbnailState.needsReload(comparedTo: previousThumbnail)
+
             var updateImageSignal: Signal<(TransformImageArguments) -> DrawingContext?, NoError>?
             
             var mediaUserLocation: MediaResourceUserLocation = .other
@@ -737,7 +776,11 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
             size.width = max(titleLayout.size.width + additionalTitleWidth - textInsets.left - textInsets.right, textLeftInset + textLayout.size.width - textInsets.left - textInsets.right - textCutoutWidth) + leftInset + 6.0
             size.height = titleLayout.size.height + textLayout.size.height - 2 * (textInsets.top + textInsets.bottom) + 2 * spacing
             size.height += 2.0
-            if isExpiredStory || isStory || isPoll {
+            if arguments.isWegramStyle {
+                let previewWidth = imageDimensions != nil ? imageSide + 4.0 : textLayout.size.width
+                size = CGSize(width: min(arguments.constrainedSize.width, titleLayout.size.width + wegramAccessories.leadingInset + previewWidth + 20.0 + wegramAccessories.trailingInset), height: wegramAccessories.cardHeight(titleHeight: titleLayout.size.height, textHeight: textLayout.size.height, thumbnailSide: imageDimensions != nil ? imageSide : nil))
+            }
+            if !arguments.isWegramStyle && (isExpiredStory || isStory || isPoll) {
                 size.width += 16.0
             }
             
@@ -746,15 +789,17 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 if let maybeNode = maybeNode {
                     node = maybeNode
                 } else {
-                    node = ChatMessageReplyInfoNode()
+                    node = ChatMessageReplyInfoNode(isWegramStyle: arguments.isWegramStyle)
                 }
                 
+                node.isWegramStyle = arguments.isWegramStyle
+
                 var animation = animation
                 if node.titleNode == nil {
                     animation = .None
                 }
                 
-                node.previousMediaReference = updatedMediaReference
+                node.previousThumbnail = thumbnailState
                 
                 //node.textNode?.textNode.displaysAsynchronously = !arguments.presentationData.isPreview
                 
@@ -794,7 +839,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                         node.addSubnode(imageNode)
                         node.imageNode = imageNode
                     }
-                    imageNode.frame = CGRect(origin: CGPoint(x: 9.0, y: 4.0), size: CGSize(width: imageSide, height: imageSide))
+                    imageNode.frame = CGRect(origin: CGPoint(x: arguments.isWegramStyle ? titleLayout.size.width + 14.0 + wegramAccessories.leadingInset : 9.0, y: arguments.isWegramStyle ? floor((realSize.height - imageSide) / 2.0) : 4.0), size: CGSize(width: imageSide, height: imageSide))
                     
                     if let updateImageSignal = updateImageSignal {
                         imageNode.setSignal(updateImageSignal)
@@ -807,10 +852,11 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                     node.imageNode?.captureProtected = arguments.associatedData.isCopyProtectionEnabled || message.isCopyProtected()
                 }
                 
-                titleNode.frame = CGRect(origin: CGPoint(x: leftInset - textInsets.left - 2.0, y: spacing - textInsets.top + 1.0), size: titleLayout.size)
+                titleNode.frame = CGRect(origin: CGPoint(x: arguments.isWegramStyle ? 10.0 : leftInset - textInsets.left - 2.0, y: arguments.isWegramStyle ? wegramAccessories.authorOriginY(cardHeight: realSize.height, titleHeight: titleLayout.size.height, hasImage: imageDimensions != nil) : spacing - textInsets.top + 1.0), size: titleLayout.size)
                 
                 let textFrame = CGRect(origin: CGPoint(x: textLeftInset + leftInset - textInsets.left - 2.0 - textCutoutWidth, y: titleNode.frame.maxY - textInsets.bottom + spacing - textInsets.top - 2.0), size: textLayout.size)
-                let effectiveTextFrame = textFrame.offsetBy(dx: (isExpiredStory || isStory || isPoll) ? 18.0 : 0.0, dy: 0.0)
+                let effectiveTextFrame = arguments.isWegramStyle ? CGRect(origin: CGPoint(x: titleNode.frame.maxX + wegramAccessories.leadingInset, y: floor((realSize.height - textLayout.size.height) / 2.0)), size: textLayout.size) : textFrame.offsetBy(dx: (isExpiredStory || isStory || isPoll) ? 18.0 : 0.0, dy: 0.0)
+                textNode.textNode.isHidden = arguments.isWegramStyle && imageDimensions != nil
                 
                 if textNode.textNode.bounds.isEmpty || !animation.isAnimated || textNode.textNode.bounds.height == effectiveTextFrame.height {
                     textNode.textNode.frame = effectiveTextFrame
@@ -868,12 +914,19 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                             expiredStoryIconView.frame = CGRect(origin: CGPoint(x: textFrame.minX - 1.0, y: textFrame.minY + 3.0 + UIScreenPixel), size: imageSize)
                         }
                     }
+                    if arguments.isWegramStyle {
+                        expiredStoryIconView.contentMode = .scaleAspectFit
+                        expiredStoryIconView.frame = wegramAccessories.statusFrame(afterTitleX: titleNode.frame.maxX, height: realSize.height, hasImage: imageDimensions != nil)
+                    } else {
+                        expiredStoryIconView.contentMode = .scaleToFill
+                    }
                     expiredStoryIconView.tintColor = titleColor
                 } else if let expiredStoryIconView = node.expiredStoryIconView {
+                    node.expiredStoryIconView = nil
                     expiredStoryIconView.removeFromSuperview()
                 }
                 
-                if !textLayout.spoilers.isEmpty {
+                if !textLayout.spoilers.isEmpty && !(arguments.isWegramStyle && imageDimensions != nil) {
                     let dustNode: InvisibleInkDustNode
                     if let current = node.dustNode {
                         dustNode = current
@@ -883,7 +936,8 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                         node.dustNode = dustNode
                         node.contentNode.insertSubnode(dustNode, aboveSubnode: textNode.textNode)
                     }
-                    dustNode.frame = textFrame.insetBy(dx: -3.0, dy: -3.0).offsetBy(dx: 0.0, dy: 3.0)
+                    let spoilerTextFrame = arguments.isWegramStyle ? effectiveTextFrame : textFrame
+                    dustNode.frame = spoilerTextFrame.insetBy(dx: -3.0, dy: -3.0).offsetBy(dx: 0.0, dy: 3.0)
                     dustNode.update(size: dustNode.frame.size, color: dustColor, textColor: dustColor, rects: textLayout.spoilers.map { $0.1.offsetBy(dx: 3.0, dy: 3.0).insetBy(dx: 1.0, dy: 1.0) }, wordRects: textLayout.spoilerWords.map { $0.1.offsetBy(dx: 3.0, dy: 3.0).insetBy(dx: 1.0, dy: 1.0) })
                 } else if let dustNode = node.dustNode {
                     dustNode.removeFromSupernode()
@@ -897,6 +951,12 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 let backgroundFrame = CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: realSize.width, height: realSize.height))
                 
                 node.backgroundView.frame = backgroundFrame
+                node.backgroundView.isHidden = arguments.isWegramStyle
+                node.backgroundColor = arguments.isWegramStyle ? UIColor(rgb: arguments.presentationData.theme.theme.overallDarkAppearance ? 0x242424 : 0xededed) : nil
+                node.cornerRadius = arguments.isWegramStyle ? 4.0 : 0.0
+                let hasWegramBorder = arguments.isWegramStyle && arguments.presentationData.theme.theme.overallDarkAppearance
+                node.borderWidth = hasWegramBorder ? UIScreenPixel : 0.0
+                node.borderColor = hasWegramBorder ? UIColor.white.withAlphaComponent(0.1).cgColor : nil
                 
                 var pattern: MessageInlineBlockBackgroundView.Pattern?
                 if let backgroundEmojiId = author?.backgroundEmojiId {
@@ -947,7 +1007,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 }
                 
                 if let todoItemCompleted {
-                    let checkLayerFrame = CGRect(origin: CGPoint(x: textFrame.minX - 16.0, y: textFrame.minY + 5.0), size: CGSize(width: 12.0, height: 12.0))
+                    let checkLayerFrame = arguments.isWegramStyle ? wegramAccessories.checkFrame(afterTitleX: titleNode.frame.maxX, height: realSize.height) : CGRect(origin: CGPoint(x: textFrame.minX - 16.0, y: textFrame.minY + 5.0), size: CGSize(width: 12.0, height: 12.0))
                     let checkTheme = CheckNodeTheme(backgroundColor: titleColor, strokeColor: .clear, borderColor: titleColor, overlayBorder: false, hasInset: true, hasShadow: false, borderWidth: 1.0)
                     
                     let checkLayer: CheckLayer
@@ -972,7 +1032,7 @@ public class ChatMessageReplyInfoNode: ASDisplayNode {
                 
                 if let giftEmojiFileId {
                     let giftLayerSize = CGSize(width: 18.0, height: 18.0)
-                    let giftLayerFrame = CGRect(origin: CGPoint(x: realSize.width - giftLayerSize.width - 4.0, y: 3.0), size: giftLayerSize)
+                    let giftLayerFrame = arguments.isWegramStyle ? wegramAccessories.giftFrame(width: realSize.width, height: realSize.height) : CGRect(origin: CGPoint(x: realSize.width - giftLayerSize.width - 4.0, y: 3.0), size: giftLayerSize)
                     
                     let giftEmojiLayer: InlineStickerItemLayer
                     if let current = node.giftEmojiLayer, current.file?.fileId.id == giftEmojiFileId {

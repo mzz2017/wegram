@@ -493,6 +493,13 @@ public final class MessageInlineBlockBackgroundView: UIView {
 
     private var params: Params?
 
+    public var displaysFillAndLine: Bool = true {
+        didSet {
+            self.backgroundView.isHidden = !self.displaysFillAndLine
+            self.lineView.isHidden = !self.displaysFillAndLine
+        }
+    }
+
     public var displayProgress: Bool = false {
         didSet {
             if self.displayProgress != oldValue {

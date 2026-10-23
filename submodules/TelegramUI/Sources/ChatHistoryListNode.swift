@@ -286,10 +286,10 @@ private func mappedInsertEntries(context: AccountContext, chatLocation: ChatLoca
                         item = ListMessageItem(presentationData: presentationData, systemStyle: systemStyle, context: context, chatLocation: chatLocation, interaction: ListMessageItemInteraction(controllerInteraction: controllerInteraction), message: messages[0].0, selection: .none, displayHeader: false)
                 }
                 return ChatHistoryListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: item, directionHint: entry.directionHint)
-            case let .UnreadEntry(_, presentationData):
-                return ChatHistoryListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatUnreadItem(index: entry.entry.index, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context), directionHint: entry.directionHint)
-            case let .ReplyCountEntry(_, isComments, count, presentationData):
-                return ChatHistoryListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatReplyCountItem(index: entry.entry.index, isComments: isComments, count: count, presentationData: presentationData, context: context, controllerInteraction: controllerInteraction), directionHint: entry.directionHint)
+            case let .UnreadEntry(_, presentationData, timeGroup):
+                return ChatHistoryListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatUnreadItem(index: entry.entry.index, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context, timeGroupTimestamp: timeGroup), directionHint: entry.directionHint)
+            case let .ReplyCountEntry(_, isComments, count, presentationData, timeGroup):
+                return ChatHistoryListViewInsertItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatReplyCountItem(index: entry.entry.index, isComments: isComments, count: count, presentationData: presentationData, context: context, controllerInteraction: controllerInteraction, timeGroupTimestamp: timeGroup), directionHint: entry.directionHint)
             case let .ChatInfoEntry(data, presentationData):
                 let item: ListViewItem
                 switch data {
@@ -341,10 +341,10 @@ private func mappedUpdateEntries(context: AccountContext, chatLocation: ChatLoca
                         item = ListMessageItem(presentationData: presentationData, systemStyle: systemStyle, context: context, chatLocation: chatLocation, interaction: ListMessageItemInteraction(controllerInteraction: controllerInteraction), message: messages[0].0, selection: .none, displayHeader: false)
                 }
                 return ChatHistoryListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: item, directionHint: entry.directionHint)
-            case let .UnreadEntry(_, presentationData):
-                return ChatHistoryListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatUnreadItem(index: entry.entry.index, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context), directionHint: entry.directionHint)
-            case let .ReplyCountEntry(_, isComments, count, presentationData):
-                return ChatHistoryListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatReplyCountItem(index: entry.entry.index, isComments: isComments, count: count, presentationData: presentationData, context: context, controllerInteraction: controllerInteraction), directionHint: entry.directionHint)
+            case let .UnreadEntry(_, presentationData, timeGroup):
+                return ChatHistoryListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatUnreadItem(index: entry.entry.index, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context, timeGroupTimestamp: timeGroup), directionHint: entry.directionHint)
+            case let .ReplyCountEntry(_, isComments, count, presentationData, timeGroup):
+                return ChatHistoryListViewUpdateItem(index: entry.index, previousIndex: entry.previousIndex, stableId: entry.entry.stableId, item: ChatReplyCountItem(index: entry.entry.index, isComments: isComments, count: count, presentationData: presentationData, context: context, controllerInteraction: controllerInteraction, timeGroupTimestamp: timeGroup), directionHint: entry.directionHint)
             case let .ChatInfoEntry(data, presentationData):
                 let item: ListViewItem
                 switch data {
@@ -672,6 +672,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
     private var currentPresentationData: ChatPresentationData
     private var chatPresentationDataPromise: Promise<ChatPresentationData>
     private var presentationDataDisposable: Disposable?
+    private var wegramTimeZoneObserver: WegramMessageTimeZoneObserver?
     
     private let historyAppearsClearedPromise = ValuePromise<Bool>(false)
     var historyAppearsCleared: Bool = false {
@@ -1410,6 +1411,16 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
         self.listView.scrollGestureHostView.addGestureRecognizer(selectionRecognizer)
 
         self.loadNextGenericReactionEffect(context: context)
+        if case .bubbles = self.mode, self.subject != .scheduledMessages {
+            self.wegramTimeZoneObserver = WegramMessageTimeZoneObserver(updated: { [weak self] in
+                guard let self else { return }
+                self.forEachItemHeaderNode { header in
+                    (header as? ChatMessageDateHeaderNodeImpl)?.updatePresentationData(self.currentPresentationData, context: self.context)
+                }
+                // Recompute the existing local history projection, including midnight group boundaries.
+                self.chatPresentationDataPromise.set(.single(self.currentPresentationData))
+            })
+        }
     }
     
     deinit {

@@ -227,6 +227,7 @@ public final class ChatInputMessageAccessoryPanel: Component {
     let action: ((UIView) -> Void)?
     let longPressAction: ((UIView) -> Void)?
     let dismiss: (UIView) -> Void
+    let usesWegramAppearance: Bool
 
     public init(
         context: AccountContext,
@@ -234,7 +235,8 @@ public final class ChatInputMessageAccessoryPanel: Component {
         chatPeerId: EnginePeer.Id?,
         action: ((UIView) -> Void)?,
         longPressAction: ((UIView) -> Void)? = nil,
-        dismiss: @escaping (UIView) -> Void
+        dismiss: @escaping (UIView) -> Void,
+        usesWegramAppearance: Bool = false
     ) {
         self.context = context
         self.contents = contents
@@ -242,10 +244,14 @@ public final class ChatInputMessageAccessoryPanel: Component {
         self.action = action
         self.longPressAction = longPressAction
         self.dismiss = dismiss
+        self.usesWegramAppearance = usesWegramAppearance
     }
 
     public static func ==(lhs: ChatInputMessageAccessoryPanel, rhs: ChatInputMessageAccessoryPanel) -> Bool {
         if lhs.context !== rhs.context {
+            return false
+        }
+        if lhs.usesWegramAppearance != rhs.usesWegramAppearance {
             return false
         }
         if lhs.contents != rhs.contents {
@@ -270,6 +276,10 @@ public final class ChatInputMessageAccessoryPanel: Component {
         
         private let lineView: UIImageView
         private let titleNode: CompositeTextNode
+        private let replyAccessibility = AccessibilityAreaNode()
+        private let imageNode = TransformImageNode()
+        private var previousPreview: WegramComposerMediaPreview?
+        private var previousPreviewMessageId: EngineMessage.Id?
         private let text = ComponentView<Empty>()
         private let tintText = ComponentView<Empty>()
         
@@ -280,6 +290,11 @@ public final class ChatInputMessageAccessoryPanel: Component {
         private weak var state: EmptyComponentState?
         private var environment: EnvironmentType?
         
+        public func matchesForwardMessageIds(_ ids: [EngineMessage.Id]) -> Bool {
+            guard let component = self.component, case let .forward(forward) = component.contents else { return false }
+            return forward.messageIds == ids
+        }
+
         private var messages: [EngineMessage] = []
         private var contentDisposable: Disposable?
         
@@ -294,7 +309,7 @@ public final class ChatInputMessageAccessoryPanel: Component {
                 titleView: self.titleNode.view,
                 textView: textView,
                 lineView: self.lineView,
-                imageView: nil
+                imageView: self.imageNode.isHidden ? nil : self.imageNode.view
             )
         }
         
@@ -315,6 +330,18 @@ public final class ChatInputMessageAccessoryPanel: Component {
             
             self.addSubview(self.lineView)
             self.addSubview(self.titleNode.view)
+            self.imageNode.isHidden = true
+            self.imageNode.isUserInteractionEnabled = false
+            self.addSubview(self.imageNode.view)
+            self.replyAccessibility.isHidden = true
+            self.replyAccessibility.accessibilityTraits = [.button]
+            self.replyAccessibility.accessibilityIdentifier = "Chat.Input.Reply.Options"
+            self.replyAccessibility.activate = { [weak self] in
+                guard let self, !self.replyAccessibility.isHidden, let action = self.component?.action else { return false }
+                action(self)
+                return true
+            }
+            self.addSubview(self.replyAccessibility.view)
             
             self.addSubview(self.closeButtonIcon)
             self.contentTintView.addSubview(self.closeButtonIcon.tintMask)
@@ -388,6 +415,7 @@ public final class ChatInputMessageAccessoryPanel: Component {
             let messageIds = messageIdsFromComponent(component)
             if self.component == nil || self.component.flatMap(messageIdsFromComponent) != messageIds {
                 self.contentDisposable?.dispose()
+                self.messages = []
                 if !messageIds.isEmpty {
                     self.contentDisposable = (component.context.engine.data.subscribe(
                         EngineDataList(messageIds.map { id in
@@ -423,7 +451,18 @@ public final class ChatInputMessageAccessoryPanel: Component {
                 })?.withRenderingMode(.alwaysTemplate).stretchableImage(withLeftCapWidth: 0, topCapHeight: 1)
             }
             
-            let size = CGSize(width: availableSize.width, height: 52.0)
+            let usesWegramReply: Bool
+            if case .reply = component.contents {
+                usesWegramReply = component.usesWegramAppearance
+            } else {
+                usesWegramReply = false
+            }
+            let size = CGSize(width: availableSize.width, height: usesWegramReply ? 40.0 : 52.0)
+            self.backgroundColor = component.usesWegramAppearance ? (environment.theme.overallDarkAppearance ? UIColor(rgb: 0x262626) : UIColor(rgb: 0xf0f0f0)) : .clear
+            self.lineView.isHidden = component.usesWegramAppearance
+            self.titleNode.view.isHidden = usesWegramReply
+            self.closeButton.accessibilityLabel = environment.strings.VoiceOver_DiscardPreparedContent
+            self.closeButton.accessibilityIdentifier = "Chat.Input.Accessory.Close"
             
             let containerInsets = UIEdgeInsets(top: 8.0, left: 12.0, bottom: 6.0, right: 0.0)
             
@@ -441,6 +480,26 @@ public final class ChatInputMessageAccessoryPanel: Component {
                 transition.setFrame(view: self.closeButtonIcon, frame: closeButtonIconFrame)
             }
             self.closeButtonIcon.tintColor = environment.theme.chat.inputPanel.inputControlColor
+            self.replyAccessibility.isHidden = !usesWegramReply
+            transition.setFrame(view: self.replyAccessibility.view, frame: CGRect(x: 0.0, y: 0.0, width: max(0.0, closeButtonFrame.minX), height: size.height))
+            if usesWegramReply {
+                self.accessibilityElements = [self.replyAccessibility.view, self.closeButton]
+                self.replyAccessibility.accessibilityHint = component.action == nil ? nil : environment.strings.Chat_ReplyPanel_HintReplyOptions
+                if component.longPressAction != nil {
+                    self.replyAccessibility.accessibilityCustomActions = [UIAccessibilityCustomAction(name: environment.strings.VoiceOver_Chat_GoToOriginalMessage, actionHandler: { [weak self] _ in
+                        guard let self, !self.replyAccessibility.isHidden, let action = self.component?.longPressAction else { return false }
+                        action(self)
+                        return true
+                    })]
+                } else {
+                    self.replyAccessibility.accessibilityCustomActions = nil
+                }
+            } else {
+                self.accessibilityElements = nil
+                self.replyAccessibility.accessibilityLabel = nil
+                self.replyAccessibility.accessibilityHint = nil
+                self.replyAccessibility.accessibilityCustomActions = nil
+            }
             
             let secondaryTextColor = environment.theme.chat.inputPanel.inputPlaceholderColor
             
@@ -911,7 +970,62 @@ public final class ChatInputMessageAccessoryPanel: Component {
                 }
             }
             
-            let textInsets = UIEdgeInsets(top: 10.0, left: 8.0, bottom: 0.0, right: 44.0)
+            if usesWegramReply {
+                var authorName = ""
+                if let message = self.messages.first?._asMessage() {
+                    if let forwardInfo = message.forwardInfo, forwardInfo.flags.contains(.isImported) {
+                        if let author = forwardInfo.author {
+                            authorName = EnginePeer(author).displayTitle(strings: environment.strings, displayOrder: environment.nameDisplayOrder)
+                        } else {
+                            authorName = forwardInfo.authorSignature ?? ""
+                        }
+                    } else if let author = message.effectiveAuthor {
+                        authorName = EnginePeer(author).displayTitle(strings: environment.strings, displayOrder: environment.nameDisplayOrder)
+                    }
+                }
+                let preview = NSMutableAttributedString(string: authorName.isEmpty ? "" : authorName + "：", font: Font.regular(14.0), textColor: secondaryTextColor)
+                preview.append(textString)
+                preview.addAttribute(.foregroundColor, value: secondaryTextColor, range: NSRange(location: 0, length: preview.length))
+                textString = preview
+                titleText = []
+            }
+            if usesWegramReply {
+                let summary = wegramComposerReplyAccessibilityText(textString, spoilerLabel: environment.strings.TextFormat_Spoiler)
+                self.replyAccessibility.accessibilityLabel = summary.isEmpty ? environment.strings.Chat_ReplyPanel_AccessibilityReplyToMessage : environment.strings.Chat_ReplyPanel_AccessibilityReplyToMessage + " " + summary
+            }
+
+            let preview: WegramComposerMediaPreview?
+            // Leave room for the close target and a readable summary in narrow input fields.
+            if availableSize.width >= 116.0, usesWegramReply, case let .reply(reply) = component.contents,
+               self.messages.count == 1, let message = self.messages.first {
+                preview = WegramComposerMediaPreview(message: message, replyingTo: reply.id)
+            } else {
+                preview = nil
+            }
+            self.imageNode.isHidden = preview == nil
+            if let preview {
+                let changed = self.previousPreviewMessageId != self.messages.first?.id
+                    || self.previousPreview?.blurred != preview.blurred
+                    || !(self.previousPreview?.reference.media.isEqual(to: preview.reference.media) ?? false)
+                if changed {
+                    self.imageNode.reset()
+                    if let image = preview.reference.concrete(TelegramMediaImage.self) {
+                        self.imageNode.setSignal(chatMessagePhotoThumbnail(account: component.context.account, userLocation: .peer(self.messages[0].id.peerId), photoReference: image, blurred: preview.blurred))
+                    } else if let file = preview.reference.concrete(TelegramMediaFile.self) {
+                        self.imageNode.setSignal(chatMessageVideoThumbnail(account: component.context.account, userLocation: .peer(self.messages[0].id.peerId), fileReference: file, blurred: preview.blurred))
+                    }
+                }
+                let boundingSize = CGSize(width: 32.0, height: 32.0)
+                let apply = self.imageNode.asyncLayout()(TransformImageArguments(corners: ImageCorners(radius: 2.0), imageSize: preview.dimensions.aspectFilled(boundingSize), boundingSize: boundingSize, intrinsicInsets: UIEdgeInsets()))
+                apply()
+                transition.setFrame(view: self.imageNode.view, frame: CGRect(x: 12.0, y: 4.0, width: 32.0, height: 32.0))
+            } else if self.previousPreview != nil {
+                self.imageNode.reset()
+            }
+            self.previousPreview = preview
+            self.previousPreviewMessageId = preview == nil ? nil : self.messages.first?.id
+            let imageInset: CGFloat = preview == nil ? 0.0 : 40.0
+            let textInsets = UIEdgeInsets(top: 10.0, left: usesWegramReply ? imageInset : 8.0, bottom: 0.0, right: 44.0)
             
             self.titleNode.components = titleText
             let titleSize = self.titleNode.update(constrainedSize: CGSize(width: availableSize.width - lineFrame.maxX - textInsets.left - textInsets.right, height: 100.0))
@@ -953,7 +1067,7 @@ public final class ChatInputMessageAccessoryPanel: Component {
             let titleTextSpacing: CGFloat = 1.0
             
             let titleFrame = CGRect(origin: CGPoint(x: lineFrame.maxX + textInsets.left, y: textInsets.top), size: titleSize)
-            let textFrame = CGRect(origin: CGPoint(x: lineFrame.maxX + textInsets.left - textRenderInsets.left, y: titleFrame.maxY + titleTextSpacing - textRenderInsets.top), size: textSize)
+            let textFrame = CGRect(origin: CGPoint(x: lineFrame.maxX + textInsets.left - textRenderInsets.left, y: usesWegramReply ? floor((size.height - textSize.height) * 0.5) : titleFrame.maxY + titleTextSpacing - textRenderInsets.top), size: textSize)
             
             transition.setFrame(view: self.titleNode.view, frame: titleFrame)
             

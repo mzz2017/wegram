@@ -120,3 +120,7 @@ ios_unit_test(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramComposerAccessories.swift"])
+
+exports_files(["Sources/WegramInlinePlaceholder.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

@@ -893,7 +893,10 @@ public final class StoryPeerListComponent: Component {
             
             var collapsedContentOrigin: CGFloat
             
-            let centralContentWidth: CGFloat = collapsedContentWidth + titleContentSpacing + collapsedState.titleWidth
+            // With nothing before the title (no avatars, no activity indicator) there is no gap to keep, or the
+            // title sits half of it right of centre (WeGram's Folded Chats bar, IMG_2441).
+            let effectiveTitleContentSpacing: CGFloat = collapsedContentWidth > 0.0 ? titleContentSpacing : 0.0
+            let centralContentWidth: CGFloat = collapsedContentWidth + effectiveTitleContentSpacing + collapsedState.titleWidth
             
             collapsedContentOrigin = (itemLayout.containerSize.width - centralContentWidth) * 0.5
             
@@ -1380,7 +1383,7 @@ public final class StoryPeerListComponent: Component {
             
             let defaultCollapsedTitleOffset: CGFloat = 0.0
             
-            let targetCollapsedTitleOffset: CGFloat = collapsedContentOrigin + collapsedContentOriginOffset + collapsedContentWidth + titleContentSpacing
+            let targetCollapsedTitleOffset: CGFloat = collapsedContentOrigin + collapsedContentOriginOffset + collapsedContentWidth + effectiveTitleContentSpacing
             
             let collapsedTitleOffset = targetCollapsedTitleOffset - defaultCollapsedTitleOffset
             

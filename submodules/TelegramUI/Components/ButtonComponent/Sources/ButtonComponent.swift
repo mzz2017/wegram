@@ -483,6 +483,11 @@ public final class ButtonComponent: Component {
     }
 
     public final class View: UIView {
+        public func updateAccessibility(label: String, identifier: String) {
+            self.button.accessibilityLabel = label
+            self.button.accessibilityIdentifier = identifier
+        }
+
         private var component: ButtonComponent?
         private weak var componentState: EmptyComponentState?
 

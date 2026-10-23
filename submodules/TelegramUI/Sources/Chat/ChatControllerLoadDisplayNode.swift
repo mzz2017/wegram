@@ -234,16 +234,16 @@ extension ChatControllerImpl {
         if let infoAvatar = contentData.state.infoAvatar {
             switch infoAvatar {
             case let .peer(peer, imageOverride, contextActionIsEnabled, accessibilityLabel):
-                (self.chatInfoNavigationButton?.buttonItem.customDisplayNode as? ChatAvatarNavigationNode)?.setPeer(context: self.context, theme: self.presentationData.theme, peer: peer, overrideImage: imageOverride, synchronousLoad: synchronous)
-                (self.chatInfoNavigationButton?.buttonItem.customDisplayNode as? ChatAvatarNavigationNode)?.contextActionIsEnabled = contextActionIsEnabled
+                self.avatarNode?.setPeer(context: self.context, theme: self.presentationData.theme, peer: peer, overrideImage: imageOverride, synchronousLoad: synchronous)
+                self.avatarNode?.contextActionIsEnabled = contextActionIsEnabled
                 self.chatInfoNavigationButton?.buttonItem.accessibilityLabel = accessibilityLabel
             case let .emojiStatus(content, contextActionIsEnabled):
-                (self.chatInfoNavigationButton?.buttonItem.customDisplayNode as? ChatAvatarNavigationNode)?.setStatus(context: self.context, content: content)
-                (self.chatInfoNavigationButton?.buttonItem.customDisplayNode as? ChatAvatarNavigationNode)?.contextActionIsEnabled = contextActionIsEnabled
+                self.avatarNode?.setStatus(context: self.context, content: content)
+                self.avatarNode?.contextActionIsEnabled = contextActionIsEnabled
                 self.chatInfoNavigationButton?.buttonItem.accessibilityLabel = self.presentationData.strings.Conversation_ContextMenuOpenProfile
             }
         } else {
-            (self.chatInfoNavigationButton?.buttonItem.customDisplayNode as? ChatAvatarNavigationNode)?.contextActionIsEnabled = false
+            self.avatarNode?.contextActionIsEnabled = false
         }
         
         if let avatarNode = self.avatarNode {
@@ -1969,17 +1969,26 @@ extension ChatControllerImpl {
                 return
             }
             
+            let selectionSnapshot = self.presentationInterfaceState.interfaceState.selectionState?.selectedIds
             let messageIds = Set(messages.map { $0.id })
             self.messageContextDisposable.set((self.context.sharedContext.chatAvailableMessageActions(engine: self.context.engine, accountPeerId: self.context.account.peerId, messageIds: messageIds, keepUpdated: false)
             |> deliverOnMainQueue).startStrict(next: { [weak self] actions in
                 guard let self, !actions.options.isEmpty else {
                     return
                 }
+                if self.usesWegramNavigation {
+                    guard self.isNodeLoaded, self.view.window != nil,
+                          self.presentationInterfaceState.interfaceState.selectionState?.selectedIds == selectionSnapshot else { return }
+                }
                 
                 if actions.options.contains(.deleteGlobally), let message = messages.first(where: { message in message.attributes.contains(where: { $0 is PublishedSuggestedPostMessageAttribute }) }), let attribute = message.attributes.first(where: { $0 is PublishedSuggestedPostMessageAttribute }) as? PublishedSuggestedPostMessageAttribute, message.timestamp > Int32(Date().timeIntervalSince1970) - 60 * 60 * 24 {
                     let commit = { [weak self] in
                         guard let self else {
                             return
+                        }
+                        if self.usesWegramNavigation {
+                            guard self.isNodeLoaded, self.view.window != nil,
+                                  self.presentationInterfaceState.interfaceState.selectionState?.selectedIds == selectionSnapshot else { return }
                         }
                         let titleString: String
                         let textString: String
@@ -1992,8 +2001,7 @@ extension ChatControllerImpl {
                             textString = self.presentationData.strings.Chat_DeletePaidMessageTon_Text
                         }
                         
-                        let alertController = textAlertController(
-                            context: self.context,
+                        self.presentMessageDeletionConfirmation(
                             title: titleString,
                             text: textString,
                             actions: [
@@ -2004,10 +2012,8 @@ extension ChatControllerImpl {
                                     self.beginDeleteMessagesWithUndo(messageIds: Set(messages.map({ $0.id })), type: .forEveryone)
                                 }),
                                 TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {})
-                            ],
-                            actionLayout: .vertical
+                            ]
                         )
-                        self.present(alertController, in: .window(.root))
                     }
                     if let contextController {
                         contextController.dismiss(completion: commit)
@@ -2333,7 +2339,8 @@ extension ChatControllerImpl {
                 }
                 
                 strongSelf.updateChatPresentationInterfaceState(animated: true, interactive: interactive, { current in
-                    return current.updatedSearch(current.search == nil ? ChatSearchData(domain: domain).withUpdatedQuery(query) : current.search?.withUpdatedDomain(domain).withUpdatedQuery(query))
+                    let updated = current.updatedSearch(current.search == nil ? ChatSearchData(domain: domain).withUpdatedQuery(query) : current.search?.withUpdatedDomain(domain).withUpdatedQuery(query))
+                    return strongSelf.usesWegramNavigation && current.search == nil ? updated.updatedDisplayHistoryFilterAsList(true) : updated
                 }, completion: { [weak strongSelf] _ in
                     guard let strongSelf else {
                         return
@@ -2353,7 +2360,8 @@ extension ChatControllerImpl {
             }
                 
             self.updateChatPresentationInterfaceState(animated: true, interactive: true, { current in
-                return current.updatedSearch(nil).updatedHistoryFilter(nil)
+                let updated = current.updatedSearch(nil).updatedHistoryFilter(nil)
+                return self.usesWegramNavigation ? updated.updatedDisplayHistoryFilterAsList(false) : updated
             })
             self.updateItemNodesSearchTextHighlightStates()
             self.searchResultsController = nil
@@ -2470,7 +2478,7 @@ extension ChatControllerImpl {
                     } else if let search = state.search {
                         switch search.domain {
                         case .everything, .tag:
-                            return state
+                            return search.mediaTags == nil ? state : state.updatedSearch(search.withUpdatedMediaTags(nil))
                         case .members:
                             return state.updatedSearch(ChatSearchData(query: "", domain: .everything, domainSuggestionContext: .none, resultsState: nil))
                         case .member:
@@ -4866,7 +4874,9 @@ extension ChatControllerImpl {
             }
         }, chatController: { [weak self] in
             return self
-        }, statuses: ChatPanelInterfaceInteractionStatuses(editingMessage: self.editingMessage.get(), startingBot: self.startingBot.get(), unblockingPeer: self.unblockingPeer.get(), searching: self.searching.get(), loadingMessage: self.loadingMessage.get(), inlineSearch: self.performingInlineSearch.get()))
+        }, statuses: ChatPanelInterfaceInteractionStatuses(editingMessage: self.editingMessage.get(), startingBot: self.startingBot.get(), unblockingPeer: self.unblockingPeer.get(), searching: self.searching.get(), loadingMessage: self.loadingMessage.get(), inlineSearch: self.performingInlineSearch.get()), saveSelectedMessages: { [weak self] in
+            self?.saveSelectedMessagesToSavedMessages()
+        })
         
         self.interfaceInteraction = interfaceInteraction
         
@@ -5104,7 +5114,7 @@ extension ChatControllerImpl {
                         }
                         
                         if globalRemainingUnreadChatCount > 0 {
-                            strongSelf.navigationItem.badge = "\(globalRemainingUnreadChatCount)"
+                            strongSelf.navigationItem.badge = wegramUnreadCountString(Int(globalRemainingUnreadChatCount))
                         } else {
                             strongSelf.navigationItem.badge = ""
                         }

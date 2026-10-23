@@ -156,6 +156,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
     private var controllerInteraction: ThemeGridControllerInteraction?
     
     private let presentPreviewController: (WallpaperListSource) -> Void
+    private let usesWegramLayout: Bool
     private let presentGallery: () -> Void
     private let presentColors: () -> Void
     private let emptyStateUpdated: (Bool) -> Void
@@ -208,11 +209,12 @@ final class ThemeGridControllerNode: ASDisplayNode {
     
     private var disposable: Disposable?
     
-    init(context: AccountContext, mode: ThemeGridController.Mode, presentationData: PresentationData, presentPreviewController: @escaping (WallpaperListSource) -> Void, presentGallery: @escaping () -> Void, presentColors: @escaping () -> Void, emptyStateUpdated: @escaping (Bool) -> Void, deleteWallpapers: @escaping ([TelegramWallpaper], @escaping () -> Void) -> Void, shareWallpapers: @escaping ([TelegramWallpaper]) -> Void, resetWallpapers: @escaping () -> Void, popViewController: @escaping () -> Void) {
+    init(context: AccountContext, mode: ThemeGridController.Mode, presentationData: PresentationData, usesWegramLayout: Bool = false, presentPreviewController: @escaping (WallpaperListSource) -> Void, presentGallery: @escaping () -> Void, presentColors: @escaping () -> Void, emptyStateUpdated: @escaping (Bool) -> Void, deleteWallpapers: @escaping ([TelegramWallpaper], @escaping () -> Void) -> Void, shareWallpapers: @escaping ([TelegramWallpaper]) -> Void, resetWallpapers: @escaping () -> Void, popViewController: @escaping () -> Void) {
         self.context = context
         self.mode = mode
         self.presentationData = presentationData
         self.presentPreviewController = presentPreviewController
+        self.usesWegramLayout = usesWegramLayout
         self.presentGallery = presentGallery
         self.presentColors = presentColors
         self.emptyStateUpdated = emptyStateUpdated
@@ -241,13 +243,13 @@ final class ThemeGridControllerNode: ASDisplayNode {
         self.maskNode.isUserInteractionEnabled = false
         
         self.colorItemNode = ItemListActionItemNode()
-        self.colorItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, title: presentationData.strings.Wallpaper_SetColor, kind: .generic, alignment: .natural, sectionId: 0, style: .blocks, action: {
+        self.colorItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: usesWegramLayout ? .legacy : .glass, title: presentationData.strings.Wallpaper_SetColor, kind: usesWegramLayout ? .neutral : .generic, alignment: .natural, sectionId: 0, style: usesWegramLayout ? .plain : .blocks, action: {
             presentColors()
         })
         
         switch mode {
         case .generic:
-            self.galleryItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, title: presentationData.strings.Wallpaper_SetCustomBackground, kind: .generic, alignment: .natural, sectionId: 0, style: .blocks, action: {
+            self.galleryItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: usesWegramLayout ? .legacy : .glass, title: presentationData.strings.Wallpaper_SetCustomBackground, kind: usesWegramLayout ? .neutral : .generic, alignment: .natural, sectionId: 0, style: usesWegramLayout ? .plain : .blocks, action: {
                 presentGallery()
             })
             self.galleryItemNode = ItemListActionItemNode()
@@ -281,7 +283,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
         self.descriptionItem = ItemListTextItem(presentationData: ItemListPresentationData(presentationData), text: .plain(descriptionText), sectionId: 0)
 
         self.resetItemNode = ItemListActionItemNode()
-        self.resetItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, title: presentationData.strings.Wallpaper_ResetWallpapers, kind: .generic, alignment: .natural, sectionId: 0, style: .blocks, action: {
+        self.resetItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: usesWegramLayout ? .legacy : .glass, title: presentationData.strings.Wallpaper_ResetWallpapers, kind: usesWegramLayout ? .destructive : .generic, alignment: .natural, sectionId: 0, style: usesWegramLayout ? .plain : .blocks, action: {
             resetWallpapers()
         })
         self.resetDescriptionItemNode = ItemListTextItemNode()
@@ -300,6 +302,11 @@ final class ThemeGridControllerNode: ASDisplayNode {
         })
         
         self.backgroundColor = presentationData.theme.list.itemBlocksBackgroundColor
+        if self.usesWegramLayout {
+            for node in [self.colorItemNode, self.galleryItemNode, self.resetItemNode] {
+                node.backgroundColor = presentationData.theme.list.itemBlocksBackgroundColor
+            }
+        }
         
         self.gridNode.addSubnode(self.backgroundNode)
         self.gridNode.addSubnode(self.bottomBackgroundNode)
@@ -320,7 +327,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
         
         self.addSubnode(self.gridNode)
         self.gridNode.addSubnode(self.maskNode)
-        self.maskNode.image = PresentationResourcesItemList.cornersImage(presentationData.theme, top: true, bottom: true, glass: true)
+        self.maskNode.image = usesWegramLayout ? nil : PresentationResourcesItemList.cornersImage(presentationData.theme, top: true, bottom: true, glass: true)
         
         let previousEntries = Atomic<[ThemeGridControllerEntry]?>(value: nil)
         let interaction = ThemeGridControllerInteraction(openWallpaper: { [weak self] wallpaper in
@@ -402,6 +409,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
         })
         self.controllerInteraction = interaction
         
+        let usesWegramLayout = self.usesWegramLayout
         let transition = combineLatest(self.wallpapersPromise.get(), self.themesPromise.get(), deletedWallpaperIdsPromise.get(), context.sharedContext.presentationData)
         |> map { wallpapers, themes, deletedWallpaperIds, presentationData -> (ThemeGridEntryTransition, Bool) in
             var entries: [ThemeGridControllerEntry] = []
@@ -490,6 +498,10 @@ final class ThemeGridControllerNode: ASDisplayNode {
                     if case let .file(file) = wallpaper, (wallpaper.isPattern && file.settings.colors.isEmpty) {
                         continue
                     }
+                    // WeGram renders only photo backgrounds; offering a colour or pattern would apply nothing.
+                    if usesWegramLayout && !wegramAllowsChatWallpaper(wallpaper) {
+                        continue
+                    }
                     let selected = presentationData.chatWallpaper.isBasicallyEqual(to: wallpaper)
                     var isDefault = false
                     if let defaultWallpaper = defaultWallpaper, defaultWallpaper.isBasicallyEqual(to: wallpaper) {
@@ -575,7 +587,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
                 transition.updateFrame(node: strongSelf.bottomBackgroundNode, frame: CGRect(origin: CGPoint(x: 0.0, y: gridLayout.contentSize.height), size: CGSize(width: layout.size.width, height: 500.0)))
                 transition.updateFrame(node: strongSelf.bottomSeparatorNode, frame: CGRect(origin: CGPoint(x: 0.0, y: gridLayout.contentSize.height), size: CGSize(width: layout.size.width, height: UIScreenPixel)))
                 
-                let sideInset = max(16.0, floor((layout.size.width - 674.0) / 2.0))
+                let sideInset = max(strongSelf.usesWegramLayout ? max(layout.safeInsets.left, layout.safeInsets.right) : 16.0, floor((layout.size.width - 674.0) / 2.0))
                 var listInsets = layout.safeInsets
                 if layout.size.width >= 320.0 {
                     listInsets.left = sideInset
@@ -668,6 +680,11 @@ final class ThemeGridControllerNode: ASDisplayNode {
         self.presentationData = presentationData
         
         self.backgroundColor = presentationData.theme.list.itemBlocksBackgroundColor
+        if self.usesWegramLayout {
+            for node in [self.colorItemNode, self.galleryItemNode, self.resetItemNode] {
+                node.backgroundColor = presentationData.theme.list.itemBlocksBackgroundColor
+            }
+        }
         self.searchDisplayController?.updatePresentationData(self.presentationData)
         
         self.leftOverlayNode.backgroundColor = presentationData.theme.list.blocksBackgroundColor
@@ -677,13 +694,13 @@ final class ThemeGridControllerNode: ASDisplayNode {
         self.bottomBackgroundNode.backgroundColor = presentationData.theme.list.blocksBackgroundColor
         self.bottomSeparatorNode.backgroundColor = presentationData.theme.list.itemBlocksSeparatorColor
         
-        self.colorItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, title: presentationData.strings.Wallpaper_SetColor, kind: .generic, alignment: .natural, sectionId: 0, style: .blocks, action: { [weak self] in
+        self.colorItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: self.usesWegramLayout ? .legacy : .glass, title: presentationData.strings.Wallpaper_SetColor, kind: self.usesWegramLayout ? .neutral : .generic, alignment: .natural, sectionId: 0, style: self.usesWegramLayout ? .plain : .blocks, action: { [weak self] in
             self?.presentColors()
         })
         
         switch self.mode {
         case .generic:
-            self.galleryItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, title: presentationData.strings.Wallpaper_SetCustomBackground, kind: .generic, alignment: .natural, sectionId: 0, style: .blocks, action: { [weak self] in
+            self.galleryItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: self.usesWegramLayout ? .legacy : .glass, title: presentationData.strings.Wallpaper_SetCustomBackground, kind: self.usesWegramLayout ? .neutral : .generic, alignment: .natural, sectionId: 0, style: self.usesWegramLayout ? .plain : .blocks, action: { [weak self] in
                 self?.presentGallery()
             })
         case .peer:
@@ -700,7 +717,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
         }
         
         self.descriptionItem = ItemListTextItem(presentationData: ItemListPresentationData(presentationData), text: .plain(presentationData.strings.Wallpaper_SetCustomBackgroundInfo), sectionId: 0)
-        self.resetItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: .glass, title: presentationData.strings.Wallpaper_ResetWallpapers, kind: .generic, alignment: .natural, sectionId: 0, style: .blocks, action: { [weak self] in
+        self.resetItem = ItemListActionItem(presentationData: ItemListPresentationData(presentationData), systemStyle: self.usesWegramLayout ? .legacy : .glass, title: presentationData.strings.Wallpaper_ResetWallpapers, kind: self.usesWegramLayout ? .destructive : .generic, alignment: .natural, sectionId: 0, style: self.usesWegramLayout ? .plain : .blocks, action: { [weak self] in
             self?.resetWallpapers()
         })
         self.resetDescriptionItem = ItemListTextItem(presentationData: ItemListPresentationData(presentationData), text: .plain(presentationData.strings.Wallpaper_ResetWallpapersInfo), sectionId: 0)
@@ -776,7 +793,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
         } else {
             referenceImageSize = CGSize(width: 90.0, height: 150.0)
         }
-        let sideInset = max(16.0, floor((layout.size.width - 674.0) / 2.0))
+        let sideInset = max(self.usesWegramLayout ? max(layout.safeInsets.left, layout.safeInsets.right) : 16.0, floor((layout.size.width - 674.0) / 2.0))
         
         let gridWidth = layout.size.width - sideInset * 2.0
         
@@ -822,9 +839,9 @@ final class ThemeGridControllerNode: ASDisplayNode {
         let (colorLayout, colorApply) = makeColorLayout(self.colorItem, params, ItemListNeighbors(top: .none, bottom: .sameSection(alwaysPlain: false)))
         let (galleryLayout, galleryApply): (ListViewItemNodeLayout, (Bool) -> Void)
         if let makeGalleryIconLayout, let galleryItem = self.galleryItem as? ItemListPeerActionItem {
-            (galleryLayout, galleryApply) = makeGalleryIconLayout(galleryItem, params, ItemListNeighbors(top: isChannel ? .none : .sameSection(alwaysPlain: false), bottom: .sameSection(alwaysPlain: !hasCustomWallpaper)))
+            (galleryLayout, galleryApply) = makeGalleryIconLayout(galleryItem, params, ItemListNeighbors(top: isChannel || self.usesWegramLayout ? .none : .sameSection(alwaysPlain: false), bottom: .sameSection(alwaysPlain: !hasCustomWallpaper)))
         } else if let makeGalleryLayout, let galleryItem = self.galleryItem as? ItemListActionItem {
-            (galleryLayout, galleryApply) = makeGalleryLayout(galleryItem, params, ItemListNeighbors(top: isChannel ? .none : .sameSection(alwaysPlain: false), bottom: .sameSection(alwaysPlain: true)))
+            (galleryLayout, galleryApply) = makeGalleryLayout(galleryItem, params, ItemListNeighbors(top: isChannel || self.usesWegramLayout ? .none : .sameSection(alwaysPlain: false), bottom: .sameSection(alwaysPlain: true)))
         } else {
             fatalError()
         }
@@ -838,7 +855,7 @@ final class ThemeGridControllerNode: ASDisplayNode {
         removeApply(false)
         descriptionApply()
         
-        let buttonTopInset: CGFloat = 32.0
+        let buttonTopInset: CGFloat = self.usesWegramLayout ? 8.0 : 32.0
         let buttonHeight: CGFloat = 44.0
         var buttonBottomInset: CGFloat = descriptionLayout.contentSize.height + 17.0
         if hasCustomWallpaper {
@@ -849,13 +866,19 @@ final class ThemeGridControllerNode: ASDisplayNode {
         if !isChannel || hasCustomWallpaper {
             buttonInset += buttonHeight
         }
+        // WeGram offers no colour backgrounds, so the Set a Color row is not shown.
+        let showsColorItem = !isChannel && !self.usesWegramLayout
+        self.colorItemNode.isHidden = !showsColorItem
+        if self.usesWegramLayout {
+            buttonInset = buttonTopInset + galleryLayout.contentSize.height + buttonBottomInset
+        }
         let buttonOffset = buttonInset + 10.0
         
         transition.updateFrame(node: self.backgroundNode, frame: CGRect(origin: CGPoint(x: 0.0, y: -buttonOffset - 500.0), size: CGSize(width: layout.size.width, height: buttonInset + 500.0)))
         transition.updateFrame(node: self.separatorNode, frame: CGRect(origin: CGPoint(x: 0.0, y: -buttonOffset + buttonInset - UIScreenPixel), size: CGSize(width: layout.size.width, height: UIScreenPixel)))
         
         var originY = -buttonOffset + buttonTopInset - 4.0
-        if !isChannel {
+        if showsColorItem {
             transition.updateFrame(node: self.colorItemNode, frame: CGRect(origin: CGPoint(x: 0.0, y: originY), size: colorLayout.contentSize))
             originY += colorLayout.contentSize.height
         }

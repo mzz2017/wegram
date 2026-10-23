@@ -30,3 +30,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramComposerMediaPreview.swift", "Sources/WegramComposerReplyAccessibility.swift"])

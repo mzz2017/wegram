@@ -56,6 +56,7 @@ public struct ChatMessageAttachedContentNodeMediaFlags: OptionSet {
     public static let preferMediaAspectFilled = ChatMessageAttachedContentNodeMediaFlags(rawValue: 1 << 2)
     public static let titleBeforeMedia = ChatMessageAttachedContentNodeMediaFlags(rawValue: 1 << 3)
     public static let stickerPack = ChatMessageAttachedContentNodeMediaFlags(rawValue: 1 << 3)
+    public static let wegramLinkCard = ChatMessageAttachedContentNodeMediaFlags(rawValue: 1 << 4)
 }
 
 public final class ChatMessageAttachedContentNode: ASDisplayNode {
@@ -197,6 +198,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
         let makeStatusLayout = ChatMessageDateAndStatusNode.asyncLayout(self.statusNode)
         
         return { [weak self] presentationData, automaticDownloadSettings, associatedData, attributes, context, controllerInteraction, message, messageRead, chatLocation, title, titleBadge, subtitle, text, entities, mediaAndFlags, mediaBadge, actionIcon, actionTitle, displayLine, layoutConstants, preparePosition, constrainedSize, animationCache, animationRenderer in
+            let usesWegramLink = mediaAndFlags?.1.contains(.wegramLinkCard) == true
             let isPreview = presentationData.isPreview
             let fontSize: CGFloat
             if message.adAttribute != nil {
@@ -205,7 +207,8 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 fontSize = floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)
             }
             
-            let titleFont = Font.semibold(fontSize)
+            let titleFont = usesWegramLink ? Font.regular(presentationData.fontSize.baseDisplaySize) : Font.semibold(fontSize)
+            let sourceFont = Font.regular(floor(presentationData.fontSize.baseDisplaySize * 12.0 / 17.0))
             let textFont = Font.regular(fontSize)
             let textBoldFont = Font.semibold(fontSize)
             let textItalicFont = Font.italic(fontSize)
@@ -230,7 +233,8 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 isReplyThread = true
             }
             
-            let messageTheme = incoming ? presentationData.theme.theme.chat.message.incoming : presentationData.theme.theme.chat.message.outgoing
+            let messageTheme = incoming || (usesWegramLink && presentationData.chatBubbleCorners.usesWegramNeutralFill) ? presentationData.theme.theme.chat.message.incoming : presentationData.theme.theme.chat.message.outgoing
+            let secondaryTextColor = usesWegramLink ? UIColor(rgb: presentationData.theme.theme.overallDarkAppearance ? 0x999999 : 0x888888) : messageTheme.primaryTextColor
             
             var author = message.effectiveAuthor
             
@@ -315,6 +319,10 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 }
             }
             
+            if usesWegramLink {
+                insets.left = 10
+                insets.right = 10
+            }
             if displayLine {
                 insets.left += 9.0
                 insets.right += 6.0
@@ -417,7 +425,8 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                     contentMediaContinueLayout = nil
                     
                     if let image = contentMediaValue as? TelegramMediaImage {
-                        inlineMediaAndSize = (.media(image), CGSize(width: 54.0, height: 54.0))
+                        let size = usesWegramLink ? WegramLinkPreviewLayout.thumbnailSize(imageSize: image.representations.last?.dimensions.cgSize ?? CGSize(width: 54, height: 54), contentWidth: max(0, min(250, constrainedSize.width) - 20)) : CGSize(width: 54.0, height: 54.0)
+                        inlineMediaAndSize = size.width > 0 ? (.media(image), size) : nil
                     } else if let file = contentMediaValue as? TelegramMediaFile, !file.previewRepresentations.isEmpty {
                         inlineMediaAndSize = (.media(file), CGSize(width: 54.0, height: 54.0))
                     } else {
@@ -544,7 +553,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 
                 var actualWidth: CGFloat = 0.0
                 
-                let maxContentsWidth: CGFloat = constrainedSize.width - insets.left - insets.right
+                let maxContentsWidth: CGFloat = max(0, (usesWegramLink ? min(250, constrainedSize.width) : constrainedSize.width) - insets.left - insets.right)
                 
                 var titleLayoutAndApply: (TextNodeLayout, (TextNodeWithEntities.Arguments?) -> TextNodeWithEntities)?
                 var subtitleLayoutAndApply: (TextNodeLayout, (TextNodeWithEntities.Arguments?) -> TextNodeWithEntities)?
@@ -553,7 +562,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 
                 var remainingCutoutHeight: CGFloat = 0.0
                 var cutoutWidth: CGFloat = 0.0
-                if let (_, inlineMediaSize) = inlineMediaAndSize {
+                if !usesWegramLink, let (_, inlineMediaSize) = inlineMediaAndSize {
                     remainingCutoutHeight = inlineMediaSize.height
                     cutoutWidth = inlineMediaSize.width + inlineMediaEdgeInset
                 }
@@ -571,8 +580,8 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                     switch item {
                     case .title:
                         if let title = title, !title.isEmpty {
-                            let titleString = NSAttributedString(string: title, font: titleFont, textColor: mainColor)
-                            let titleLayoutAndApplyValue = makeTitleLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: 2, truncationType: .end, constrainedSize: CGSize(width: maxContentsWidth, height: 10000.0), alignment: .natural, lineSpacing: textLineSpacing, cutout: cutout, insets: UIEdgeInsets()))
+                            let titleString = NSAttributedString(string: title, font: usesWegramLink ? sourceFont : titleFont, textColor: usesWegramLink ? secondaryTextColor : mainColor)
+                            let titleLayoutAndApplyValue = makeTitleLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: usesWegramLink ? 1 : 2, truncationType: .end, constrainedSize: CGSize(width: maxContentsWidth, height: 10000.0), alignment: .natural, lineSpacing: textLineSpacing, cutout: cutout, insets: UIEdgeInsets()))
                             titleLayoutAndApply = titleLayoutAndApplyValue
                             
                             if let titleBadge {
@@ -588,19 +597,19 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                             subtitleString.addAttribute(.foregroundColor, value: messageTheme.primaryTextColor, range: NSMakeRange(0, subtitle.length))
                             subtitleString.addAttribute(.font, value: titleFont, range: NSMakeRange(0, subtitle.length))
                             
-                            let subtitleLayoutAndApplyValue = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: subtitleString, backgroundColor: nil, maximumNumberOfLines: 5, truncationType: .end, constrainedSize: CGSize(width: maxContentsWidth, height: 10000.0), alignment: .natural, lineSpacing: textLineSpacing, cutout: cutout, insets: UIEdgeInsets()))
+                            let subtitleLayoutAndApplyValue = makeSubtitleLayout(TextNodeLayoutArguments(attributedString: subtitleString, backgroundColor: nil, maximumNumberOfLines: usesWegramLink ? 2 : 5, truncationType: .end, constrainedSize: CGSize(width: maxContentsWidth, height: 10000.0), alignment: .natural, lineSpacing: textLineSpacing, cutout: cutout, insets: UIEdgeInsets()))
                             subtitleLayoutAndApply = subtitleLayoutAndApplyValue
                             
                             remainingCutoutHeight -= subtitleLayoutAndApplyValue.0.size.height
                         }
                     case .text:
                         if let text = text, !text.isEmpty {
-                            var maximumNumberOfLines: Int = 12
+                            var maximumNumberOfLines: Int = usesWegramLink ? 3 : 12
                             if isPreview {
                                 maximumNumberOfLines = mediaAndFlags != nil ? 4 : 6
                             }
-                            let textString = stringWithAppliedEntities(text, entities: entities ?? [], baseColor: messageTheme.primaryTextColor, linkColor: incoming ? mainColor : messageTheme.linkTextColor, baseFont: textFont, linkFont: textFont, boldFont: textBoldFont, italicFont: textItalicFont, boldItalicFont: textBoldItalicFont, fixedFont: textFixedFont, blockQuoteFont: textBlockQuoteFont, message: nil, adjustQuoteFontSize: true)
-                            let textLayoutAndApplyValue = makeTextLayout(TextNodeLayoutArguments(attributedString: textString, backgroundColor: nil, maximumNumberOfLines: maximumNumberOfLines, truncationType: .end, constrainedSize: CGSize(width: maxContentsWidth, height: 10000.0), alignment: .natural, lineSpacing: textLineSpacing, cutout: cutout, insets: UIEdgeInsets()))
+                            let textString = stringWithAppliedEntities(text, entities: entities ?? [], baseColor: secondaryTextColor, linkColor: incoming ? mainColor : messageTheme.linkTextColor, baseFont: textFont, linkFont: textFont, boldFont: textBoldFont, italicFont: textItalicFont, boldItalicFont: textBoldItalicFont, fixedFont: textFixedFont, blockQuoteFont: textBlockQuoteFont, message: nil, adjustQuoteFontSize: true)
+                            let textLayoutAndApplyValue = makeTextLayout(TextNodeLayoutArguments(attributedString: textString, backgroundColor: nil, maximumNumberOfLines: maximumNumberOfLines, truncationType: .end, constrainedSize: CGSize(width: usesWegramLink ? max(0, maxContentsWidth - (inlineMediaAndSize.map { $0.1.width + 12 } ?? 0)) : maxContentsWidth, height: 10000.0), alignment: .natural, lineSpacing: textLineSpacing, cutout: cutout, insets: UIEdgeInsets()))
                             textLayoutAndApply = textLayoutAndApplyValue
                             
                             remainingCutoutHeight -= textLayoutAndApplyValue.0.size.height
@@ -793,6 +802,9 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                 }
                 
                 actualWidth += insets.left + insets.right
+                if usesWegramLink {
+                    actualWidth = min(250, constrainedSize.width)
+                }
                 
                 return (actualWidth, { resultingWidth in
                     let statusSizeAndApply = statusLayoutAndContinue?.1(resultingWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right - 6.0)
@@ -1001,6 +1013,18 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                         }
                     }
                     
+                    let wegramLinkLayout: WegramLinkPreviewLayout?
+                    if usesWegramLink {
+                        let layout = WegramLinkPreviewLayout(width: resultingWidth, titleSize: subtitleLayoutAndApply?.0.size ?? .zero, summarySize: textLayoutAndApply?.0.size ?? .zero, sourceSize: titleLayoutAndApply?.0.size ?? .zero, thumbnailSize: inlineMediaAndSize?.1 ?? .zero)
+                        wegramLinkLayout = layout
+                        actualSize.height = layout.height
+                        if let statusSizeAndApply, statusSizeAndApply.0.height > 0 {
+                            actualSize.height += 6 + statusSizeAndApply.0.height + layoutConstants.text.bubbleInsets.bottom
+                        }
+                    } else {
+                        wegramLinkLayout = nil
+                    }
+
                     return (actualSize, { [controllerInteraction] animation, synchronousLoads, applyInfo in
                         guard let self else {
                             return
@@ -1016,7 +1040,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                         
                         animation.animator.updateFrame(layer: self.transformContainer.layer, frame: CGRect(origin: CGPoint(), size: actualSize), completion: nil)
                         
-                        let backgroundFrame = CGRect(origin: CGPoint(x: backgroundInsets.left, y: backgroundInsets.top), size: CGSize(width: actualSize.width - backgroundInsets.left - backgroundInsets.right, height: actualSize.height - backgroundInsets.top - backgroundInsets.bottom))
+                        let backgroundFrame = wegramLinkLayout.map { CGRect(x: 0, y: 0, width: actualSize.width, height: $0.height) } ?? CGRect(origin: CGPoint(x: backgroundInsets.left, y: backgroundInsets.top), size: CGSize(width: actualSize.width - backgroundInsets.left - backgroundInsets.right, height: actualSize.height - backgroundInsets.top - backgroundInsets.bottom))
                         var patternTopRightPosition = CGPoint()
                         var patternAlpha: CGFloat = 1.0
                         
@@ -1069,7 +1093,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                                 }
                             }
                         } else if let (inlineMediaValue, inlineMediaSize) = inlineMediaAndSize {
-                            var inlineMediaFrame = CGRect(origin: CGPoint(x: actualSize.width - insets.right - inlineMediaSize.width, y: backgroundInsets.top + inlineMediaEdgeInset), size: inlineMediaSize)
+                            var inlineMediaFrame = wegramLinkLayout?.thumbnailFrame ?? CGRect(origin: CGPoint(x: actualSize.width - insets.right - inlineMediaSize.width, y: backgroundInsets.top + inlineMediaEdgeInset), size: inlineMediaSize)
                             if contentLayoutOrder.isEmpty {
                                 inlineMediaFrame.origin.x = insets.left
                             }
@@ -1160,7 +1184,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                                 }
                             }
                             
-                            inlineMedia.asyncLayout()(TransformImageArguments(corners: ImageCorners(radius: 4.0), imageSize: fittedImageSize, boundingSize: inlineMediaSize, intrinsicInsets: UIEdgeInsets(), emptyColor: mainColor.withMultipliedAlpha(0.1)))()
+                            inlineMedia.asyncLayout()(TransformImageArguments(corners: ImageCorners(radius: usesWegramLink ? 0 : 4.0), imageSize: fittedImageSize, boundingSize: inlineMediaSize, intrinsicInsets: UIEdgeInsets(), emptyColor: mainColor.withMultipliedAlpha(0.1)))()
                         } else {
                             if let inlineMedia = self.inlineMedia {
                                 self.inlineMedia = nil
@@ -1183,7 +1207,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                                 attemptSynchronous: synchronousLoads
                             ))
                             
-                            let titleFrame = CGRect(origin: CGPoint(x: -titleLayout.insets.left + insets.left, y: -titleLayout.insets.top + item.offsetY), size: titleLayout.size)
+                            let titleFrame = wegramLinkLayout?.sourceFrame ?? CGRect(origin: CGPoint(x: -titleLayout.insets.left + insets.left, y: -titleLayout.insets.top + item.offsetY), size: titleLayout.size)
                             
                             if self.title !== title {
                                 self.title?.textNode.removeFromSupernode()
@@ -1320,7 +1344,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                                 attemptSynchronous: synchronousLoads
                             ))
                             
-                            let subtitleFrame = CGRect(origin: CGPoint(x: -subtitleLayout.insets.left + insets.left, y: -subtitleLayout.insets.top + item.offsetY), size: subtitleLayout.size)
+                            let subtitleFrame = wegramLinkLayout?.titleFrame ?? CGRect(origin: CGPoint(x: -subtitleLayout.insets.left + insets.left, y: -subtitleLayout.insets.top + item.offsetY), size: subtitleLayout.size)
                             
                             if self.subtitle !== subtitle {
                                 self.subtitle?.textNode.removeFromSupernode()
@@ -1351,7 +1375,7 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                                 attemptSynchronous: synchronousLoads
                             ))
                             
-                            let textFrame = CGRect(origin: CGPoint(x: -textLayout.insets.left + insets.left, y: -textLayout.insets.top + item.offsetY), size: textLayout.size)
+                            let textFrame = wegramLinkLayout?.summaryFrame ?? CGRect(origin: CGPoint(x: -textLayout.insets.left + insets.left, y: -textLayout.insets.top + item.offsetY), size: textLayout.size)
                             
                             if self.text !== text {
                                 self.text?.textNode.removeFromSupernode()
@@ -1595,11 +1619,11 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                             giftEmojiLayer.removeFromSuperlayer()
                         }
 
-                        if displayLine {
+                        if displayLine || usesWegramLink {
                             var pattern: MessageInlineBlockBackgroundView.Pattern?
                             if let _ = message.media.first(where: { $0 is TelegramMediaPoll }) {
                                 
-                            } else if let backgroundEmojiId = author?.backgroundEmojiId {
+                            } else if !usesWegramLink, let backgroundEmojiId = author?.backgroundEmojiId {
                                 pattern = MessageInlineBlockBackgroundView.Pattern(
                                     context: context,
                                     fileId: backgroundEmojiId,
@@ -1614,14 +1638,16 @@ public final class ChatMessageAttachedContentNode: ASDisplayNode {
                             let backgroundView: MessageInlineBlockBackgroundView
                             if let current = self.backgroundView {
                                 backgroundView = current
+                                backgroundView.displaysFillAndLine = !usesWegramLink
                                 animation.animator.updateFrame(layer: backgroundView.layer, frame: backgroundFrame, completion: nil)
-                                backgroundView.update(size: backgroundFrame.size, isTransparent: false, primaryColor: mainColor, secondaryColor: secondaryColor, thirdColor: tertiaryColor, backgroundColor: nil, pattern: pattern, patternTopRightPosition: patternTopRightPosition, patternAlpha: patternAlpha, animation: animation)
+                                backgroundView.update(size: backgroundFrame.size, isTransparent: false, primaryColor: usesWegramLink ? messageTheme.primaryTextColor : mainColor, secondaryColor: secondaryColor, thirdColor: tertiaryColor, backgroundColor: nil, pattern: pattern, patternTopRightPosition: patternTopRightPosition, patternAlpha: patternAlpha, animation: animation)
                             } else {
                                 backgroundView = MessageInlineBlockBackgroundView()
+                                backgroundView.displaysFillAndLine = !usesWegramLink
                                 self.backgroundView = backgroundView
                                 backgroundView.frame = backgroundFrame
                                 self.transformContainer.view.insertSubview(backgroundView, at: 0)
-                                backgroundView.update(size: backgroundFrame.size, isTransparent: false, primaryColor: mainColor, secondaryColor: secondaryColor, thirdColor: tertiaryColor, backgroundColor: nil, pattern: pattern, patternTopRightPosition: patternTopRightPosition, patternAlpha: patternAlpha, animation: .None)
+                                backgroundView.update(size: backgroundFrame.size, isTransparent: false, primaryColor: usesWegramLink ? messageTheme.primaryTextColor : mainColor, secondaryColor: secondaryColor, thirdColor: tertiaryColor, backgroundColor: nil, pattern: pattern, patternTopRightPosition: patternTopRightPosition, patternAlpha: patternAlpha, animation: .None)
                             }
                         } else {
                             if let backgroundView = self.backgroundView {

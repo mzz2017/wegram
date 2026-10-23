@@ -198,6 +198,9 @@ public final class ChatTextInputMediaRecordingButton: TGModernConversationInputM
     public var stopRecording: () -> Void = { }
     public var offsetRecordingControls: () -> Void = { }
     public var switchMode: () -> Void = { }
+    public var hidesIdleIcon = false {
+        didSet { self.animationView.view?.isHidden = self.hidesIdleIcon }
+    }
     public var updateLocked: (Bool) -> Void = { _ in }
     public var updateCancelTranslation: () -> Void = { }
     
@@ -465,6 +468,7 @@ public final class ChatTextInputMediaRecordingButton: TGModernConversationInputM
         )
 
         if let view = self.animationView.view as? LottieComponent.View {
+            view.isHidden = self.hidesIdleIcon
             view.isUserInteractionEnabled = false
             if view.superview == nil {
                 self.insertSubview(view, at: 0)

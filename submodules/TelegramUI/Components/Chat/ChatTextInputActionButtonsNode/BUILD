@@ -32,3 +32,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramPaidSendLabel.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

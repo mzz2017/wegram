@@ -349,7 +349,17 @@ private func contentNodeMessagesAndClassesForItem(_ item: ChatMessageItem) -> ([
             }
         }
         
-        if (!messageText.isEmpty || (message.attributes.contains(where: { $0 is TypingDraftMessageAttribute }) && richText == nil) || isStoryWithText) && !isUnsupportedMedia {
+        let hidesWegramURLText: Bool = {
+            guard item.usesWegramMessageLayout, !item.controllerInteraction.isSidePanelOpen,
+                  message.groupingKey == nil, item.associatedData.subject == nil,
+                  !item.associatedData.isRecentActions, !item.presentationData.isPreview,
+                  message.adAttribute == nil, richText == nil,
+                  let webpage = message.media.compactMap({ $0 as? TelegramMediaWebpage }).first,
+                  case let .Loaded(content) = webpage.content else { return false }
+            return WegramLinkPreviewLayout.hidesURLText(messageText, content: content, forceLargeMedia: message.webpagePreviewAttribute?.forceLargeMedia)
+        }()
+
+        if (!messageText.isEmpty || (message.attributes.contains(where: { $0 is TypingDraftMessageAttribute }) && richText == nil) || isStoryWithText) && !isUnsupportedMedia && !hidesWegramURLText {
             if !skipText {
                 if case .group = item.content, !isFile {
                     messageWithCaptionToAdd = (message, itemAttributes)
@@ -544,6 +554,23 @@ private func mapVisibility(_ visibility: ListViewItemNodeVisibility, boundsSize:
 }
 
 public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewItemNode {
+    private static func bubbleCorners(for item: ChatMessageItem) -> PresentationChatBubbleCorners {
+        guard item.usesWegramMessageLayout && !item.controllerInteraction.isSidePanelOpen else { return item.presentationData.chatBubbleCorners }
+        if item.message.groupingKey == nil, item.associatedData.subject == nil, !item.associatedData.isRecentActions, !item.presentationData.isPreview, item.message.adAttribute == nil {
+            var isUpdatingMedia = false
+            for (_, attributes) in item.content { isUpdatingMedia = isUpdatingMedia || attributes.updatingMedia != nil }
+            if !isUpdatingMedia {
+                if let map = item.message.media.compactMap({ $0 as? TelegramMediaMap }).last, WegramMapMessageLayout.supports(map) { return .wegramCard }
+                if item.message.media.contains(where: { $0 is TelegramMediaContact }) { return .wegramCard }
+                if let file = item.message.media.compactMap({ $0 as? TelegramMediaFile }).last, WegramFileMessageLayout.supports(file) { return .wegramCard }
+                if let webpage = item.message.media.compactMap({ $0 as? TelegramMediaWebpage }).first,
+                   case let .Loaded(content) = webpage.content, WegramLinkPreviewLayout.supports(content),
+                   item.message.webpagePreviewAttribute?.forceLargeMedia != true { return .wegramCard }
+            }
+        }
+        return .wegram
+    }
+
     public class ContentContainer {
         public let contentMessageStableId: UInt32
         public let sourceNode: ContextExtractedContentContainingNode
@@ -698,6 +725,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
     
     private var nameAvatarNode: AvatarNode?
     private var nameNode: TextNode?
+    private var authorHeaderFrame: CGRect?
     private var nameButtonNode: HighlightTrackingButtonNode?
     private var nameHighlightNode: ASImageNode?
     private var viaMeasureNode: TextNode?
@@ -758,6 +786,9 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
     }
 
+    private var wegramAlbumPresentation: (range: Range<Int>, layout: WegramMediaAlbumLayout)?
+    private var wegramAlbumButton: UIButton?
+    private var wegramAlbumAvatars: [AvatarNode] = []
     private var mosaicStatusNode: ChatMessageDateAndStatusNode?
     private var actionButtonsNode: ChatMessageActionButtonsNode?
     private var reactionButtonsNode: ChatMessageReactionButtonsNode?
@@ -771,6 +802,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
     private let messageAccessibilityArea: AccessibilityAreaNode
 
     private var backgroundType: ChatMessageBackgroundType?
+    private var appliedBubbleCorners: PresentationChatBubbleCorners?
     
     private struct HighlightedState: Equatable {
         var quote: ChatInterfaceHighlightedState.Quote?
@@ -870,7 +902,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             guard let strongSelf = self else {
                 return .none
             }
-            if !strongSelf.backgroundNode.frame.contains(location) {
+            if !strongSelf.backgroundNode.frame.contains(location) && strongSelf.replyInfoNode?.frame.contains(location) != true && strongSelf.authorHeaderFrame?.contains(location) != true {
                 return .none
             }
             if strongSelf.selectionNode != nil {
@@ -1285,7 +1317,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                             return .fail
                         }
                         
-                        for contentNode in strongSelf.contentNodes {
+                        for contentNode in strongSelf.interactionContentNodes(at: point) {
                             let contentNodePoint = strongSelf.view.convert(point, to: contentNode.view)
                             let tapAction = contentNode.tapActionAtPoint(contentNodePoint, gesture: .tap, isEstimating: true)
                             switch tapAction.content {
@@ -1304,6 +1336,9 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     return .fail
                 }
 
+                if let button = strongSelf.wegramAlbumButton, button.frame.contains(point), !button.isHidden {
+                    return .fail
+                }
                 if let closeButtonNode = strongSelf.closeButtonNode {
                     if let _ = closeButtonNode.hitTest(strongSelf.view.convert(point, to: closeButtonNode.view), with: nil) {
                         return .fail
@@ -1375,7 +1410,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                         return .waitForSingleTap
                     }
                 }
-                for contentNode in strongSelf.contentNodes {
+                for contentNode in strongSelf.interactionContentNodes(at: point) {
                     let contentNodePoint = strongSelf.view.convert(point, to: contentNode.view)
                     let tapAction = contentNode.tapActionAtPoint(contentNodePoint, gesture: .tap, isEstimating: true)
                     switch tapAction.content {
@@ -1455,10 +1490,11 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     }
                     forwardInfoNode.updateTouchesAtPoint(translatedPoint)
                 }
+                let hitNodes = point.map { strongSelf.interactionContentNodes(at: $0) } ?? []
                 for contentNode in strongSelf.contentNodes {
                     var translatedPoint: CGPoint?
                     let convertedNodeFrame = contentNode.view.convert(contentNode.bounds, to: strongSelf.view)
-                    if let point = point, convertedNodeFrame.insetBy(dx: -4.0, dy: -4.0).contains(point) {
+                    if let point = point, hitNodes.contains(where: { $0 === contentNode }), convertedNodeFrame.insetBy(dx: -4.0, dy: -4.0).contains(point) {
                         translatedPoint = strongSelf.view.convert(point, to: contentNode.view)
                     }
                     contentNode.updateTouchesAtPoint(translatedPoint)
@@ -1520,6 +1556,25 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
     }
     
+    @objc private func toggleWegramAlbum() {
+        guard let item = self.item, item === self.appliedItem, self.wegramAlbumPresentation != nil, self.view.window != nil,
+              self.selectionNode == nil, item.controllerInteraction.selectionState == nil,
+              !self.mainContextSourceNode.isExtractedToContextPreview,
+              let button = self.wegramAlbumButton, !button.isHidden, button.alpha > 0, button.isEnabled else { return }
+        var ancestor: UIView? = button
+        while let view = ancestor {
+            if view.isHidden || view.alpha <= 0.01 || !view.isUserInteractionEnabled { return }
+            ancestor = view.superview
+        }
+        let stableId = item.content.firstMessage.stableId
+        let _ = item.controllerInteraction.wegramExpandedMediaGroups.modify { current in
+            var current = current
+            if !current.insert(stableId).inserted { current.remove(stableId) }
+            return current
+        }
+        item.controllerInteraction.requestMessageUpdate(item.message.id, false, nil)
+    }
+
     private func internalUpdateLayout() {
         if let inputParams = self.currentInputParams, self.currentApplyParams != nil {
             let (_, applyLayout) = self.asyncLayout()(inputParams.item, inputParams.params, inputParams.mergedTop, inputParams.mergedBottom, inputParams.dateHeaderAtBottom)
@@ -1625,9 +1680,21 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         let isPreview = item.presentationData.isPreview
         let accessibilityData = ChatMessageAccessibilityData(item: item, isSelected: isSelected)
         let isSidePanelOpen = item.controllerInteraction.isSidePanelOpen
-        
+        let usesWegramLayout = item.usesWegramMessageLayout && !isSidePanelOpen
+        let contentPresentationData = usesWegramLayout ? item.presentationData.withChatBubbleCorners(Self.bubbleCorners(for: item)) : item.presentationData
+        var layoutConstants = layoutConstants
+        if usesWegramLayout {
+            layoutConstants.avatarInset = WegramMessageLayout.avatarInset
+            layoutConstants.bubble.edgeInset = WegramMessageLayout.edgeInset
+            layoutConstants.bubble.defaultSpacing = WegramMessageLayout.messageSpacing
+            layoutConstants.bubble.mergedSpacing = WegramMessageLayout.messageSpacing
+            layoutConstants.bubble.minimumSize.height = WegramMessageLayout.avatarDiameter
+            layoutConstants.text.bubbleInsets.top = 10
+            layoutConstants.text.bubbleInsets.bottom = 10
+        }
+
         let fontSize = floor(item.presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)
-        let nameFont = Font.semibold(fontSize)
+        let nameFont = usesWegramLayout ? Font.regular(fontSize) : Font.semibold(fontSize)
         let regularFont = Font.regular(fontSize)
 
         let inlineBotPrefixFont = Font.regular(fontSize - 1.0)
@@ -1639,7 +1706,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         let firstMessage = content.firstMessage
         let incoming = item.content.effectivelyIncoming(item.context.account.peerId, associatedData: item.associatedData)
         
-        let messageTheme = incoming ? item.presentationData.theme.theme.chat.message.incoming : item.presentationData.theme.theme.chat.message.outgoing
+        let messageTheme = contentPresentationData.chatBubbleCorners.messageColors(theme: item.presentationData.theme.theme, incoming: incoming)
         let ephemeralBadgeMessage = content.first(where: { message, _ in
             return Namespaces.Message.allEphemeral.contains(message.id.namespace) || Namespaces.Message.allWelcomeMessages.contains(message.id.namespace)
         })?.0
@@ -1885,6 +1952,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             }
         }
         
+        if usesWegramLayout { hasAvatar = true }
         avatarInset = hasAvatar ? layoutConstants.avatarInset : 0.0
         if isSidePanelOpen {
             avatarInset = 0.0
@@ -2328,7 +2396,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 prepareContentPosition = .linear(top: topPosition, bottom: refinedBottomPosition)
             }
             
-            let contentItem = ChatMessageBubbleContentItem(context: item.context, controllerInteraction: item.controllerInteraction, message: message, topMessage: item.content.firstMessage, content: item.content, read: read, chatLocation: item.chatLocation, presentationData: item.presentationData, associatedData: item.associatedData, attributes: attributes, isItemPinned: isItemPinned, isItemEdited: isItemEdited)
+            let contentItem = ChatMessageBubbleContentItem(context: item.context, controllerInteraction: item.controllerInteraction, message: message, topMessage: item.content.firstMessage, content: item.content, read: read, chatLocation: item.chatLocation, presentationData: contentPresentationData, associatedData: item.associatedData, attributes: attributes, isItemPinned: isItemPinned, isItemEdited: isItemEdited)
             
             var itemSelection: Bool?
             switch content {
@@ -2474,7 +2542,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             if incoming {
                 color = nameColors.main
             } else {
-                color = item.presentationData.theme.theme.chat.message.outgoing.accentTextColor
+                color = messageTheme.accentTextColor
             }
             authorNameColor = color
         }
@@ -2510,20 +2578,20 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 if incoming {
                     color = nameColors.main
                 } else {
-                    color = item.presentationData.theme.theme.chat.message.outgoing.accentTextColor
+                    color = messageTheme.accentTextColor
                 }
                 authorNameColor = color
 
                 if case let .peer(peerId) = item.chatLocation, let authorPeerId = item.message.author?.id, authorPeerId == peerId {
                     if effectiveAuthor is TelegramChannel, let emojiStatus = effectiveAuthor.emojiStatus {
-                        currentCredibilityIcon = (.animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 20.0, height: 20.0), placeholderColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.mediaPlaceholderColor : item.presentationData.theme.theme.chat.message.outgoing.mediaPlaceholderColor, themeColor: color.withMultipliedAlpha(0.4), loopMode: .count(2)), nil)
+                        currentCredibilityIcon = (.animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 20.0, height: 20.0), placeholderColor: messageTheme.mediaPlaceholderColor, themeColor: color.withMultipliedAlpha(0.4), loopMode: .count(2)), nil)
                     }
                 } else if effectiveAuthor.isScam {
-                    currentCredibilityIcon = (.text(color: incoming ? item.presentationData.theme.theme.chat.message.incoming.scamColor : item.presentationData.theme.theme.chat.message.outgoing.scamColor, string: item.presentationData.strings.Message_ScamAccount.uppercased()), nil)
+                    currentCredibilityIcon = (.text(color: messageTheme.scamColor, string: item.presentationData.strings.Message_ScamAccount.uppercased()), nil)
                 } else if effectiveAuthor.isFake {
-                    currentCredibilityIcon = (.text(color: incoming ? item.presentationData.theme.theme.chat.message.incoming.scamColor : item.presentationData.theme.theme.chat.message.outgoing.scamColor, string: item.presentationData.strings.Message_FakeAccount.uppercased()), nil)
+                    currentCredibilityIcon = (.text(color: messageTheme.scamColor, string: item.presentationData.strings.Message_FakeAccount.uppercased()), nil)
                 } else if let emojiStatus = effectiveAuthor.emojiStatus {
-                    currentCredibilityIcon = (.animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 20.0, height: 20.0), placeholderColor: incoming ? item.presentationData.theme.theme.chat.message.incoming.mediaPlaceholderColor : item.presentationData.theme.theme.chat.message.outgoing.mediaPlaceholderColor, themeColor: color.withMultipliedAlpha(0.4), loopMode: .count(2)), emojiStatus.color.flatMap { UIColor(rgb: UInt32(bitPattern: $0)) })
+                    currentCredibilityIcon = (.animation(content: .customEmoji(fileId: emojiStatus.fileId), size: CGSize(width: 20.0, height: 20.0), placeholderColor: messageTheme.mediaPlaceholderColor, themeColor: color.withMultipliedAlpha(0.4), loopMode: .count(2)), emojiStatus.color.flatMap { UIColor(rgb: UInt32(bitPattern: $0)) })
                 } else if effectiveAuthor.isVerified {
                     currentCredibilityIcon = (.verified(fillColor: item.presentationData.theme.theme.list.itemCheckColors.fillColor, foregroundColor: item.presentationData.theme.theme.list.itemCheckColors.foregroundColor, sizeType: .compact), nil)
                 } else if effectiveAuthor.isPremium {
@@ -2605,17 +2673,38 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
         var lastNodeTopPosition: ChatMessageBubbleRelativePosition = .None(bottomNodeMergeStatus)
         
+        var wegramAlbumPresentation: (range: Range<Int>, layout: WegramMediaAlbumLayout)?
         var calculatedGroupFramesAndSize: ([(CGRect, MosaicItemPosition)], CGSize)?
         var mosaicStatusSizeAndApply: (CGSize, (ListViewItemUpdateAnimation) -> ChatMessageDateAndStatusNode)?
         
         if let mosaicRange = mosaicRange {
             let maxSize = layoutConstants.image.maxDimensions.fittedToWidthOrSmaller(maximumContentWidth - layoutConstants.image.bubbleInsets.left - layoutConstants.image.bubbleInsets.right)
-            let (innerFramesAndPositions, innerSize) = chatMessageBubbleMosaicLayout(maxSize: maxSize, itemSizes: contentPropertiesAndLayouts[mosaicRange].map { item in
+            let itemSizes = contentPropertiesAndLayouts[mosaicRange].map { item -> CGSize in
                 guard let size = item.0, size.width > 0.0, size.height > 0 else {
                     return CGSize(width: 256.0, height: 256.0)
                 }
                 return size
-            })
+            }
+            let innerFramesAndPositions: [(CGRect, MosaicItemPosition)]
+            let innerSize: CGSize
+            let supportsWegramAlbum: Bool = {
+                guard usesWegramLayout, mosaicRange.count >= 3, case let .group(messages) = item.content,
+                      messages.count == mosaicRange.count else { return false }
+                return messages.allSatisfy { message, _, _, _, _ in
+                    message.media.count == 1 && message.media[0] is TelegramMediaImage && !message.attributes.contains(where: {
+                        $0 is AutoremoveTimeoutMessageAttribute || $0 is AutoclearTimeoutMessageAttribute || $0 is MediaSpoilerMessageAttribute
+                    })
+                }
+            }()
+            if supportsWegramAlbum {
+                let expanded = item.controllerInteraction.selectionState != nil || item.controllerInteraction.wegramExpandedMediaGroups.with { $0.contains(item.content.firstMessage.stableId) }
+                let album = WegramMediaAlbumLayout(itemSizes: itemSizes, maxSize: maxSize, outgoing: !incoming, expanded: expanded)
+                wegramAlbumPresentation = (mosaicRange, album)
+                innerFramesAndPositions = album.frames.map { ($0, [.top, .bottom, .left, .right]) }
+                innerSize = album.size
+            } else {
+                (innerFramesAndPositions, innerSize) = chatMessageBubbleMosaicLayout(maxSize: maxSize, itemSizes: itemSizes)
+            }
             
             let framesAndPositions = innerFramesAndPositions.map { ($0.0.offsetBy(dx: layoutConstants.image.bubbleInsets.left, dy: layoutConstants.image.bubbleInsets.top), $0.1) }
             
@@ -2695,7 +2784,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 
                 let statusSuggestedWidthAndContinue = mosaicStatusLayout(ChatMessageDateAndStatusNode.Arguments(
                     context: item.context,
-                    presentationData: item.presentationData,
+                    presentationData: contentPresentationData,
                     edited: edited && !item.presentationData.isPreview,
                     impressionCount: !item.presentationData.isPreview ? viewCount : nil,
                     dateText: dateText,
@@ -2724,6 +2813,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
         
         var headerSize = CGSize()
+        var externalAuthorHeaderSize = CGSize()
         
         var nameNodeOriginY: CGFloat = 0.0
         var nameNodeSizeApply: (CGSize, () -> TextNode?) = (CGSize(), { nil })
@@ -2736,6 +2826,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         let threadInfoOriginY: CGFloat = 0.0
         let threadInfoSizeApply: (CGSize, (Bool) -> ChatMessageThreadInfoNode?) = (CGSize(), {  _ in nil })
         
+        var replyIsSeparate = false
         var replyInfoOriginY: CGFloat = 0.0
         var replyInfoSizeApply: (CGSize, (CGSize, Bool, ListViewItemUpdateAnimation) -> ChatMessageReplyInfoNode?) = (CGSize(), { _, _, _ in nil })
         
@@ -2767,6 +2858,9 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     }
                 }
                 
+                if usesWegramLayout && incoming {
+                    authorNameColor = UIColor(rgb: 0x888888)
+                }
                 let inlineBotNameColor = messageTheme.accentTextColor
                 
                 let attributedString: NSAttributedString
@@ -2885,7 +2979,8 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 
                 let closeButtonWidth: CGFloat = item.message.adAttribute != nil ? 18.0 : 0.0
                 
-                let sizeAndApply = authorNameLayout(TextNodeLayoutArguments(attributedString: attributedString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(0, maximumNodeWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right - credibilityIconWidth - rankBadgeSizeAndApply.0.size.width - closeButtonWidth), height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+                let externalAuthorReservedWidth: CGFloat = usesWegramLayout && incoming ? boostBadgeWidth + 8.0 + (rankBadgeSizeAndApply.0.size.width > 0 ? 3.0 : 0.0) : 0.0
+                let sizeAndApply = authorNameLayout(TextNodeLayoutArguments(attributedString: attributedString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: max(0, maximumNodeWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right - credibilityIconWidth - rankBadgeSizeAndApply.0.size.width - closeButtonWidth - externalAuthorReservedWidth), height: CGFloat.greatestFiniteMagnitude), alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 nameNodeSizeApply = (sizeAndApply.0.size, {
                     return sizeAndApply.1()
                 })
@@ -2918,6 +3013,14 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
 
                 headerSize.width = max(headerSize.width, headerSizeWidth)
                 headerSize.height += nameNodeSizeApply.0.height
+                if usesWegramLayout && incoming {
+                    var rowHeight = nameNodeSizeApply.0.height
+                    if currentCredibilityIcon != nil { rowHeight = max(rowHeight, 20.0) }
+                    if boostBadgeWidth > 0.0 { rowHeight = max(rowHeight, 22.0) }
+                    if rankBadgeNodeSizeApply.0.width > 0.0 { rowHeight = max(rowHeight, 17.0) }
+                    externalAuthorHeaderSize = CGSize(width: headerSize.width - bubbleWidthInsets + 5.0, height: rowHeight + 4.0)
+                    headerSize = .zero
+                }
             }
 
             if displayEphemeralBadge, let ephemeralBadgeText {
@@ -2954,7 +3057,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 })
                 forwardSource = resolvedForwardInfo.source
                 forwardAuthorSignature = resolvedForwardInfo.authorSignature
-                let sizeAndApply = forwardInfoLayout(item.context, item.presentationData, item.presentationData.strings, .bubble(incoming: incoming), forwardSource.flatMap(EnginePeer.init), forwardAuthorSignature, forwardInlineBotNameString, forwardPsaType, nil, CGSize(width: maximumNodeWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right, height: CGFloat.greatestFiniteMagnitude))
+                let sizeAndApply = forwardInfoLayout(item.context, contentPresentationData, item.presentationData.strings, .bubble(incoming: incoming), forwardSource.flatMap(EnginePeer.init), forwardAuthorSignature, forwardInlineBotNameString, forwardPsaType, nil, CGSize(width: maximumNodeWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right, height: CGFloat.greatestFiniteMagnitude))
                 forwardInfoSizeApply = (sizeAndApply.0, { width in sizeAndApply.1(width) })
                 
                 headerSize.height += 2.0
@@ -2985,7 +3088,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     }
                 }
                 
-                let sizeAndApply = forwardInfoLayout(item.context, item.presentationData, item.presentationData.strings, .bubble(incoming: incoming), forwardSource.flatMap(EnginePeer.init), nil, nil, nil, ChatMessageForwardInfoNode.StoryData(storyType: storyType), CGSize(width: maximumNodeWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right, height: CGFloat.greatestFiniteMagnitude))
+                let sizeAndApply = forwardInfoLayout(item.context, contentPresentationData, item.presentationData.strings, .bubble(incoming: incoming), forwardSource.flatMap(EnginePeer.init), nil, nil, nil, ChatMessageForwardInfoNode.StoryData(storyType: storyType), CGSize(width: maximumNodeWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right, height: CGFloat.greatestFiniteMagnitude))
                 forwardInfoSizeApply = (sizeAndApply.0, { width in sizeAndApply.1(width) })
                 
                 if storyType != .regular {
@@ -3022,10 +3125,13 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             }
                         
             if !isInstantVideo, hasReply, (replyMessage != nil || replyForward != nil || replyStory != nil || isSummarized) {
-                if headerSize.height.isZero {
-                    headerSize.height += 11.0
-                } else {
-                    headerSize.height += 2.0
+                replyIsSeparate = replyMessage != nil && !isSummarized
+                if !replyIsSeparate {
+                    if headerSize.height.isZero {
+                        headerSize.height += 11.0
+                    } else {
+                        headerSize.height += 2.0
+                    }
                 }
                 let sizeAndApply = replyInfoLayout(ChatMessageReplyInfoNode.Arguments(
                     presentationData: item.presentationData,
@@ -3042,16 +3148,15 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     constrainedSize: CGSize(width: maximumNodeWidth - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right - 6.0, height: CGFloat.greatestFiniteMagnitude),
                     animationCache: item.controllerInteraction.presentationContext.animationCache,
                     animationRenderer: item.controllerInteraction.presentationContext.animationRenderer,
-                    associatedData: item.associatedData
+                    associatedData: item.associatedData,
+                    isWegramStyle: replyIsSeparate
                 ))
                 replyInfoSizeApply = (sizeAndApply.0, { realSize, synchronousLoads, animation in sizeAndApply.1(realSize, synchronousLoads, animation) })
                 
-                replyInfoOriginY = headerSize.height
-                headerSize.width = max(headerSize.width, replyInfoSizeApply.0.width + bubbleWidthInsets)
-                headerSize.height += replyInfoSizeApply.0.height + 7.0
-                
-                if !headerSize.height.isZero {
-                    headerSize.height -= 7.0
+                if !replyIsSeparate {
+                    replyInfoOriginY = headerSize.height
+                    headerSize.width = max(headerSize.width, replyInfoSizeApply.0.width + bubbleWidthInsets)
+                    headerSize.height += replyInfoSizeApply.0.height
                 }
             } else {
                 if !headerSize.height.isZero {
@@ -3113,7 +3218,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             let (minWidth, buttonsLayout) = actionButtonsLayout(
                 item.context,
                 item.presentationData.theme,
-                item.presentationData.chatBubbleCorners,
+                ChatMessageBubbleItemNode.bubbleCorners(for: item),
                 item.presentationData.strings,
                 item.controllerInteraction.presentationContext.backgroundNode,
                 ReplyMarkupMessageAttribute(
@@ -3157,7 +3262,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 let (minWidth, buttonsLayout) = actionButtonsLayout(
                     item.context,
                     item.presentationData.theme,
-                    item.presentationData.chatBubbleCorners,
+                    ChatMessageBubbleItemNode.bubbleCorners(for: item),
                     item.presentationData.strings,
                     item.controllerInteraction.presentationContext.backgroundNode,
                     ReplyMarkupMessageAttribute(
@@ -3198,7 +3303,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 let (minWidth, buttonsLayout) = actionButtonsLayout(
                     item.context,
                     item.presentationData.theme,
-                    item.presentationData.chatBubbleCorners,
+                    ChatMessageBubbleItemNode.bubbleCorners(for: item),
                     item.presentationData.strings,
                     item.controllerInteraction.presentationContext.backgroundNode,
                     ReplyMarkupMessageAttribute(
@@ -3247,7 +3352,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             let (minWidth, buttonsLayout) = actionButtonsLayout(
                 item.context,
                 item.presentationData.theme,
-                item.presentationData.chatBubbleCorners,
+                ChatMessageBubbleItemNode.bubbleCorners(for: item),
                 item.presentationData.strings,
                 item.controllerInteraction.presentationContext.backgroundNode,
                 ReplyMarkupMessageAttribute(
@@ -3268,7 +3373,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             
             lastNodeTopPosition = .None(.Both)
         } else if let replyMarkup = replyMarkup, !item.presentationData.isPreview {
-            let (minWidth, buttonsLayout) = actionButtonsLayout(item.context, item.presentationData.theme, item.presentationData.chatBubbleCorners, item.presentationData.strings, item.controllerInteraction.presentationContext.backgroundNode, replyMarkup, [:], EngineMessage(item.message), maximumNodeWidth)
+            let (minWidth, buttonsLayout) = actionButtonsLayout(item.context, item.presentationData.theme, ChatMessageBubbleItemNode.bubbleCorners(for: item), item.presentationData.strings, item.controllerInteraction.presentationContext.backgroundNode, replyMarkup, [:], EngineMessage(item.message), maximumNodeWidth)
             maxContentWidth = max(maxContentWidth, minWidth)
             actionButtonsFinalize = buttonsLayout
         } else if item.content.firstMessageAttributes.displayContinueThreadFooter {
@@ -3285,7 +3390,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             let (minWidth, buttonsLayout) = actionButtonsLayout(
                 item.context,
                 item.presentationData.theme,
-                item.presentationData.chatBubbleCorners,
+                ChatMessageBubbleItemNode.bubbleCorners(for: item),
                 item.presentationData.strings,
                 item.controllerInteraction.presentationContext.backgroundNode,
                 ReplyMarkupMessageAttribute(
@@ -3517,7 +3622,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         var totalContentNodesHeight: CGFloat = 0.0
         var currentContainerGroupOverlap: CGFloat = 0.0
         var detachedContentNodesHeight: CGFloat = 0.0
-        var additionalTopHeight: CGFloat = 0.0
+        var additionalTopHeight: CGFloat = externalAuthorHeaderSize.height
         
         var mosaicStatusOrigin: CGPoint?
         var unlockButtonPosition: CGPoint?
@@ -3560,7 +3665,11 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     contentNodesHeight += size.height
                     totalContentNodesHeight += size.height
                     
-                    mosaicStatusOrigin = contentNodeFrame.bottomRight
+                    if let album = wegramAlbumPresentation {
+                        mosaicStatusOrigin = CGPoint(x: album.layout.statusAnchor.x + layoutConstants.image.bubbleInsets.left, y: album.layout.statusAnchor.y + layoutConstants.image.bubbleInsets.top + contentNodeOriginY)
+                    } else {
+                        mosaicStatusOrigin = contentNodeFrame.bottomRight
+                    }
                 }
             } else {
                 let contentProperties = contentPropertiesAndLayouts[i].3
@@ -3725,7 +3834,8 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         let contentUpperRightCorner: CGPoint
         switch alignment {
             case .none:
-                backgroundFrame = CGRect(origin: CGPoint(x: incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + avatarInset) : (params.width - params.rightInset - layoutBubbleSize.width - layoutConstants.bubble.edgeInset - deliveryFailedInset), y: detachedContentNodesHeight + additionalTopHeight), size: layoutBubbleSize)
+                let backgroundX = usesWegramLayout ? WegramMessageLayout.bubbleOriginX(width: params.width, bubbleWidth: layoutBubbleSize.width, leftInset: params.leftInset, rightInset: params.rightInset, outgoing: !incoming, failedInset: deliveryFailedInset) : (incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + avatarInset) : (params.width - params.rightInset - layoutBubbleSize.width - layoutConstants.bubble.edgeInset - deliveryFailedInset))
+                backgroundFrame = CGRect(origin: CGPoint(x: backgroundX, y: detachedContentNodesHeight + additionalTopHeight), size: layoutBubbleSize)
                 contentOrigin = CGPoint(x: backgroundFrame.origin.x + (incoming ? layoutConstants.bubble.contentInsets.left : layoutConstants.bubble.contentInsets.right), y: backgroundFrame.origin.y + layoutConstants.bubble.contentInsets.top + headerSize.height + contentVerticalOffset)
                 contentUpperRightCorner = CGPoint(x: backgroundFrame.maxX - (incoming ? layoutConstants.bubble.contentInsets.right : layoutConstants.bubble.contentInsets.left), y: backgroundFrame.origin.y + layoutConstants.bubble.contentInsets.top + headerSize.height)
             case .center:
@@ -3742,7 +3852,8 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         
         let bubbleContentWidth = maxContentWidth - layoutConstants.bubble.edgeInset * 2.0 - (layoutConstants.bubble.contentInsets.right + layoutConstants.bubble.contentInsets.left)
 
-        var layoutSize = CGSize(width: params.width, height: layoutBubbleSize.height + detachedContentNodesHeight + additionalTopHeight)
+        let separateReplyHeight = replyIsSeparate ? replyInfoSizeApply.0.height + 4.0 : 0.0
+        var layoutSize = CGSize(width: params.width, height: layoutBubbleSize.height + detachedContentNodesHeight + additionalTopHeight + separateReplyHeight)
         
         if let reactionButtonsSizeAndApply = reactionButtonsSizeAndApply {
             layoutSize.height += 4.0 + reactionButtonsSizeAndApply.0.height + 2.0
@@ -3752,25 +3863,16 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
         
         var layoutInsets = UIEdgeInsets(top: mergedTop.merged ? layoutConstants.bubble.mergedSpacing : layoutConstants.bubble.defaultSpacing, left: 0.0, bottom: mergedBottom.merged ? layoutConstants.bubble.mergedSpacing : layoutConstants.bubble.defaultSpacing, right: 0.0)
-        if dateHeaderAtBottom.hasDate && dateHeaderAtBottom.hasTopic {
-            layoutInsets.top += layoutConstants.timestampDateAndTopicHeaderHeight
-        } else {
-            if dateHeaderAtBottom.hasDate {
-                layoutInsets.top += layoutConstants.timestampHeaderHeight
-            }
-            if dateHeaderAtBottom.hasTopic {
-                layoutInsets.top += layoutConstants.timestampHeaderHeight
-            }
-            if isAd {
-                layoutInsets.top += 4.0
-            }
+        layoutInsets.top += chatMessageDateHeaderSpacing(headers: item.headers, hasDate: dateHeaderAtBottom.hasDate, hasTopic: dateHeaderAtBottom.hasTopic, constants: layoutConstants)
+        if !(dateHeaderAtBottom.hasDate && dateHeaderAtBottom.hasTopic) && isAd {
+            layoutInsets.top += 4.0
         }
         
         layoutSize.height += layoutInsets.top + layoutInsets.bottom
         
         let layout = ListViewItemNodeLayout(contentSize: layoutSize, insets: UIEdgeInsets())
         
-        let graphics = PresentationResourcesChat.principalGraphics(theme: item.presentationData.theme.theme, wallpaper: item.presentationData.theme.wallpaper, bubbleCorners: item.presentationData.chatBubbleCorners)
+        let graphics = PresentationResourcesChat.principalGraphics(theme: item.presentationData.theme.theme, wallpaper: item.presentationData.theme.wallpaper, bubbleCorners: ChatMessageBubbleItemNode.bubbleCorners(for: item))
         
         var updatedMergedTop = mergedBottom
         var updatedMergedBottom = mergedTop
@@ -3811,6 +3913,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 backgroundFrame: backgroundFrame.offsetBy(dx: 0.0, dy: layoutInsets.top),
                 deliveryFailedInset: deliveryFailedInset,
                 nameNodeSizeApply: nameNodeSizeApply,
+                externalAuthorHeaderSize: externalAuthorHeaderSize,
                 viaWidth: viaWidth,
                 contentOrigin: contentOrigin.offsetBy(dx: 0.0, dy: layoutInsets.top),
                 nameNodeOriginY: layoutInsets.top + nameNodeOriginY + detachedContentNodesHeight + additionalTopHeight,
@@ -3833,6 +3936,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 forwardInfoOriginY: layoutInsets.top + forwardInfoOriginY + detachedContentNodesHeight + additionalTopHeight,
                 replyInfoSizeApply: replyInfoSizeApply,
                 replyInfoOriginY: layoutInsets.top + replyInfoOriginY + detachedContentNodesHeight + additionalTopHeight,
+                replyIsSeparate: replyIsSeparate,
                 removedContentNodeIndices: removedContentNodeIndices,
                 updatedContentNodeOrder: updatedContentNodeOrder,
                 addedContentNodes: addedContentNodes,
@@ -3841,6 +3945,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 contentContainerNodeFrames: contentContainerNodeFrames.map { containerGroupId, containerFrame, currentItemSelection, currentContainerGroupOverlap in
                     return (containerGroupId, containerFrame.offsetBy(dx: 0.0, dy: layoutInsets.top), currentItemSelection, currentContainerGroupOverlap)
                 },
+                wegramAlbumPresentation: wegramAlbumPresentation,
                 mosaicStatusOrigin: mosaicStatusOrigin,
                 mosaicStatusSizeAndApply: mosaicStatusSizeAndApply,
                 unlockButtonPosition: unlockButtonPosition,
@@ -3885,6 +3990,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         backgroundFrame: CGRect,
         deliveryFailedInset: CGFloat,
         nameNodeSizeApply: (CGSize, () -> TextNode?),
+        externalAuthorHeaderSize: CGSize,
         viaWidth: CGFloat,
         contentOrigin: CGPoint,
         nameNodeOriginY: CGFloat,
@@ -3907,12 +4013,14 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         forwardInfoOriginY: CGFloat,
         replyInfoSizeApply: (CGSize, (CGSize, Bool, ListViewItemUpdateAnimation) -> ChatMessageReplyInfoNode?),
         replyInfoOriginY: CGFloat,
+        replyIsSeparate: Bool,
         removedContentNodeIndices: [Int]?,
         updatedContentNodeOrder: Bool,
         addedContentNodes: [(Message, Bool, ChatMessageBubbleContentNode, Int?)]?,
         contentNodeMessagesAndClasses: [(Message, AnyClass, ChatMessageEntryAttributes, BubbleItemAttributes)],
         contentNodeFramesPropertiesAndApply: [(CGRect, ChatMessageBubbleContentProperties, Bool, (ListViewItemUpdateAnimation, Bool, ListViewItemApply?) -> Void)],
         contentContainerNodeFrames: [(UInt32, CGRect, Bool?, CGFloat)],
+        wegramAlbumPresentation: (range: Range<Int>, layout: WegramMediaAlbumLayout)?,
         mosaicStatusOrigin: CGPoint?,
         mosaicStatusSizeAndApply: (CGSize, (ListViewItemUpdateAnimation) -> ChatMessageDateAndStatusNode)?,
         unlockButtonPosition: CGPoint?,
@@ -3954,7 +4062,9 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             strongSelf.trailingItemSpaceOffset = 0.0
         }
         
-        let themeUpdated = strongSelf.appliedItem?.presentationData.theme.theme !== item.presentationData.theme.theme
+        let appliedBubbleCorners = ChatMessageBubbleItemNode.bubbleCorners(for: item)
+        let themeUpdated = strongSelf.appliedItem?.presentationData.theme.theme !== item.presentationData.theme.theme || strongSelf.appliedBubbleCorners != appliedBubbleCorners
+        strongSelf.appliedBubbleCorners = appliedBubbleCorners
         let previousContextFrame = strongSelf.mainContainerNode.frame
         strongSelf.mainContainerNode.frame = CGRect(origin: CGPoint(x: 0.0, y: strongSelf.trailingItemSpaceOffset), size: layout.contentSize)
         strongSelf.mainContextSourceNode.frame = CGRect(origin: CGPoint(), size: layout.contentSize)
@@ -4003,7 +4113,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         } else {
             if case let .messageOptions(_, _, info) = item.associatedData.subject, case let .link(link) = info, link.isCentered {
                 backgroundType = .incoming(.Extracted)
-            } else if !item.presentationData.chatBubbleCorners.hasTails {
+            } else if !ChatMessageBubbleItemNode.bubbleCorners(for: item).hasTails {
                 backgroundType = .incoming(.Extracted)
             } else {
                 backgroundType = .incoming(mergeType)
@@ -4021,6 +4131,10 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         
         let previousBackgroundFrame = strongSelf.backgroundNode.backgroundFrame
         strongSelf.backgroundNode.backgroundFrame = backgroundFrame
+        let previousAuthorHeaderFrame = strongSelf.authorHeaderFrame
+        let authorHeaderFrame: CGRect? = externalAuthorHeaderSize.height > 0 ? WegramMessageLayout.authorHeaderFrame(bubbleFrame: backgroundFrame, headerSize: externalAuthorHeaderSize) : nil
+        strongSelf.authorHeaderFrame = authorHeaderFrame
+        let clippingFrame = authorHeaderFrame.map { backgroundFrame.union($0) } ?? backgroundFrame
         
         if let (suggestedPostInfoSize, suggestedPostInfoApply) = suggestedPostInfoNodeLayout {
             let suggestedPostInfoNode = suggestedPostInfoApply()
@@ -4081,6 +4195,11 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             let previousNameNodeFrame = nameNode.frame
             
             var nameNodeFrame = CGRect(origin: CGPoint(x: contentOrigin.x + layoutConstants.text.bubbleInsets.left, y: layoutConstants.bubble.contentInsets.top + nameNodeOriginY), size: nameNodeSizeApply.0)
+            if authorHeaderFrame != nil {
+                nameNodeFrame = WegramMessageLayout.authorNameFrame(bubbleFrame: backgroundFrame, nameSize: nameNodeSizeApply.0, headerSize: externalAuthorHeaderSize)
+            }
+            let authorRowRight = authorHeaderFrame.map { $0.maxX - 5.0 } ?? (contentUpperRightCorner.x - layoutConstants.text.bubbleInsets.left)
+            let authorRowY = nameNodeFrame.minY + 1.0 - UIScreenPixel
             
             var nameNavigateButtonOffset: CGFloat = currentCredibilityIcon == nil ? 4.0 : 28.0
             nameNavigateButtonOffset += 34.0
@@ -4250,7 +4369,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             nameHighlightNode.frame = nameHiglightFrame.insetBy(dx: -2.0, dy: -1.0)
             nameButtonNode.frame = nameHiglightFrame.insetBy(dx: -2.0, dy: -3.0)
             
-            let nameColor = authorNameColor ?? item.presentationData.theme.theme.chat.message.outgoing.accentTextColor
+            let nameColor = authorNameColor ?? appliedBubbleCorners.messageColors(theme: item.presentationData.theme.theme, incoming: incoming).accentTextColor
             if themeUpdated {
                 nameHighlightNode.image = generateFilledRoundedRectImage(size: CGSize(width: 8.0, height: 8.0), cornerRadius: 4.0, color: nameColor.withAlphaComponent(0.1))?.stretchableImage(withLeftCapWidth: 4, topCapHeight: 4)
             }
@@ -4356,7 +4475,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             if let boostBadgeNode = boostNodeSizeApply.1() {
                 boostBadgeNode.alpha = 0.75
                 strongSelf.boostBadgeNode = boostBadgeNode
-                let boostBadgeFrame = CGRect(origin: CGPoint(x: contentUpperRightCorner.x - layoutConstants.text.bubbleInsets.left - boostNodeSizeApply.0.width, y: layoutConstants.bubble.contentInsets.top + nameNodeOriginY + 1.0 - UIScreenPixel), size: boostNodeSizeApply.0)
+                let boostBadgeFrame = CGRect(origin: CGPoint(x: authorRowRight - boostNodeSizeApply.0.width, y: authorRowY), size: boostNodeSizeApply.0)
                 if boostBadgeNode.supernode == nil {
                     if !boostBadgeNode.isNodeLoaded {
                         boostBadgeNode.isUserInteractionEnabled = false
@@ -4386,7 +4505,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 }
                 
                 
-                let boostIconFrame = CGRect(origin: CGPoint(x: contentUpperRightCorner.x - layoutConstants.text.bubbleInsets.left - boostTotalWidth + 4.0, y: layoutConstants.bubble.contentInsets.top + nameNodeOriginY + 1.0 - UIScreenPixel - 3.0), size: CGSize(width: boostTotalWidth, height: 22.0))
+                let boostIconFrame = CGRect(origin: CGPoint(x: authorRowRight - boostTotalWidth + 4.0, y: authorRowY - 3.0), size: CGSize(width: boostTotalWidth, height: 22.0))
 
                 let previousBoostCount = strongSelf.boostCount
                 
@@ -4457,7 +4576,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             
             if let rankBadgeNode = rankBadgeNodeSizeApply.1() {
                 strongSelf.rankBadgeNode = rankBadgeNode
-                let rankBadgeFrame = CGRect(origin: CGPoint(x: contentUpperRightCorner.x - layoutConstants.text.bubbleInsets.left - rightContentOffset - rankBadgeNodeSizeApply.0.width - 1.0 + UIScreenPixel, y: layoutConstants.bubble.contentInsets.top + nameNodeOriginY + 1.0 - UIScreenPixel), size: rankBadgeNodeSizeApply.0)
+                let rankBadgeFrame = CGRect(origin: CGPoint(x: authorRowRight - rightContentOffset - rankBadgeNodeSizeApply.0.width - 1.0 + UIScreenPixel, y: authorRowY), size: rankBadgeNodeSizeApply.0)
                 if rankBadgeNode.supernode == nil {
                     if !rankBadgeNode.isNodeLoaded {
                         rankBadgeNode.isUserInteractionEnabled = false
@@ -4480,7 +4599,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     rankBackgroundColor = rankBadgeColor.withMultipliedAlpha(0.2)
                     rankBackgroundBaseAlpha = 0.5
                 } else {
-                    let messageTheme = incoming ? item.presentationData.theme.theme.chat.message.incoming : item.presentationData.theme.theme.chat.message.outgoing
+                    let messageTheme = appliedBubbleCorners.messageColors(theme: item.presentationData.theme.theme, incoming: incoming)
                     rankBackgroundColor = messageTheme.secondaryTextColor.withMultipliedAlpha(0.1)
                 }
                 
@@ -4662,7 +4781,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             strongSelf.ephemeralBadgeTextNode = ephemeralBadgeTextNode
             ephemeralBadgeTextNode.displaysAsynchronously = !item.presentationData.isPreview && !item.presentationData.theme.theme.forceSync
 
-            let messageTheme = incoming ? item.presentationData.theme.theme.chat.message.incoming : item.presentationData.theme.theme.chat.message.outgoing
+            let messageTheme = appliedBubbleCorners.messageColors(theme: item.presentationData.theme.theme, incoming: incoming)
             let textColor = incoming ? UIColor(rgb: 0x49a355) : messageTheme.secondaryTextColor
             let backgroundColor = textColor.withMultipliedAlpha(0.1)
             let backgroundFrame = CGRect(origin: CGPoint(x: contentOrigin.x + layoutConstants.text.bubbleInsets.left, y: layoutConstants.bubble.contentInsets.top + ephemeralBadgeOriginY), size: ephemeralBadgeNodeSizeApply.1)
@@ -4850,12 +4969,18 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             }
         }
         
-        let replyInfoFrame = CGRect(origin: CGPoint(x: contentOrigin.x + layoutConstants.text.bubbleInsets.left, y: layoutConstants.bubble.contentInsets.top + replyInfoOriginY), size: CGSize(width: backgroundFrame.width - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right - 6.0, height: replyInfoSizeApply.0.height))
+        let replyInfoFrame: CGRect
+        if replyIsSeparate {
+            replyInfoFrame = CGRect(x: incoming ? backgroundFrame.minX : backgroundFrame.maxX - replyInfoSizeApply.0.width, y: backgroundFrame.maxY + 4.0, width: replyInfoSizeApply.0.width, height: replyInfoSizeApply.0.height)
+        } else {
+            replyInfoFrame = CGRect(origin: CGPoint(x: contentOrigin.x + layoutConstants.text.bubbleInsets.left, y: layoutConstants.bubble.contentInsets.top + replyInfoOriginY), size: CGSize(width: backgroundFrame.width - layoutConstants.text.bubbleInsets.left - layoutConstants.text.bubbleInsets.right - 6.0, height: replyInfoSizeApply.0.height))
+        }
         if let replyInfoNode = replyInfoSizeApply.1(replyInfoFrame.size, synchronousLoads, animation) {
             strongSelf.replyInfoNode = replyInfoNode
             var animateFrame = true
-            if replyInfoNode.supernode == nil {
-                strongSelf.clippingNode.addSubnode(replyInfoNode)
+            let replyParent: ASDisplayNode = replyIsSeparate ? strongSelf.mainContextSourceNode.contentNode : strongSelf.clippingNode
+            if replyInfoNode.supernode !== replyParent {
+                replyParent.addSubnode(replyInfoNode)
                 animateFrame = false
                 
                 replyInfoNode.visibility = strongSelf.visibility != .none
@@ -5045,6 +5170,14 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             strongSelf.contentContainersWrapperNode.view.mask = nil
         }
         
+        if let previousAlbum = strongSelf.wegramAlbumPresentation {
+            for index in previousAlbum.range where index < strongSelf.contentNodes.count {
+                strongSelf.contentNodes[index].transform = CATransform3DIdentity
+                strongSelf.contentNodes[index].isHidden = false
+            }
+        }
+        strongSelf.wegramAlbumPresentation = wegramAlbumPresentation
+
         var animateTextAndWebpagePositionSwap: Bool?
         var bottomStatusNodeAnimationSourcePosition: CGPoint?
         
@@ -5289,6 +5422,67 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             contentNodeIndex += 1
         }
         
+        if let album = wegramAlbumPresentation, album.range.upperBound <= strongSelf.contentNodes.count {
+            let mediaNodes = Array(strongSelf.contentNodes[album.range])
+            for (index, node) in mediaNodes.enumerated() {
+                node.isHidden = !album.layout.isVisible(at: index)
+                node.transform = CATransform3DMakeRotation(album.layout.rotation(at: index), 0, 0, 1)
+                if !album.layout.expanded && index > 0 { node.visibility = .none }
+            }
+            // The first photo is the front card; retain the model order for message actions.
+            album.layout.arrangeNodes(mediaNodes)
+            let button: UIButton
+            if let current = strongSelf.wegramAlbumButton {
+                button = current
+            } else {
+                button = UIButton(type: .custom)
+                button.titleLabel?.font = .systemFont(ofSize: 14)
+                button.setTitleColor(UIColor(white: 0.1, alpha: 1), for: .normal)
+                let background = UIView()
+                background.tag = 1
+                background.backgroundColor = UIColor(white: 0.88, alpha: 1)
+                background.layer.cornerRadius = 12
+                background.isUserInteractionEnabled = false
+                button.insertSubview(background, at: 0)
+                button.addTarget(strongSelf, action: #selector(strongSelf.toggleWegramAlbum), for: .touchUpInside)
+                strongSelf.mainContextSourceNode.contentNode.view.addSubview(button)
+                strongSelf.wegramAlbumButton = button
+            }
+            let chinese = item.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+            button.setTitle(album.layout.expanded ? (chinese ? "收起" : "Collapse") : (chinese ? "展开 \(mediaNodes.count)" : "Expand \(mediaNodes.count)"), for: .normal)
+            let firstFrame = mediaNodes[0].frame
+            let width = max(54, ceil(button.titleLabel?.intrinsicContentSize.width ?? 0) + 24)
+            let x = incoming ? firstFrame.maxX + 8 : firstFrame.minX - 8 - width
+            button.frame = CGRect(x: max(params.leftInset + 12, min(x, params.width - params.rightInset - width - 12)), y: firstFrame.midY - 22, width: width, height: 44)
+            button.viewWithTag(1)?.frame = button.bounds.insetBy(dx: 0, dy: 10)
+            button.isEnabled = item.controllerInteraction.selectionState == nil
+            button.isHidden = !button.isEnabled
+            button.accessibilityLabel = button.currentTitle
+            button.accessibilityValue = album.layout.expanded ? (chinese ? "已展开" : "Expanded") : (chinese ? "已收起" : "Collapsed")
+            let avatarCount = album.layout.expanded ? mediaNodes.count - 1 : 0
+            while strongSelf.wegramAlbumAvatars.count > avatarCount { strongSelf.wegramAlbumAvatars.removeLast().removeFromSupernode() }
+            for index in 0 ..< avatarCount {
+                let avatar: AvatarNode
+                if index < strongSelf.wegramAlbumAvatars.count {
+                    avatar = strongSelf.wegramAlbumAvatars[index]
+                } else {
+                    avatar = AvatarNode(font: avatarPlaceholderFont(size: 16))
+                    avatar.isUserInteractionEnabled = false
+                    strongSelf.mainContextSourceNode.contentNode.addSubnode(avatar)
+                    strongSelf.wegramAlbumAvatars.append(avatar)
+                }
+                var frame = WegramMessageLayout.avatarFrame(width: params.width, leftInset: params.leftInset, rightInset: params.rightInset, outgoing: !incoming)
+                frame.origin.y = mediaNodes[index + 1].frame.minY
+                avatar.frame = frame
+                avatar.setPeer(context: item.context, theme: item.presentationData.theme.theme, peer: item.content.firstMessage.author.flatMap(EnginePeer.init), clipStyle: .roundedRect, displayDimensions: frame.size)
+            }
+        } else {
+            strongSelf.wegramAlbumButton?.removeFromSuperview()
+            strongSelf.wegramAlbumButton = nil
+            for avatar in strongSelf.wegramAlbumAvatars { avatar.removeFromSupernode() }
+            strongSelf.wegramAlbumAvatars.removeAll()
+        }
+
         if let mosaicStatusOrigin = mosaicStatusOrigin, let (size, apply) = mosaicStatusSizeAndApply {
             var statusNodeAnimation = animation
             if strongSelf.mosaicStatusNode == nil {
@@ -5407,7 +5601,8 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         strongSelf.selectionNode?.frame = selectionFrame
         strongSelf.selectionNode?.updateLayout(size: selectionFrame.size, leftInset: params.leftInset)
         
-        var reactionButtonsOffset: CGFloat = 0.0
+        let separateReplyHeight = replyIsSeparate ? replyInfoSizeApply.0.height + 4.0 : 0.0
+        var reactionButtonsOffset: CGFloat = separateReplyHeight
         
         if let actionButtonsSizeAndApply = actionButtonsSizeAndApply {
             let actionButtonsNode = actionButtonsSizeAndApply.1(animation)
@@ -5417,7 +5612,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             } else {
                 actionButtonsOriginX += incoming ? layoutConstants.bubble.contentInsets.left : layoutConstants.bubble.contentInsets.right
             }
-            let actionButtonsFrame = CGRect(origin: CGPoint(x: actionButtonsOriginX, y: backgroundFrame.maxY), size: actionButtonsSizeAndApply.0)
+            let actionButtonsFrame = CGRect(origin: CGPoint(x: actionButtonsOriginX, y: backgroundFrame.maxY + separateReplyHeight), size: actionButtonsSizeAndApply.0)
             if actionButtonsNode !== strongSelf.actionButtonsNode {
                 strongSelf.actionButtonsNode = actionButtonsNode
                 actionButtonsNode.buttonPressed = { [weak strongSelf] button, progress in
@@ -5564,15 +5759,15 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             //
             // `backgroundFrame` is stored above from the value this pass computed, never through a
             // layer, so it compares exactly. Keep it that way.
-            if !previousBackgroundFrame.equalTo(backgroundFrame) {
+            if !previousBackgroundFrame.equalTo(backgroundFrame) || previousAuthorHeaderFrame != authorHeaderFrame {
                 animation.animator.updateFrame(layer: strongSelf.backgroundNode.layer, frame: backgroundFrame, completion: nil)
                 if let backgroundHighlightNode = strongSelf.backgroundHighlightNode {
                     animation.animator.updateFrame(layer: backgroundHighlightNode.layer, frame: backgroundFrame, completion: nil)
                     backgroundHighlightNode.updateLayout(size: backgroundFrame.size, transition: animation)
                 }
-                animation.animator.updatePosition(layer: strongSelf.clippingNode.layer, position: backgroundFrame.center, completion: nil)
+                animation.animator.updatePosition(layer: strongSelf.clippingNode.layer, position: clippingFrame.center, completion: nil)
                 strongSelf.clippingNode.clipsToBounds = shouldClipOnTransitions
-                animation.animator.updateBounds(layer: strongSelf.clippingNode.layer, bounds: CGRect(origin: CGPoint(x: backgroundFrame.minX, y: backgroundFrame.minY), size: backgroundFrame.size), completion: { [weak strongSelf] _ in
+                animation.animator.updateBounds(layer: strongSelf.clippingNode.layer, bounds: clippingFrame, completion: { [weak strongSelf] _ in
                     strongSelf?.clippingNode.clipsToBounds = false
                 })
 
@@ -5713,8 +5908,8 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 backgroundHighlightNode.updateLayout(size: backgroundFrame.size, transition: .immediate)
             }
             
-            strongSelf.clippingNode.frame = backgroundFrame
-            strongSelf.clippingNode.bounds = CGRect(origin: CGPoint(x: backgroundFrame.minX, y: backgroundFrame.minY), size: backgroundFrame.size)
+            strongSelf.clippingNode.frame = clippingFrame
+            strongSelf.clippingNode.bounds = clippingFrame
             strongSelf.backgroundNode.updateLayout(size: backgroundFrame.size, transition: .immediate)
             strongSelf.backgroundWallpaperNode.frame = backgroundFrame
             strongSelf.shadowNode.updateLayout(backgroundFrame: backgroundFrame, transition: .immediate)
@@ -5728,7 +5923,9 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         strongSelf.updateBackgroundTear(unsupportedZones, backgroundFrame: backgroundFrame, animation: animation)
 
         let previousContextContentFrame = strongSelf.mainContextSourceNode.contentRect
-        strongSelf.mainContextSourceNode.contentRect = backgroundFrame.offsetBy(dx: incomingOffset, dy: 0.0)
+        let contextFrame = replyIsSeparate ? clippingFrame.union(replyInfoFrame) : clippingFrame
+        strongSelf.messageAccessibilityArea.frame = contextFrame
+        strongSelf.mainContextSourceNode.contentRect = contextFrame.offsetBy(dx: incomingOffset, dy: 0.0)
         strongSelf.mainContainerNode.targetNodeForActivationProgressContentRect = strongSelf.mainContextSourceNode.contentRect
         
         if previousContextFrame.size != strongSelf.mainContextSourceNode.bounds.size || previousContextContentFrame != strongSelf.mainContextSourceNode.contentRect {
@@ -5760,6 +5957,10 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             contentContainer.containerNode.isGestureEnabled = hasMenuGesture
         }
         
+        if item.usesWegramMessageLayout && !item.controllerInteraction.isSidePanelOpen {
+            strongSelf.updateAccessibilityData(accessibilityData)
+        }
+
         strongSelf.updateSearchTextHighlightState()
         
         strongSelf.updateVisibility(isScroll: false)
@@ -5785,8 +5986,40 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         } else {
             self.messageAccessibilityArea.accessibilityCustomActions = nil
         }
+        if let item = self.item, self.canPerformWegramVoiceAccessibilityAction(messageId: item.message.id),
+           let progressExpanded = self.voicePlaybackProgressState(messageId: item.message.id) {
+            let messageId = item.message.id
+            let transcriptionExpanded: Bool? = self.canTranscribeAudio(messageId: messageId) ? self.hasExpandedAudioTranscription() : nil
+            let actions = WegramVoiceMessageLayout.accessibilityActions(chinese: item.presentationData.strings.baseLanguageCode.hasPrefix("zh"), progressExpanded: progressExpanded, transcriptionExpanded: transcriptionExpanded, transcribe: { [weak self] in
+                guard let self, self.canPerformWegramVoiceAccessibilityAction(messageId: messageId),
+                      self.isNodeLoaded, self.view.window != nil, !self.mainContextSourceNode.isExtractedToContextPreview,
+                      let transcriptionExpanded, self.canTranscribeAudio(messageId: messageId),
+                      self.hasExpandedAudioTranscription() == transcriptionExpanded else { return false }
+                self.transcribeAudioFromMenu(messageId: messageId)
+                return true
+            }, toggleProgress: { [weak self] in
+                guard let self, self.canPerformWegramVoiceAccessibilityAction(messageId: messageId),
+                      self.isNodeLoaded, self.view.window != nil, !self.mainContextSourceNode.isExtractedToContextPreview,
+                      self.voicePlaybackProgressState(messageId: messageId) == progressExpanded else { return false }
+                self.toggleVoicePlaybackProgressFromMenu(messageId: messageId)
+                return true
+            })
+            self.messageAccessibilityArea.accessibilityCustomActions = (self.messageAccessibilityArea.accessibilityCustomActions ?? []) + actions
+        }
     }
     
+    private func canPerformWegramVoiceAccessibilityAction(messageId: EngineMessage.Id) -> Bool {
+        guard let item = self.item, item.message.id == messageId,
+              item.usesWegramMessageLayout, item.controllerInteraction.wegramVoiceMenusAvailable,
+              !item.controllerInteraction.isSidePanelOpen, item.controllerInteraction.selectionState == nil, self.selectionNode == nil,
+              !item.message.flags.isSending,
+              self.voicePlaybackProgressState(messageId: messageId) != nil else { return false }
+        for (_, attributes) in item.content {
+            if attributes.updatingMedia != nil { return false }
+        }
+        return true
+    }
+
     @objc private func performLocalAccessibilityCustomAction(_ action: UIAccessibilityCustomAction) {
         if let action = action as? ChatMessageAccessibilityCustomAction {
             switch action.action {
@@ -5852,13 +6085,25 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
     }
     
+    private func interactionContentNodes(at point: CGPoint) -> [ChatMessageBubbleContentNode] {
+        guard let album = self.wegramAlbumPresentation, !album.layout.expanded,
+              album.range.upperBound <= self.contentNodes.count else { return self.contentNodes }
+        let firstFrame = self.contentNodes[album.range.lowerBound].frame
+        let layoutFrame = album.layout.frames[0]
+        let localPoint = CGPoint(x: point.x - firstFrame.minX + layoutFrame.minX, y: point.y - firstFrame.minY + layoutFrame.minY)
+        let hit = album.layout.hitIndex(at: localPoint).map { album.range.lowerBound + $0 }
+        return self.contentNodes.enumerated().compactMap { index, node in
+            return !album.range.contains(index) || index == hit ? node : nil
+        }
+    }
+
     private func gestureRecognized(gesture: TapLongTapOrDoubleTapGesture, location: CGPoint, recognizer: TapLongTapOrDoubleTapGestureRecognizer?) -> InternalBubbleTapAction? {
         var mediaMessage: Message?
         var forceOpen = false
         if let item = self.item {
             if case .group = item.content {
                 var message: Message? = item.content.firstMessage
-                loop: for contentNode in self.contentNodes {
+                loop: for contentNode in self.interactionContentNodes(at: location) {
                     if !(contentNode is ChatMessageTextBubbleContentNode) {
                         continue loop
                     }
@@ -5966,8 +6211,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                                         guard let self, let item = self.item, let replyInfoNode else {
                                             return
                                         }
-                                        if attribute.isQuote, !replyInfoNode.isQuoteExpanded {
-                                            replyInfoNode.isQuoteExpanded = true
+                                        if replyInfoNode.expandQuoteIfNeeded(isQuote: attribute.isQuote) {
                                             item.controllerInteraction.requestMessageUpdate(item.message.id, false, nil)
                                             return
                                         }
@@ -5998,8 +6242,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                                     guard let self, let item = self.item, let replyInfoNode else {
                                         return
                                     }
-                                    if attribute.isQuote, !replyInfoNode.isQuoteExpanded {
-                                        replyInfoNode.isQuoteExpanded = true
+                                    if replyInfoNode.expandQuoteIfNeeded(isQuote: attribute.isQuote) {
                                         item.controllerInteraction.requestMessageUpdate(item.message.id, false, nil)
                                         return
                                     }
@@ -6071,7 +6314,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                         }
                     }
                 }
-                loop: for contentNode in self.contentNodes {
+                loop: for contentNode in self.interactionContentNodes(at: location) {
                     let convertedLocation = self.view.convert(location, to: contentNode.view)
 
                     let tapAction = contentNode.tapActionAtPoint(convertedLocation, gesture: gesture, isEstimating: false)
@@ -6112,7 +6355,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                             let tapMessage = item.content.firstMessage
                             var subFrame = self.backgroundNode.frame
                             if case .group = item.content {
-                                for contentNode in self.contentNodes {
+                                for contentNode in self.interactionContentNodes(at: location) {
                                     if contentNode.item?.message.stableId == tapMessage.stableId {
                                         subFrame = contentNode.frame.insetBy(dx: 0.0, dy: -4.0)
                                         break
@@ -6133,7 +6376,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                             let tapMessage = item.content.firstMessage
                             var subFrame = self.backgroundNode.frame
                             if case .group = item.content {
-                                for contentNode in self.contentNodes {
+                                for contentNode in self.interactionContentNodes(at: location) {
                                     if contentNode.item?.message.stableId == tapMessage.stableId {
                                         subFrame = contentNode.frame.insetBy(dx: 0.0, dy: -4.0)
                                         break
@@ -6288,7 +6531,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 }
                 return nil
             case .longTap, .doubleTap, .secondaryTap:
-                if let item = self.item, self.backgroundNode.frame.contains(location) {
+                if let item = self.item, self.backgroundNode.frame.contains(location) || self.replyInfoNode?.frame.contains(location) == true || self.authorHeaderFrame?.contains(location) == true {
                     if let threadInfoNode = self.threadInfoNode, self.item?.controllerInteraction.tapMessage == nil, threadInfoNode.frame.contains(location) {
                         return .action(InternalBubbleTapAction.Action {})
                     }
@@ -6313,7 +6556,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     var selectAll = true
                     var hasFiles = false
                     var disableDefaultPressAnimation = false
-                    loop: for contentNode in self.contentNodes {
+                    loop: for contentNode in self.interactionContentNodes(at: location) {
                         let convertedLocation = self.view.convert(location, to: contentNode.view)
                         
                         if contentNode is ChatMessageFileBubbleContentNode {
@@ -6384,7 +6627,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                                 let tapMessage = item.content.firstMessage
                                 var subFrame = self.backgroundNode.frame
                                 if case .group = item.content {
-                                    for contentNode in self.contentNodes {
+                                    for contentNode in self.interactionContentNodes(at: location) {
                                         if contentNode.item?.message.stableId == tapMessage.stableId {
                                             subFrame = contentNode.frame.insetBy(dx: 0.0, dy: -4.0)
                                             break
@@ -6524,7 +6767,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     if let tapMessage = tapMessage {
                         var subFrame = self.backgroundNode.frame
                         if case .group = item.content {
-                            for contentNode in self.contentNodes {
+                            for contentNode in self.interactionContentNodes(at: location) {
                                 if contentNode.item?.message.stableId == tapMessage.stableId {
                                     subFrame = contentNode.frame.insetBy(dx: 0.0, dy: -4.0)
                                     break
@@ -6669,6 +6912,9 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             return nil
         }
 
+        if let button = self.wegramAlbumButton, !button.isHidden, button.frame.contains(point) {
+            return button
+        }
         if let threadInfoNode = self.threadInfoNode, let result = threadInfoNode.hitTest(self.view.convert(point, to: threadInfoNode.view), with: event) {
             return result
         }
@@ -6720,7 +6966,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             }
         }
         
-        for contentNode in self.contentNodes {
+        for contentNode in self.interactionContentNodes(at: point) {
             if let result = contentNode.hitTest(self.view.convert(point, to: contentNode.view), with: event) {
                 return result
             }
@@ -6730,7 +6976,8 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
     }
     
     override public func transitionNode(id: MessageId, media: Media, adjustRect: Bool) -> (ASDisplayNode, CGRect, () -> (UIView?, UIView?))? {
-        for contentNode in self.contentNodes {
+        for (index, contentNode) in self.contentNodes.enumerated() {
+            if let album = self.wegramAlbumPresentation, album.range.contains(index), !album.layout.isVisible(at: index - album.range.lowerBound) { continue }
             if let result = contentNode.transitionNode(messageId: id, media: media, adjustRect: adjustRect) {
                 if self.contentNodes.count == 1 && self.contentNodes.first is ChatMessageMediaBubbleContentNode && self.nameNode == nil && self.rankBadgeNode == nil && self.ephemeralBadgeTextNode == nil && self.forwardInfoNode == nil && self.replyInfoNode == nil {
                     return (result.0, result.1, { [weak self] in
@@ -6840,6 +7087,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         guard let item = self.item else {
             return
         }
+        self.selectionNode?.updateAppearance(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, usesWegramAppearance: item.usesWegramSelectionAppearance)
         
         let wasSelected = self.selectionNode?.selected
         
@@ -6896,7 +7144,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                 selectionNode.updateLayout(size: selectionFrame.size, leftInset: self.safeInsets.left)
                 self.subnodeTransform = CATransform3DMakeTranslation(offset, 0.0, 0.0);
             } else {
-                let selectionNode = ChatMessageSelectionNode(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, toggle: { [weak self] value in
+                let selectionNode = ChatMessageSelectionNode(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, usesWegramAppearance: item.usesWegramSelectionAppearance, toggle: { [weak self] value in
                     if let strongSelf = self, let item = strongSelf.item {
                         switch item.content {
                         case let .message(message, _, _, _, _):
@@ -6996,7 +7244,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             }
             
             if let backgroundType = self.backgroundType {
-                let graphics = PresentationResourcesChat.principalGraphics(theme: item.presentationData.theme.theme, wallpaper: item.presentationData.theme.wallpaper, bubbleCorners: item.presentationData.chatBubbleCorners)
+                let graphics = PresentationResourcesChat.principalGraphics(theme: item.presentationData.theme.theme, wallpaper: item.presentationData.theme.wallpaper, bubbleCorners: ChatMessageBubbleItemNode.bubbleCorners(for: item))
                 
                 if self.highlightedState != nil, !hasCustomHighlight, !(self.backgroundNode.layer.mask is SimpleLayer) {
                     let backgroundHighlightNode: ChatMessageBackground
@@ -7666,6 +7914,37 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         return nil
     }
     
+    public func canTranscribeAudio(messageId: EngineMessage.Id) -> Bool {
+        return self.contentNodes.contains { node in
+            (node as? ChatMessageFileBubbleContentNode)?.interactiveFileNode.canTranscribeAudio(messageId: messageId) == true
+        }
+    }
+
+    public func voicePlaybackProgressState(messageId: EngineMessage.Id) -> Bool? {
+        for case let node as ChatMessageFileBubbleContentNode in self.contentNodes {
+            if let state = node.interactiveFileNode.voicePlaybackProgressState(messageId: messageId) { return state }
+        }
+        return nil
+    }
+
+    public func toggleVoicePlaybackProgressFromMenu(messageId: EngineMessage.Id) {
+        for case let node as ChatMessageFileBubbleContentNode in self.contentNodes {
+            if node.interactiveFileNode.voicePlaybackProgressState(messageId: messageId) != nil {
+                node.interactiveFileNode.toggleVoicePlaybackProgressFromMenu(messageId: messageId)
+                return
+            }
+        }
+    }
+
+    public func transcribeAudioFromMenu(messageId: EngineMessage.Id) {
+        for case let node as ChatMessageFileBubbleContentNode in self.contentNodes {
+            if node.interactiveFileNode.canTranscribeAudio(messageId: messageId) {
+                node.interactiveFileNode.transcribeAudioFromMenu(messageId: messageId)
+                return
+            }
+        }
+    }
+
     public func hasExpandedAudioTranscription() -> Bool {
         for contentNode in self.contentNodes {
             if let contentNode = contentNode as? ChatMessageFileBubbleContentNode {
@@ -7830,8 +8109,10 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             effectiveVisibility = .none
         }
         
-        for contentNode in self.contentNodes {
-            if contentNode is ChatMessageTransferBubbleContentNode {
+        for (index, contentNode) in self.contentNodes.enumerated() {
+            if let album = self.wegramAlbumPresentation, !album.layout.expanded, album.range.contains(index), index > album.range.lowerBound {
+                contentNode.visibility = .none
+            } else if contentNode is ChatMessageTransferBubbleContentNode {
                 contentNode.visibility = mapVisibility(self.forceStopAnimations ? .none : effectiveMediaVisibility, boundsSize: self.bounds.size, insets: self.insets, to: contentNode)
             } else if contentNode is ChatMessageMediaBubbleContentNode || contentNode is ChatMessageGiftBubbleContentNode || contentNode is ChatMessageWebpageBubbleContentNode || contentNode is ChatMessageInvoiceBubbleContentNode || contentNode is ChatMessageGameBubbleContentNode || contentNode is ChatMessageInstantVideoBubbleContentNode || contentNode is ChatMessageRichDataBubbleContentNode {
                 contentNode.visibility = mapVisibility(effectiveMediaVisibility, boundsSize: self.bounds.size, insets: self.insets, to: contentNode)

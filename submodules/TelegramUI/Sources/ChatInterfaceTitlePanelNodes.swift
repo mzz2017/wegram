@@ -85,6 +85,9 @@ func titlePanelForChatPresentationInterfaceState(_ chatPresentationInterfaceStat
         loop: for context in chatPresentationInterfaceState.titlePanelContexts.reversed() {
             switch context {
                 case .pinnedMessage:
+                    if chatPresentationInterfaceState.wegramHiddenPinnedMessage != nil {
+                        continue loop
+                    }
                     if case .pinnedMessages = chatPresentationInterfaceState.subject {
                     } else {
                         if let pinnedMessage = chatPresentationInterfaceState.pinnedMessage, pinnedMessage.topMessageId != chatPresentationInterfaceState.interfaceState.messageActionsState.closedPinnedMessageId, !chatPresentationInterfaceState.pendingUnpinnedAllMessages {

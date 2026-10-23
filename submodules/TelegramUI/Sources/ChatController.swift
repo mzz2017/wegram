@@ -301,6 +301,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
     var leftNavigationButton: ChatNavigationButton?
     var rightNavigationButton: ChatNavigationButton?
     var secondaryRightNavigationButton: ChatNavigationButton?
+    var wegramChatInfoButton: MoreHeaderButton?
+    let usesWegramNavigation: Bool
     var chatInfoNavigationButton: ChatNavigationButton?
     
     var moreBarButton: MoreHeaderButton
@@ -319,6 +321,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
     
     let messageContextDisposable = MetaDisposable()
     let controllerNavigationDisposable = MetaDisposable()
+    weak var wegramSavedAttachmentController: WegramSavedAttachmentController?
     let sentMessageEventsDisposable = MetaDisposable()
     let failedMessageEventsDisposable = MetaDisposable()
     let sentPeerMediaMessageEventsDisposable = MetaDisposable()
@@ -680,6 +683,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         self.attachBotStart = attachBotStart
         self.botAppStart = botAppStart
         self.mode = mode
+        if case .standard(.default) = mode, case .peer = chatLocation, subject == nil || subject == .scheduledMessages {
+            self.usesWegramNavigation = true
+        } else {
+            self.usesWegramNavigation = false
+        }
         self.peekData = peekData
         self.currentChatListFilter = chatListFilter
         self.chatNavigationStack = chatNavigationStack
@@ -738,7 +746,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         case .inline, .standard(.embedded):
             navigationBarPresentationData = nil
         default:
-            navigationBarPresentationData = NavigationBarPresentationData(presentationData: self.presentationData, hideBackground: false, hideBadge: false, style: .glass, glassStyle: .default)
+            let usesWegramNavigation = self.usesWegramNavigation
+            let theme = NavigationBarTheme(rootControllerTheme: self.presentationData.theme, hideBackground: false, hideBadge: false, style: usesWegramNavigation ? .legacy : .glass, glassStyle: .default)
+            navigationBarPresentationData = NavigationBarPresentationData(theme: usesWegramNavigation ? ChatControllerImpl.wegramNavigationBarTheme(self.presentationData.theme, hideBadge: false) : theme, strings: NavigationBarStrings(presentationStrings: self.presentationData.strings))
         }
         
         self.moreBarButton = MoreHeaderButton(color: self.presentationData.theme.chat.inputPanel.panelControlColor)
@@ -746,7 +756,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         
         super.init(context: context, navigationBarPresentationData: navigationBarPresentationData)
         
-        self._hasGlassStyle = true
+        self._hasGlassStyle = !self.usesWegramNavigation
+        if self.usesWegramNavigation {
+            self.navigationBar?.customBackButtonText = ""
+            self.updateWegramBackBadge(theme: self.presentationData.theme)
+        }
         
         self.automaticallyControlPresentationContextLayout = false
         self.blocksBackgroundWhenInOverlay = true
@@ -6056,6 +6070,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         }
         
         self.chatTitleView = ChatNavigationBarTitleView(frame: CGRect())
+        self.chatTitleView?.usesWegramAppearance = self.usesWegramNavigation
         
         self.navigationItem.titleView = self.chatTitleView
         self.chatTitleView?.longTapAction = { [weak self] in
@@ -6118,7 +6133,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                             f(.dismissWithoutContent)
                             self?.interfaceInteraction?.beginMessageSearch(.everything, "")
                         })))
-                                                
+
+                        if let item = strongSelf.wegramPinnedMessageMenuItem() {
+                            items.append(item)
+                        }
+
                         return items
                     }
                 case let .replyThread(message):
@@ -6398,7 +6417,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 strongSelf.canReadHistory.set(false)
                 
                 let source: ContextContentSource
-                if let peer = strongSelf.presentationInterfaceState.renderedPeer?.chatMainPeer, peer.smallProfileImage != nil {
+                if !strongSelf.usesWegramNavigation, let peer = strongSelf.presentationInterfaceState.renderedPeer?.chatMainPeer, peer.smallProfileImage != nil {
                     let galleryController = AvatarGalleryController(context: strongSelf.context, peer: EnginePeer(peer), remoteEntries: nil, replaceRootController: { controller, ready in
                     }, synchronousLoad: true)
                     galleryController.setHintWillBePresentedInPreviewingContext(true)
@@ -6414,17 +6433,34 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 strongSelf.presentInGlobalOverlay(contextController)
             }
             
-            chatInfoButtonItem = UIBarButtonItem(customDisplayNode: avatarNode)!
+            if self.usesWegramNavigation {
+                let button = MoreHeaderButton(color: self.presentationData.theme.rootController.navigationBar.buttonColor)
+                button.setContent(.image(generateTintedImage(image: WegramIcon.chatMore.image(), color: WegramNavigationColors(isDark: self.presentationData.theme.overallDarkAppearance).control)))
+                button.contextAction = { [weak avatarNode] source, gesture in
+                    guard let avatarNode, avatarNode.contextActionIsEnabled else { gesture?.cancel(); return }
+                    avatarNode.contextAction?(source, gesture)
+                }
+                button.addTarget(self, action: #selector(self.rightNavigationButtonAction), forControlEvents: .touchUpInside)
+                self.wegramChatInfoButton = button
+                self.updateWegramChatInfoAccessibility()
+                chatInfoButtonItem = UIBarButtonItem(customDisplayNode: button)!
+                chatInfoButtonItem.accessibilityLabel = self.presentationData.strings.Common_More
+            } else {
+                chatInfoButtonItem = UIBarButtonItem(customDisplayNode: avatarNode)!
+            }
             self.avatarNode = avatarNode
         case .customChatContents:
             chatInfoButtonItem = UIBarButtonItem(title: "", style: .plain, target: nil, action: nil)
         }
         chatInfoButtonItem.target = self
         chatInfoButtonItem.action = #selector(self.rightNavigationButtonAction)
-        self.chatInfoNavigationButton = ChatNavigationButton(action: .openChatInfo(expandAvatar: true, section: nil), buttonItem: chatInfoButtonItem)
+        self.chatInfoNavigationButton = ChatNavigationButton(action: .openChatInfo(expandAvatar: !self.usesWegramNavigation, section: nil), buttonItem: chatInfoButtonItem)
         
         self.moreBarButton.setContent(.more(MoreHeaderButton.optionsCircleImage(color: self.presentationData.theme.rootController.navigationBar.buttonColor)))
-        self.moreInfoNavigationButton = ChatNavigationButton(action: .toggleInfoPanel, buttonItem: UIBarButtonItem(customDisplayNode: self.moreBarButton)!)
+        self.moreBarButton.accessibilityLabel = self.presentationData.strings.Common_More
+        let moreInfoButtonItem = UIBarButtonItem(customDisplayNode: self.moreBarButton)!
+        moreInfoButtonItem.accessibilityLabel = self.presentationData.strings.Common_More
+        self.moreInfoNavigationButton = ChatNavigationButton(action: .toggleInfoPanel, buttonItem: moreInfoButtonItem)
         self.moreBarButton.contextAction = { [weak self] sourceNode, gesture in
             guard let self else {
                 return
@@ -6434,7 +6470,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             }
             
             if peerId == self.context.account.peerId {
-                PeerInfoScreenImpl.openSavedMessagesMoreMenu(context: self.context, sourceController: self, isViewingAsTopics: false, sourceView: self.navigationBar?.navigationButtonContextContainer(sourceView: sourceNode.view) ?? sourceNode.view, gesture: gesture)
+                PeerInfoScreenImpl.openSavedMessagesMoreMenu(context: self.context, sourceController: self, isViewingAsTopics: false, sourceView: self.navigationBar?.navigationButtonContextContainer(sourceView: sourceNode.view) ?? sourceNode.view, gesture: gesture, additionalItems: { [weak self] in
+                    return self?.wegramPinnedMessageMenuItem().map { [$0] } ?? []
+                })
             } else if peerId.namespace == Namespaces.Peer.CloudUser {
                 self.openBotForumMoreMenu(sourceView: self.navigationBar?.navigationButtonContextContainer(sourceView: sourceNode.view) ?? sourceNode.view, gesture: gesture)
             } else {
@@ -6729,7 +6767,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         |> map { sharedData -> PresentationThemeSettings in
             let themeSettings: PresentationThemeSettings
             if let current = sharedData.entries[ApplicationSpecificSharedDataKeys.presentationThemeSettings]?.get(PresentationThemeSettings.self) {
-                themeSettings = current
+                themeSettings = wegramLockedThemeSettings(current)
             } else {
                 themeSettings = PresentationThemeSettings.defaultSettings
             }
@@ -6767,8 +6805,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                         chatTheme = nil
                     }
                 }
-                if strongSelf.chatLocation.peerId == strongSelf.context.account.peerId {
-                    chatTheme = nil
+                // WeGram does not theme chats: per-chat themes (either side's choice, gifts included) and
+                // the backgrounds that come with them never apply; a photo chat background still does.
+                chatTheme = nil
+                if let wallpaper = chatWallpaper, !wegramAllowsChatWallpaper(wallpaper) {
+                    chatWallpaper = nil
                 }
                                 
                 var presentationData = presentationData
@@ -7274,6 +7315,11 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
     }
     
     func themeAndStringsUpdated() {
+        if self.moreInfoNavigationButton?.buttonItem.accessibilityLabel != self.presentationData.strings.Common_More {
+            let buttonItem = UIBarButtonItem(customDisplayNode: self.moreBarButton)!
+            buttonItem.accessibilityLabel = self.presentationData.strings.Common_More
+            self.moreInfoNavigationButton = ChatNavigationButton(action: .toggleInfoPanel, buttonItem: buttonItem)
+        }
         self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
         self.updateStatusBarPresentation()
         self.updateNavigationBarPresentation()
@@ -7299,20 +7345,108 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         self.currentContextController?.updateTheme(presentationData: self.presentationData)
     }
     
+    func configureWegramPinnedMessages(in controller: ViewController) {
+        guard self.usesWegramNavigation, let controller = controller as? PeerInfoScreenImpl else {
+            return
+        }
+        controller.wegramPinnedMessageMenuItem = { [weak self] source in
+            return self?.wegramPinnedMessageMenuItem(returningFrom: source)
+        }
+    }
+
+    private func wegramPinnedMessageMenuItem(returningFrom source: ViewController? = nil) -> ContextMenuItem? {
+        guard let pinnedMessage = self.presentationInterfaceState.wegramHiddenPinnedMessage else {
+            return nil
+        }
+        let chatLocation = self.chatLocation
+        let returnsFromInfo = source != nil
+        return .action(ContextMenuActionItem(text: self.presentationData.strings.Chat_TitlePinnedMessages(Int32(pinnedMessage.totalCount)), icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/PinnedList"), color: theme.actionSheet.primaryTextColor)
+        }, action: { [weak self, weak source] _, f in
+            f(.dismissWithoutContent)
+            guard let self,
+                  self.chatLocation == chatLocation,
+                  let navigationController = self.effectiveNavigationController,
+                  let currentPinnedMessage = self.presentationInterfaceState.wegramHiddenPinnedMessage else {
+                return
+            }
+            if returnsFromInfo {
+                guard let source,
+                      source.viewIfLoaded?.window != nil,
+                      source.navigationController === navigationController,
+                      navigationController.topViewController === source,
+                      navigationController.viewControllers.contains(where: { $0 === self }) else {
+                    return
+                }
+                let _ = navigationController.popToViewController(self, animated: false)
+            } else {
+                guard self.viewIfLoaded?.window != nil, navigationController.topViewController === self else {
+                    return
+                }
+            }
+            self.openPinnedMessages(at: currentPinnedMessage.message.id)
+        }))
+    }
+
+    private func updateWegramChatInfoAccessibility() {
+        guard let button = self.wegramChatInfoButton else { return }
+        button.accessibilityLabel = self.presentationData.strings.Common_More
+        if let currentButton = self.chatInfoNavigationButton, currentButton.buttonItem.accessibilityLabel != self.presentationData.strings.Common_More {
+            let buttonItem = UIBarButtonItem(customDisplayNode: button)!
+            buttonItem.accessibilityLabel = self.presentationData.strings.Common_More
+            buttonItem.target = self
+            buttonItem.action = #selector(self.rightNavigationButtonAction)
+            self.chatInfoNavigationButton = ChatNavigationButton(action: currentButton.action, buttonItem: buttonItem)
+        }
+        if let action = button.view.accessibilityCustomActions?.first {
+            action.name = self.presentationData.strings.Common_More
+            return
+        }
+        button.accessibilityCustomActions = [UIAccessibilityCustomAction(name: self.presentationData.strings.Common_More, actionHandler: { [weak self, weak button] _ in
+            guard let self, let button, self.wegramChatInfoButton === button,
+                  self.rightNavigationButton?.buttonItem.customDisplayNode === button,
+                  self.rightNavigationButton?.buttonItem.isEnabled == true,
+                  self.viewIfLoaded?.window != nil,
+                  (self.navigationController as? NavigationController)?.topViewController === self,
+                  self.avatarNode?.contextActionIsEnabled == true,
+                  let action = button.contextAction else { return false }
+            action(button.containerNode, nil)
+            return true
+        })]
+    }
+
+    private func updateWegramBackBadge(theme: PresentationTheme) {
+        guard let badge = self.navigationBar?.badgeNode else { return }
+        let colors = WegramNavigationColors(isDark: theme.overallDarkAppearance)
+        badge.usesWegramAppearance = true
+        badge.updateTheme(fillColor: self.forcedNavigationBarTheme == nil ? colors.badge : .clear, strokeColor: .clear, textColor: self.forcedNavigationBarTheme == nil ? colors.control : .clear)
+    }
+
+    /// WeChat's chat bar ends in a `Toolbar_Separator` line (black/white 0.1; IMG_2437), which its list pages do not have.
+    static func wegramNavigationBarTheme(_ theme: PresentationTheme, hideBadge: Bool) -> NavigationBarTheme {
+        return NavigationBarTheme(wegramTheme: theme, hideBadge: hideBadge).withUpdatedSeparatorColor(UIColor(white: theme.overallDarkAppearance ? 1.0 : 0.0, alpha: 0.1))
+    }
+
     func updateNavigationBarPresentation() {
         let navigationBarTheme: NavigationBarTheme
         
         let presentationTheme: PresentationTheme
         if let forcedNavigationBarTheme = self.forcedNavigationBarTheme {
             presentationTheme = forcedNavigationBarTheme
-            navigationBarTheme = NavigationBarTheme(rootControllerTheme: forcedNavigationBarTheme, hideBackground: false, hideBadge: true, edgeEffectColor: .clear, style: .glass, glassStyle: self.presentationInterfaceState.preferredGlassType == .clear ? .clear : .default)
+            navigationBarTheme = NavigationBarTheme(rootControllerTheme: forcedNavigationBarTheme, hideBackground: false, hideBadge: true, edgeEffectColor: .clear, style: self.usesWegramNavigation ? .legacy : .glass, glassStyle: self.presentationInterfaceState.preferredGlassType == .clear ? .clear : .default)
         } else {
             presentationTheme = self.presentationData.theme
-            navigationBarTheme = NavigationBarTheme(rootControllerTheme: self.presentationData.theme, hideBackground: false, hideBadge: false, edgeEffectColor: .clear, style: .glass, glassStyle: self.presentationInterfaceState.preferredGlassType == .clear ? .clear : .default)
+            navigationBarTheme = NavigationBarTheme(rootControllerTheme: self.presentationData.theme, hideBackground: false, hideBadge: false, edgeEffectColor: .clear, style: self.usesWegramNavigation ? .legacy : .glass, glassStyle: self.presentationInterfaceState.preferredGlassType == .clear ? .clear : .default)
         }
         
-        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: navigationBarTheme, strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)), transition: .immediate)
+        if self.usesWegramNavigation { self.updateWegramChatInfoAccessibility() }
+        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: self.usesWegramNavigation ? ChatControllerImpl.wegramNavigationBarTheme(presentationTheme, hideBadge: self.forcedNavigationBarTheme != nil) : navigationBarTheme, strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)), transition: .immediate)
         
+        if self.usesWegramNavigation {
+            self.updateWegramBackBadge(theme: presentationTheme)
+            self.wegramChatInfoButton?.setContent(.image(generateTintedImage(image: WegramIcon.chatMore.image(), color: WegramNavigationColors(isDark: presentationTheme.overallDarkAppearance).control)))
+        }
+        self.moreBarButton.accessibilityLabel = self.presentationData.strings.Common_More
         self.moreBarButton.updateColor(color: presentationTheme.chat.inputPanel.panelControlColor)
     }
     

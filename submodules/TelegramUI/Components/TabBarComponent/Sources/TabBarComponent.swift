@@ -350,6 +350,7 @@ public final class TabBarComponent: Component {
     public let theme: PresentationTheme
     public let tintSelectedItem: Bool
     public let isLiftedStateEnabled: Bool
+    public let isFlat: Bool
     public let strings: PresentationStrings
     public let items: [Item]
     public let search: Search?
@@ -360,6 +361,7 @@ public final class TabBarComponent: Component {
         theme: PresentationTheme,
         tintSelectedItem: Bool = true,
         isLiftedStateEnabled: Bool = true,
+        isFlat: Bool = false,
         strings: PresentationStrings,
         items: [Item],
         search: Search?,
@@ -369,6 +371,7 @@ public final class TabBarComponent: Component {
         self.theme = theme
         self.tintSelectedItem = tintSelectedItem
         self.isLiftedStateEnabled = isLiftedStateEnabled
+        self.isFlat = isFlat
         self.strings = strings
         self.items = items
         self.search = search
@@ -381,6 +384,9 @@ public final class TabBarComponent: Component {
             return false
         }
         if lhs.tintSelectedItem != rhs.tintSelectedItem {
+            return false
+        }
+        if lhs.isFlat != rhs.isFlat {
             return false
         }
         if lhs.isLiftedStateEnabled != rhs.isLiftedStateEnabled {
@@ -608,6 +614,14 @@ public final class TabBarComponent: Component {
             return super.hitTest(point, with: event)
         }
         
+        public func contextSourceViewForItem(at index: Int) -> ContextExtractedContentContainingView? {
+            guard let component = self.component, component.items.indices.contains(index),
+                let itemView = self.itemViews[component.items[index].id]?.view as? ItemComponent.View else {
+                return nil
+            }
+            return itemView.contextContainerView
+        }
+
         public func frameForItem(at index: Int) -> CGRect? {
             guard let component = self.component else {
                 return nil
@@ -653,8 +667,17 @@ public final class TabBarComponent: Component {
             let alphaTransition: ComponentTransition = transition.animation.isImmediate ? .immediate : .easeInOut(duration: 0.25)
             let _ = alphaTransition
 
-            let innerInset: CGFloat = 4.0
-            let availableSize = CGSize(width: min(500.0, availableSize.width), height: availableSize.height)
+            let innerInset: CGFloat = component.isFlat ? 0.0 : 4.0
+            let availableSize = CGSize(width: component.isFlat ? availableSize.width : min(500.0, availableSize.width), height: availableSize.height)
+            // The flat bar's (blurred) background is drawn by the hosting TabBarControllerNode.
+            self.backgroundColor = .clear
+            self.backgroundContainer.isHidden = component.isFlat
+            self.liquidLensView.isHidden = component.isFlat
+            if component.isFlat, self.contextGestureContainerView.superview !== self {
+                self.addSubview(self.contextGestureContainerView)
+            } else if !component.isFlat, self.contextGestureContainerView.superview !== self.backgroundContainer.contentView {
+                self.backgroundContainer.contentView.addSubview(self.contextGestureContainerView)
+            }
             
             let previousComponent = self.component
             self.component = component
@@ -768,9 +791,10 @@ public final class TabBarComponent: Component {
                         item: item,
                         theme: component.theme,
                         isCompact: component.search?.isActive == true,
-                        isSelected: false,
+                        isSelected: component.isFlat && isItemSelected,
                         tintSelectedItem: component.tintSelectedItem,
-                        isUnconstrained: false
+                        isUnconstrained: false,
+                        isFlat: component.isFlat
                     )),
                     environment: {},
                     containerSize: itemSize
@@ -783,7 +807,8 @@ public final class TabBarComponent: Component {
                         isCompact: component.search?.isActive == true,
                         isSelected: true,
                         tintSelectedItem: component.tintSelectedItem,
-                        isUnconstrained: false
+                        isUnconstrained: false,
+                        isFlat: component.isFlat
                     )),
                     environment: {},
                     containerSize: itemSize
@@ -802,11 +827,31 @@ public final class TabBarComponent: Component {
                 if let itemComponentView = itemView.view as? ItemComponent.View, let selectedItemComponentView = selectedItemView.view as? ItemComponent.View {
                     let itemAlphaTransition: ComponentTransition = transition.animation.isImmediate ? .immediate : .easeInOut(duration: 0.25)
 
-                    if itemComponentView.superview == nil {
-                        itemComponentView.isUserInteractionEnabled = false
-                        selectedItemComponentView.isUserInteractionEnabled = false
-
-                        self.liquidLensView.contentView.addSubview(itemComponentView)
+                    itemComponentView.isUserInteractionEnabled = false
+                    selectedItemComponentView.isUserInteractionEnabled = false
+                    itemComponentView.isAccessibilityElement = component.isFlat
+                    itemComponentView.accessibilityElementsHidden = !component.isFlat
+                    selectedItemComponentView.accessibilityElementsHidden = true
+                    itemComponentView.accessibilityActivation = { [weak self] in
+                        guard let self, let component = self.component, component.isFlat, self.window != nil,
+                              let currentItem = component.items.first(where: { $0.id == item.id }) else {
+                            return false
+                        }
+                        var ancestor: UIView? = self
+                        while let view = ancestor {
+                            guard !view.isHidden, view.alpha > 0.01, view.isUserInteractionEnabled, !view.accessibilityElementsHidden else {
+                                return false
+                            }
+                            ancestor = view.superview
+                        }
+                        currentItem.action(false)
+                        return true
+                    }
+                    let itemParent: UIView = component.isFlat ? self.contextGestureContainerView : self.liquidLensView.contentView
+                    if itemComponentView.superview !== itemParent {
+                        itemParent.addSubview(itemComponentView)
+                    }
+                    if selectedItemComponentView.superview == nil {
                         self.liquidLensView.selectedContentView.addSubview(selectedItemComponentView)
                     }
 
@@ -846,6 +891,10 @@ public final class TabBarComponent: Component {
             for (id, itemView) in self.itemViews {
                 if !validIds.contains(id) {
                     removeIds.append(id)
+                    if let view = itemView.view as? ItemComponent.View {
+                        view.isAccessibilityElement = false
+                        view.accessibilityActivation = nil
+                    }
                     itemView.view?.removeFromSuperview()
                     self.selectedItemViews[id]?.view?.removeFromSuperview()
                 }
@@ -885,7 +934,9 @@ public final class TabBarComponent: Component {
             
             lensSelection.x = max(0.0, min(lensSelection.x, lensSize.width - lensSelection.width))
             
-            self.liquidLensView.update(size: lensSize, selectionOrigin: CGPoint(x: lensSelection.x, y: 0.0), selectionSize: CGSize(width: lensSelection.width, height: lensSize.height), inset: 4.0, isDark: component.theme.overallDarkAppearance, isLifted: self.selectionGestureState != nil && component.isLiftedStateEnabled, isCollapsed: isLensCollapsed, transition: transition.withUserData(LiquidLensView.TransitionInfo(disableAnimationWorkarounds: !component.isLiftedStateEnabled)))
+            if !component.isFlat {
+                self.liquidLensView.update(size: lensSize, selectionOrigin: CGPoint(x: lensSelection.x, y: 0.0), selectionSize: CGSize(width: lensSelection.width, height: lensSize.height), inset: 4.0, isDark: component.theme.overallDarkAppearance, isLifted: self.selectionGestureState != nil && component.isLiftedStateEnabled, isCollapsed: isLensCollapsed, transition: transition.withUserData(LiquidLensView.TransitionInfo(disableAnimationWorkarounds: !component.isLiftedStateEnabled)))
+            }
 
             var size = tabsSize
 
@@ -956,6 +1007,17 @@ public final class TabBarComponent: Component {
     }
 }
 
+// Measured against the WeChat dark chat-list reference (402pt wide, 3x): a 56pt bar above the
+// 34pt home indicator, with the icon 13px and the label 5px lower in the bar than upstream's.
+private let wegramFlatIconY: CGFloat = 3.0 + 13.0 / 3.0
+private let wegramFlatTitleBottomInset: CGFloat = 8.0 - 5.0 / 3.0
+// Same reference: an 18pt count badge whose left edge is 3.75pt right of the item center, and an
+// 8pt dot (used for alerts, which WeChat never spells out) centered 9.6pt right, 11.8pt down.
+private let wegramFlatBadgeLeftOffset: CGFloat = 3.75
+private let wegramFlatBadgeY: CGFloat = 4.0
+private let wegramFlatDotSize: CGFloat = 8.0
+private let wegramFlatDotCenter = CGPoint(x: 9.6, y: 11.8)
+
 private final class ItemComponent: Component {
     let item: TabBarComponent.Item
     let theme: PresentationTheme
@@ -963,8 +1025,10 @@ private final class ItemComponent: Component {
     let isSelected: Bool
     let tintSelectedItem: Bool
     let isUnconstrained: Bool
+    let isFlat: Bool
     
-    init(item: TabBarComponent.Item, theme: PresentationTheme, isCompact: Bool, isSelected: Bool, tintSelectedItem: Bool, isUnconstrained: Bool) {
+    init(item: TabBarComponent.Item, theme: PresentationTheme, isCompact: Bool, isSelected: Bool, tintSelectedItem: Bool, isUnconstrained: Bool, isFlat: Bool = false) {
+        self.isFlat = isFlat
         self.item = item
         self.theme = theme
         self.isCompact = isCompact
@@ -992,16 +1056,29 @@ private final class ItemComponent: Component {
         if lhs.isUnconstrained != rhs.isUnconstrained {
             return false
         }
+        if lhs.isFlat != rhs.isFlat {
+            return false
+        }
         return true
     }
     
     final class View: UIView {
+        var accessibilityActivation: (() -> Bool)?
+
+        override func accessibilityActivate() -> Bool {
+            guard self.isAccessibilityElement, !self.isHidden, self.alpha > 0.01 else {
+                return false
+            }
+            return self.accessibilityActivation?() ?? false
+        }
+
         let contextContainerView: ContextExtractedContentContainingView
         
         private var imageIcon: ComponentView<Empty>?
         private var animationIcon: ComponentView<Empty>?
         private let title = ComponentView<Empty>()
         private var badge: ComponentView<Empty>?
+        private var flatDotView: UIView?
         
         private var component: ItemComponent?
         private weak var state: EmptyComponentState?
@@ -1170,17 +1247,18 @@ private final class ItemComponent: Component {
                         self.imageIcon = imageIcon
                     }
 
+                    let iconImage = component.isSelected ? tabBarItem.selectedImage : tabBarItem.image
                     let iconSize = imageIcon.update(
                         transition: iconTransition,
                         component: AnyComponent(Image(
-                            image: component.isSelected ? tabBarItem.selectedImage : tabBarItem.image,
-                            tintColor: nil,
+                            image: iconImage,
+                            tintColor: iconImage?.renderingMode == .alwaysTemplate ? iconTintColor : nil,
                             contentMode: .center
                         )),
                         environment: {},
                         containerSize: CGSize(width: 100.0, height: 100.0)
                     )
-                    let iconFrame = CGRect(origin: CGPoint(x: floor((availableSize.width - iconSize.width) * 0.5), y: 3.0), size: iconSize)
+                    let iconFrame = CGRect(origin: CGPoint(x: floor((availableSize.width - iconSize.width) * 0.5), y: component.isFlat ? wegramFlatIconY : 3.0), size: iconSize)
                     if let imageIconView = imageIcon.view {
                         if imageIconView.superview == nil {
                             if let badgeView = self.badge?.view {
@@ -1279,6 +1357,10 @@ private final class ItemComponent: Component {
                 }
             }
 
+            self.accessibilityLabel = title
+            self.accessibilityValue = badgeValue.flatMap { $0.isEmpty ? nil : $0 }
+            self.accessibilityTraits = component.isSelected ? [.button, .selected] : [.button]
+
             let titleSize = self.title.update(
                 transition: .immediate,
                 component: AnyComponent(MultilineTextComponent(
@@ -1287,7 +1369,7 @@ private final class ItemComponent: Component {
                 environment: {},
                 containerSize: CGSize(width: availableSize.width, height: 100.0)
             )
-            let titleFrame = CGRect(origin: CGPoint(x: floor((availableSize.width - titleSize.width) * 0.5), y: availableSize.height - 8.0 - titleSize.height), size: titleSize)
+            let titleFrame = CGRect(origin: CGPoint(x: floor((availableSize.width - titleSize.width) * 0.5), y: availableSize.height - (component.isFlat ? wegramFlatTitleBottomInset : 8.0) - titleSize.height), size: titleSize)
             if let titleView = self.title.view {
                 if titleView.superview == nil {
                     self.contextContainerView.contentView.addSubview(titleView)
@@ -1296,7 +1378,26 @@ private final class ItemComponent: Component {
                 alphaTransition.setAlpha(view: titleView, alpha: component.isCompact ? 0.0 : 1.0)
             }
 
-            if let badgeText = badgeValue, !badgeText.isEmpty {
+            if component.isFlat, badgeValue == "!" {
+                let dotView: UIView
+                if let current = self.flatDotView {
+                    dotView = current
+                } else {
+                    dotView = UIView()
+                    dotView.isUserInteractionEnabled = false
+                    dotView.layer.cornerRadius = wegramFlatDotSize * 0.5
+                    self.flatDotView = dotView
+                    self.contextContainerView.contentView.addSubview(dotView)
+                }
+                dotView.backgroundColor = component.theme.rootController.tabBar.badgeBackgroundColor
+                dotView.frame = CGRect(x: floor(availableSize.width / 2.0) + wegramFlatDotCenter.x - wegramFlatDotSize * 0.5, y: wegramFlatDotCenter.y - wegramFlatDotSize * 0.5, width: wegramFlatDotSize, height: wegramFlatDotSize)
+                alphaTransition.setAlpha(view: dotView, alpha: component.isCompact ? 0.0 : 1.0)
+            } else if let dotView = self.flatDotView {
+                self.flatDotView = nil
+                dotView.removeFromSuperview()
+            }
+
+            if let badgeText = badgeValue, !badgeText.isEmpty, !(component.isFlat && badgeText == "!") {
                 let badge: ComponentView<Empty>
                 var badgeTransition = transition
                 if let current = self.badge {
@@ -1313,13 +1414,18 @@ private final class ItemComponent: Component {
                         font: Font.regular(13.0),
                         background: component.theme.rootController.tabBar.badgeBackgroundColor,
                         foreground: component.theme.rootController.tabBar.badgeTextColor,
-                        insets: UIEdgeInsets(top: 0.0, left: 5.0, bottom: 1.0, right: 5.0)
+                        insets: UIEdgeInsets(top: component.isFlat ? 1.0 : 0.0, left: 5.0, bottom: 1.0, right: 5.0)
                     )),
                     environment: {},
                     containerSize: CGSize(width: 100.0, height: 100.0)
                 )
                 let contentWidth: CGFloat = 25.0
-                let badgeFrame = CGRect(origin: CGPoint(x: floor(availableSize.width / 2.0) + contentWidth - badgeSize.width - 1.0, y: 5.0), size: badgeSize)
+                let badgeFrame: CGRect
+                if component.isFlat {
+                    badgeFrame = CGRect(origin: CGPoint(x: floor(availableSize.width / 2.0 + wegramFlatBadgeLeftOffset), y: wegramFlatBadgeY), size: badgeSize)
+                } else {
+                    badgeFrame = CGRect(origin: CGPoint(x: floor(availableSize.width / 2.0) + contentWidth - badgeSize.width - 1.0, y: 5.0), size: badgeSize)
+                }
                 if let badgeView = badge.view {
                     if badgeView.superview == nil {
                         self.contextContainerView.contentView.addSubview(badgeView)

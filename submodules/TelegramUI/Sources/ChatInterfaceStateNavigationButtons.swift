@@ -7,10 +7,37 @@ import AccountContext
 import ChatPresentationInterfaceState
 import ChatNavigationButton
 
-func leftNavigationButtonForChatInterfaceState(_ presentationInterfaceState: ChatPresentationInterfaceState, subject: ChatControllerSubject?, strings: PresentationStrings, currentButton: ChatNavigationButton?, target: Any?, selector: Selector?) -> ChatNavigationButton? {
+func wegramUsesSelectionNavigation(_ state: ChatPresentationInterfaceState) -> Bool {
+    guard state.interfaceState.selectionState != nil, state.reportReason == nil else { return false }
+    if case .standard(.previewing) = state.mode { return false }
+    if case .messageOptions = state.subject { return false }
+    if case .customChatContents = state.subject { return false }
+    return true
+}
+
+func wegramSelectionHistoryButton(_ state: ChatPresentationInterfaceState, matching target: (location: ChatLocation, subject: ChatControllerSubject?, selectedIds: Set<EngineMessage.Id>)? = nil) -> ChatNavigationButton? {
+    if let target {
+        guard state.chatLocation == target.location, state.subject == target.subject,
+              state.interfaceState.selectionState?.selectedIds == target.selectedIds else { return nil }
+    }
+    guard wegramUsesSelectionNavigation(state),
+          let button = leftNavigationButtonForChatInterfaceState(state, subject: state.subject, strings: state.strings, currentButton: nil, target: nil, selector: nil),
+          button.action == .clearHistory || button.action == .clearCache else { return nil }
+    return button
+}
+
+func leftNavigationButtonForChatInterfaceState(_ presentationInterfaceState: ChatPresentationInterfaceState, subject: ChatControllerSubject?, strings: PresentationStrings, currentButton: ChatNavigationButton?, target: Any?, selector: Selector?, usesWegramAppearance: Bool = false) -> ChatNavigationButton? {
     if let _ = presentationInterfaceState.interfaceState.selectionState {
         if case .messageOptions = presentationInterfaceState.subject {
             return nil
+        }
+        if usesWegramAppearance && wegramUsesSelectionNavigation(presentationInterfaceState) {
+            if let currentButton, currentButton.action == .cancelMessageSelection, currentButton.buttonItem.title == strings.Common_Cancel {
+                return currentButton
+            }
+            let buttonItem = UIBarButtonItem(title: strings.Common_Cancel, style: .plain, target: target, action: selector)
+            buttonItem.accessibilityLabel = strings.Common_Cancel
+            return ChatNavigationButton(action: .cancelMessageSelection, buttonItem: buttonItem)
         }
         if let _ = presentationInterfaceState.reportReason {
             return ChatNavigationButton(action: .spacer, buttonItem: UIBarButtonItem(title: " ", style: .plain, target: nil, action: nil))
@@ -76,10 +103,11 @@ func leftNavigationButtonForChatInterfaceState(_ presentationInterfaceState: Cha
     return nil
 }
 
-func rightNavigationButtonForChatInterfaceState(context: AccountContext, presentationInterfaceState: ChatPresentationInterfaceState, strings: PresentationStrings, currentButton: ChatNavigationButton?, target: Any?, selector: Selector?, chatInfoNavigationButton: ChatNavigationButton?, moreInfoNavigationButton: ChatNavigationButton?) -> ChatNavigationButton? {
+func rightNavigationButtonForChatInterfaceState(context: AccountContext, presentationInterfaceState: ChatPresentationInterfaceState, strings: PresentationStrings, currentButton: ChatNavigationButton?, target: Any?, selector: Selector?, chatInfoNavigationButton: ChatNavigationButton?, moreInfoNavigationButton: ChatNavigationButton?, usesWegramAppearance: Bool = false) -> ChatNavigationButton? {
     if case .standard(.previewing) = presentationInterfaceState.mode {
         return nil
     }
+    if usesWegramAppearance && wegramUsesSelectionNavigation(presentationInterfaceState) { return nil }
     var hasMessages = false
     if let chatHistoryState = presentationInterfaceState.chatHistoryState {
         if case .loaded(false, _) = chatHistoryState {

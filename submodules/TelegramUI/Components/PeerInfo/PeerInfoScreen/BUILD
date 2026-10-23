@@ -1,5 +1,10 @@
 load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
 
+exports_files(
+    ["Sources/WegramGroupSettingsMenu.swift", "Sources/WegramGroupManagementPolicy.swift", "Sources/WegramGroupManagementView.swift", "Sources/WegramGroupDescriptionView.swift", "Sources/WegramAboutContentView.swift", "Sources/WegramContactContentView.swift", "Sources/WegramGroupContentView.swift"],
+    visibility = ["//submodules/TelegramPresentationData:__pkg__"],
+)
+
 swift_library(
     name = "PeerInfoScreen",
     module_name = "PeerInfoScreen",
@@ -11,6 +16,7 @@ swift_library(
     ],
     deps = [
         "//submodules/UrlWhitelist",
+        "//submodules/WegramLanguageUI",
         "//submodules/AccountContext",
         "//submodules/LottieSettings:LottieSettings",
         "//submodules/AccountUtils",
@@ -100,6 +106,7 @@ swift_library(
         "//submodules/SearchUI",
         "//submodules/TelegramUI/Components/SendInviteLinkScreen",
         "//submodules/SettingsUI",
+        "//submodules/TelegramUI/Components/Settings/WallpaperGridScreen",
         "//submodules/ShareController",
         "//submodules/TelegramUI/Components/ShareWithPeersScreen",
         "//submodules/StatisticsUI",
@@ -186,3 +193,30 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramSettingsCell.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramNameContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramBioContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramTextSizeContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+
+exports_files(["Sources/WegramDarkModeContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__", "//Tests/wegram/settings-host:__pkg__"])
+
+exports_files(["Sources/WegramDevicesContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramNotificationsContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramAccountsContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramPrivacyContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramBlockedContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramStorageContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramMediaSettingsContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])
+
+exports_files(["Sources/WegramMeContentView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

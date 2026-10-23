@@ -519,7 +519,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                 }
                 
                 
-                let messageTheme = incoming ? item.presentationData.theme.theme.chat.message.incoming : item.presentationData.theme.theme.chat.message.outgoing
+                let messageTheme = incoming || item.presentationData.chatBubbleCorners.usesWegramNeutralFill ? item.presentationData.theme.theme.chat.message.incoming : item.presentationData.theme.theme.chat.message.outgoing
                 
                 let textFont = item.presentationData.messageFont
                 
@@ -1297,7 +1297,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                 shimmeringNode = current
             } else {
                 let color: UIColor
-                let isIncoming = item.message.effectivelyIncoming(item.context.account.peerId)
+                let isIncoming = item.message.effectivelyIncoming(item.context.account.peerId) || item.presentationData.chatBubbleCorners.usesWegramNeutralFill
                 let messageTheme = item.presentationData.theme.theme.chat.message
                 if showTextAsPlaceholder {
                     rects = rects.map { $0.insetBy(dx: 0.0, dy: 6.0 + UIScreenPixel) }

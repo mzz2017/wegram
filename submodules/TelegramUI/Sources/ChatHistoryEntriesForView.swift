@@ -862,6 +862,62 @@ func chatHistoryEntriesForView(
         return ([], currentState)
     }
     
+    if subject != .scheduledMessages && !isMusicPlaylist {
+        var messageSpans: [ClosedRange<Int32>] = []
+        var messageEntryIndices: [Int] = []
+        for (index, entry) in entries.enumerated() {
+            switch entry {
+            case let .MessageEntry(message, _, _, _, _, _) where message.timestamp >= 10:
+                messageSpans.append(message.timestamp...message.timestamp)
+                messageEntryIndices.append(index)
+            case let .MessageGroupEntry(_, messages, _):
+                let timestamps = messages.map { $0.0.timestamp }
+                if let first = timestamps.min(), let last = timestamps.max(), first >= 10 {
+                    messageSpans.append(first...last)
+                    messageEntryIndices.append(index)
+                }
+            default:
+                break
+            }
+        }
+        let groups = WegramMessageTime.groupStarts(for: messageSpans)
+        let groupsByIndex = Dictionary(uniqueKeysWithValues: zip(messageEntryIndices, groups))
+        var currentGroup: Int32?
+        // The group of the row before, as the date pill decides it: a message shows the pill when the
+        // row below it in time (message, unread or reply-count row) carries another group, or none.
+        var previousRowGroup: Int32??
+        for index in entries.indices {
+            if let group = groupsByIndex[index] { currentGroup = group }
+            // Leading thread/unread rows inherit the first message's group, without changing time gaps.
+            let group = currentGroup ?? groups.first
+            switch entries[index] {
+            case let .MessageEntry(message, data, read, location, selection, attributes):
+                var attributes = attributes
+                attributes.wegramTimeGroupTimestamp = groupsByIndex[index]
+                attributes.wegramStartsTimeGroup = previousRowGroup.map { $0 != groupsByIndex[index] } ?? true
+                previousRowGroup = .some(groupsByIndex[index])
+                entries[index] = .MessageEntry(message, data, read, location, selection, attributes)
+            case let .MessageGroupEntry(id, messages, data):
+                let startsTimeGroup = previousRowGroup.map { $0 != groupsByIndex[index] } ?? true
+                previousRowGroup = .some(groupsByIndex[index])
+                entries[index] = .MessageGroupEntry(id, messages.map { message, read, selection, attributes, location in
+                    var attributes = attributes
+                    attributes.wegramTimeGroupTimestamp = groupsByIndex[index]
+                    attributes.wegramStartsTimeGroup = startsTimeGroup
+                    return (message, read, selection, attributes, location)
+                }, data)
+            case let .UnreadEntry(messageIndex, data, _):
+                previousRowGroup = .some(group)
+                entries[index] = .UnreadEntry(messageIndex, data, timeGroup: group)
+            case let .ReplyCountEntry(messageIndex, isComments, count, data, _):
+                previousRowGroup = .some(group)
+                entries[index] = .ReplyCountEntry(messageIndex, isComments, count, data, timeGroup: group)
+            default:
+                break
+            }
+        }
+    }
+
     if reverse {
         return (entries.reversed(), currentState)
     } else {

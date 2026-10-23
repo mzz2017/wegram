@@ -155,20 +155,6 @@ public final class ContextActionNode: ASDisplayNode, ContextActionNodeProtocol {
         self.badgeBackgroundNode.isUserInteractionEnabled = false
         
         self.badgeTextNode = ImmediateTextNode()
-        if let badge = action.badge {
-            let badgeFillColor: UIColor
-            let badgeForegroundColor: UIColor
-            switch badge.color {
-            case .accent:
-                badgeForegroundColor = presentationData.theme.contextMenu.badgeForegroundColor
-                badgeFillColor = presentationData.theme.contextMenu.badgeFillColor
-            case .inactive:
-                badgeForegroundColor = presentationData.theme.contextMenu.badgeInactiveForegroundColor
-                badgeFillColor = presentationData.theme.contextMenu.badgeInactiveFillColor
-            }
-            self.badgeBackgroundNode.image = generateStretchableFilledCircleImage(diameter: 18.0, color: badgeFillColor)
-            self.badgeTextNode.attributedText = NSAttributedString(string: badge.value, font: Font.regular(14.0), textColor: badgeForegroundColor)
-        }
         self.badgeTextNode.isAccessibilityElement = false
         self.badgeTextNode.isUserInteractionEnabled = false
         self.badgeTextNode.displaysAsynchronously = false
@@ -176,9 +162,12 @@ public final class ContextActionNode: ASDisplayNode, ContextActionNodeProtocol {
         self.buttonNode = HighlightTrackingButtonNode()
         self.buttonNode.isAccessibilityElement = true
         self.buttonNode.accessibilityLabel = action.text
+        self.buttonNode.accessibilityTraits = action.isSelected ? [.button, .selected] : [.button]
+        self.buttonNode.accessibilityValue = action.badge?.value
         
         super.init()
-        
+        self.updateBadge()
+
         self.addSubnode(self.backgroundNode)
         self.addSubnode(self.highlightedBackgroundNode)
         self.addSubnode(self.textNode)
@@ -369,16 +358,39 @@ public final class ContextActionNode: ASDisplayNode, ContextActionNodeProtocol {
             self.iconNode.image = self.action.icon(presentationData.theme)
         }
         
-        self.badgeBackgroundNode.image = generateStretchableFilledCircleImage(diameter: 18.0, color: presentationData.theme.contextMenu.badgeFillColor)
-        self.badgeTextNode.attributedText = NSAttributedString(string: self.badgeTextNode.attributedText?.string ?? "", font: Font.regular(14.0), textColor: presentationData.theme.contextMenu.badgeForegroundColor)
+        self.updateBadge()
     }
     
+    private func updateBadge() {
+        self.buttonNode.accessibilityValue = self.action.badge?.value
+        guard let badge = self.action.badge else {
+            self.badgeBackgroundNode.image = nil
+            self.badgeTextNode.attributedText = nil
+            return
+        }
+        let fill: UIColor
+        let foreground: UIColor
+        switch badge.color {
+        case .accent:
+            fill = self.presentationData.theme.contextMenu.badgeFillColor
+            foreground = self.presentationData.theme.contextMenu.badgeForegroundColor
+        case .inactive:
+            fill = self.presentationData.theme.contextMenu.badgeInactiveFillColor
+            foreground = self.presentationData.theme.contextMenu.badgeInactiveForegroundColor
+        }
+        self.badgeBackgroundNode.image = generateStretchableFilledCircleImage(diameter: 18.0, color: fill)
+        self.badgeTextNode.attributedText = NSAttributedString(string: badge.value, font: Font.regular(14.0), textColor: foreground)
+    }
+
     @objc private func buttonPressed() {
         self.performAction()
     }
 
     func updateAction(item: ContextMenuActionItem) {
         self.action = item
+        self.buttonNode.accessibilityLabel = item.text
+        self.buttonNode.accessibilityTraits = item.isSelected ? [.button, .selected] : [.button]
+        self.updateBadge()
 
         let textColor: UIColor
         switch self.action.textColor {

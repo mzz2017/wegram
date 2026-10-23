@@ -5,6 +5,10 @@ import TelegramPresentationData
 import ChatMessageItemCommon
 
 public func chatMessageBubbleImageContentCorners(relativeContentPosition position: ChatMessageBubbleContentPosition, normalRadius: CGFloat, mergedRadius: CGFloat, mergedWithAnotherContentRadius: CGFloat, layoutConstants: ChatMessageItemLayoutConstants, chatPresentationData: ChatPresentationData) -> ImageCorners {
+    let usesWegramShape = chatPresentationData.chatBubbleCorners.usesWegramShape
+    let normalRadius: CGFloat = usesWegramShape ? 4.0 : normalRadius
+    let mergedRadius: CGFloat = usesWegramShape ? 4.0 : mergedRadius
+    let mergedWithAnotherContentRadius: CGFloat = usesWegramShape ? 0.0 : mergedWithAnotherContentRadius
     let topLeftCorner: ImageCorner
     let topRightCorner: ImageCorner
     switch position {
@@ -94,11 +98,11 @@ public func chatMessageBubbleImageContentCorners(relativeContentPosition positio
                             
                             switch status {
                                 case .Incoming:
-                                    bottomLeftCorner = .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: true, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.left - 1.0))!)
+                                    bottomLeftCorner = usesWegramShape ? .Corner(normalRadius) : .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: true, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.left - 1.0))!)
                                     bottomRightCorner = .Corner(normalRadius)
                                 case .Outgoing:
                                     bottomLeftCorner = .Corner(normalRadius)
-                                    bottomRightCorner = .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: false, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.right - 1.0))!)
+                                    bottomRightCorner = usesWegramShape ? .Corner(normalRadius) : .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: false, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.right - 1.0))!)
                                 case .None:
                                     bottomLeftCorner = .Corner(normalRadius)
                                     bottomRightCorner = .Corner(normalRadius)
@@ -125,7 +129,7 @@ public func chatMessageBubbleImageContentCorners(relativeContentPosition positio
                             bubbleInsets = layoutConstants.image.bubbleInsets
                         }
                         
-                        bottomLeftCorner = .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: true, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.left - 1.0))!)
+                        bottomLeftCorner = usesWegramShape ? .Corner(normalRadius) : .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: true, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.left - 1.0))!)
                     } else {
                         bottomLeftCorner = .Corner(normalRadius)
                     }
@@ -149,7 +153,7 @@ public func chatMessageBubbleImageContentCorners(relativeContentPosition positio
                         } else {
                             bubbleInsets = layoutConstants.image.bubbleInsets
                         }
-                        bottomRightCorner = .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: false, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.right - 1.0))!)
+                        bottomRightCorner = usesWegramShape ? .Corner(normalRadius) : .Tail(normalRadius, PresentationResourcesChat.chatBubbleMediaCorner(chatPresentationData.theme.theme, incoming: false, mainRadius: normalRadius, inset: max(0.0, bubbleInsets.right - 1.0))!)
                     } else {
                         bottomRightCorner = .Corner(normalRadius)
                     }

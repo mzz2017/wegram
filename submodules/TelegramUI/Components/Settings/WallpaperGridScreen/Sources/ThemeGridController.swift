@@ -22,6 +22,66 @@ public enum WallpaperSelectionResult {
     case custom(wallpaperEntry: WallpaperGalleryEntry, options: WallpaperPresentationOptions, editedImage: UIImage?, cropRect: CGRect?, brightness: CGFloat?)
 }
 
+/// Reuses the original wallpaper picker, preview and apply flow from either entry surface.
+public func presentCustomChatWallpaper(context: AccountContext, from parent: ViewController, mode: WallpaperGalleryController.Mode = .default, requiredLevel: Int? = nil, completion: @escaping (WallpaperSelectionResult) -> Void = { _ in }) {
+    let dismissControllers = { [weak parent] in
+        if let parent, let navigationController = parent.navigationController as? NavigationController {
+            if case .peer = mode {
+                var controllers = navigationController.viewControllers.filter({ controller in
+                    if controller is ThemeGridController || controller is MediaPickerScreen {
+                        return false
+                    }
+                    return true
+                })
+                navigationController.setViewControllers(controllers, animated: false)
+
+                controllers = navigationController.viewControllers.filter({ controller in
+                    if controller is WallpaperGalleryController {
+                        return false
+                    }
+                    return true
+                })
+                navigationController.setViewControllers(controllers, animated: true)
+            } else {
+                let controllers = navigationController.viewControllers.filter({ controller in
+                    if controller is WallpaperGalleryController || controller is MediaPickerScreen {
+                        return false
+                    }
+
+                    return true
+                })
+                navigationController.setViewControllers(controllers, animated: true)
+            }
+        }
+    }
+
+    let controller = MediaPickerScreenImpl(context: context, peer: nil, threadTitle: nil, chatLocation: nil, bannedSendPhotos: nil, bannedSendVideos: nil, subject: .assets(nil, .wallpaper))
+    controller.customSelection = { [weak parent] _, asset in
+        guard let parent, let asset = asset as? PHAsset else {
+            return
+        }
+        let controller = WallpaperGalleryController(context: context, source: .asset(asset), mode: mode)
+        controller.requiredLevel = requiredLevel
+        controller.apply = { [weak parent] wallpaper, options, editedImage, cropRect, brightness, _ in
+            if parent != nil {
+                if case .peer = mode {
+                    completion(.custom(wallpaperEntry: wallpaper, options: options, editedImage: editedImage, cropRect: cropRect, brightness: brightness))
+                    Queue.mainQueue().after(0.15) {
+                        dismissControllers()
+                    }
+                } else {
+                    uploadCustomWallpaper(context: context, wallpaper: wallpaper, mode: options, editedImage: editedImage, cropRect: cropRect, brightness: brightness, completion: {
+                        dismissControllers()
+                    })
+                }
+            }
+        }
+        parent.push(controller)
+    }
+    parent.push(controller)
+}
+
+
 public final class ThemeGridController: ViewController {
     public enum Mode {
         case generic
@@ -39,6 +99,7 @@ public final class ThemeGridController: ViewController {
     private let context: AccountContext
     private let mode: Mode
     private let forceEdit: Bool
+    private let usesWegramLayout: Bool
     
     private var presentationData: PresentationData
     private let presentationDataPromise = Promise<PresentationData>()
@@ -49,6 +110,10 @@ public final class ThemeGridController: ViewController {
     
     private var validLayout: ContainerViewLayout?
     
+    public override var navigationEdgeEffectExtension: CGFloat {
+        return self.usesWegramLayout ? 0.0 : super.navigationEdgeEffectExtension
+    }
+
     public override var navigationBarRequiresEntireLayoutUpdate: Bool {
         return false
     }
@@ -57,19 +122,24 @@ public final class ThemeGridController: ViewController {
     
     public var completion: (WallpaperSelectionResult) -> Void = { _ in }
     
-    public init(context: AccountContext, mode: Mode = .generic, forceEdit: Bool = false) {
+    public init(context: AccountContext, mode: Mode = .generic, forceEdit: Bool = false, usesWegramLayout: Bool = false) {
         self.context = context
         self.mode = mode
         self.forceEdit = forceEdit
+        if case .generic = mode {
+            self.usesWegramLayout = usesWegramLayout
+        } else {
+            self.usesWegramLayout = false
+        }
         
         self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
         self.presentationDataPromise.set(.single(self.presentationData))
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(presentationData: self.presentationData, style: .glass))
+        super.init(navigationBarPresentationData: self.usesWegramLayout ? NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: self.presentationData.theme), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)) : NavigationBarPresentationData(presentationData: self.presentationData, style: .glass))
         
         switch mode {
         case .generic:
-            self.title = self.presentationData.strings.Wallpaper_Title
+            self.title = self.usesWegramLayout ? (self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "聊天背景" : "Chat Background") : self.presentationData.strings.Wallpaper_Title
         case .peer:
             self.title = self.presentationData.strings.Wallpaper_ChannelTitle
         }
@@ -108,14 +178,14 @@ public final class ThemeGridController: ViewController {
     }
     
     private func updateThemeAndStrings() {
-        self.title = self.presentationData.strings.Wallpaper_Title
+        self.title = self.usesWegramLayout ? (self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "聊天背景" : "Chat Background") : self.presentationData.strings.Wallpaper_Title
         self.navigationItem.backBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Back, style: .plain, target: nil, action: nil)
         
         if case .generic = self.mode {
             if let isEmpty = self.isEmpty, isEmpty {
             } else {
                 if self.editingMode {
-                    self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "___done", style: .done, target: self, action: #selector(self.donePressed))
+                    self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.usesWegramLayout ? self.presentationData.strings.Common_Done : "___done", style: .done, target: self, action: #selector(self.donePressed))
                 } else {
                     self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.presentationData.strings.Common_Edit, style: .plain, target: self, action: #selector(self.editPressed))
                 }
@@ -123,7 +193,7 @@ public final class ThemeGridController: ViewController {
         }
         
         self.statusBar.statusBarStyle = self.presentationData.theme.rootController.statusBarStyle.style
-        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(presentationData: self.presentationData, style: .glass), transition: .immediate)
+        self.navigationBar?.updatePresentationData(self.usesWegramLayout ? NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: self.presentationData.theme), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)) : NavigationBarPresentationData(presentationData: self.presentationData, style: .glass), transition: .immediate)
         
         if self.isNodeLoaded {
             self.controllerNode.updatePresentationData(self.presentationData)
@@ -140,7 +210,7 @@ public final class ThemeGridController: ViewController {
             requiredCustomLevel = requiredCustomLevelValue
         }
         
-        self.displayNode = ThemeGridControllerNode(context: self.context, mode: self.mode, presentationData: self.presentationData, presentPreviewController: { [weak self] source in
+        self.displayNode = ThemeGridControllerNode(context: self.context, mode: self.mode, presentationData: self.presentationData, usesWegramLayout: self.usesWegramLayout, presentPreviewController: { [weak self] source in
             if let strongSelf = self {
                 let dismissControllers = { [weak self] in
                     if let self, let navigationController = self.navigationController as? NavigationController {
@@ -193,63 +263,10 @@ public final class ThemeGridController: ViewController {
                 self?.push(controller)
             }
         }, presentGallery: { [weak self] in
-            if let strongSelf = self {
-                let dismissControllers = { [weak self] in
-                    if let self, let navigationController = self.navigationController as? NavigationController {
-                        if case .peer = mode {
-                            var controllers = navigationController.viewControllers.filter({ controller in
-                                if controller is ThemeGridController || controller is MediaPickerScreen {
-                                    return false
-                                }
-                                return true
-                            })
-                            navigationController.setViewControllers(controllers, animated: false)
-                            
-                            controllers = navigationController.viewControllers.filter({ controller in
-                                if controller is WallpaperGalleryController {
-                                    return false
-                                }
-                                return true
-                            })
-                            navigationController.setViewControllers(controllers, animated: true)
-                        } else {
-                            let controllers = navigationController.viewControllers.filter({ controller in
-                                if controller is WallpaperGalleryController || controller is MediaPickerScreen {
-                                    return false
-                                }
-                                
-                                return true
-                            })
-                            navigationController.setViewControllers(controllers, animated: true)
-                        }
-                    }
-                }
-                
-                let controller = MediaPickerScreenImpl(context: strongSelf.context, peer: nil, threadTitle: nil, chatLocation: nil, bannedSendPhotos: nil, bannedSendVideos: nil, subject: .assets(nil, .wallpaper))
-                controller.customSelection = { [weak self] _, asset in
-                    guard let strongSelf = self, let asset = asset as? PHAsset else {
-                        return
-                    }
-                    let controller = WallpaperGalleryController(context: strongSelf.context, source: .asset(asset), mode: mode)
-                    controller.requiredLevel = requiredCustomLevel
-                    controller.apply = { [weak self] wallpaper, options, editedImage, cropRect, brightness, _ in
-                        if let strongSelf = self {
-                            if case .peer = mode {
-                                strongSelf.completion(.custom(wallpaperEntry: wallpaper, options: options, editedImage: editedImage, cropRect: cropRect, brightness: brightness))
-                                Queue.mainQueue().after(0.15) {
-                                    dismissControllers()
-                                }
-                            } else {
-                                uploadCustomWallpaper(context: strongSelf.context, wallpaper: wallpaper, mode: options, editedImage: editedImage, cropRect: cropRect, brightness: brightness, completion: {
-                                    dismissControllers()
-                                })
-                            }
-                        }
-                    }
-                    strongSelf.push(controller)
-                }
-                self?.push(controller)
-            }
+            guard let self else { return }
+            presentCustomChatWallpaper(context: self.context, from: self, mode: mode, requiredLevel: requiredCustomLevel, completion: { [weak self] result in
+                self?.completion(result)
+            })
         }, presentColors: { [weak self] in
             if let strongSelf = self {
                 let controller = ThemeColorsGridController(context: strongSelf.context)
@@ -391,32 +408,34 @@ public final class ThemeGridController: ViewController {
                 self.dismiss()
             }
         }
-        self.controllerNode.gridNode.visibleContentOffsetChanged = { [weak self] offset in
-            if let strongSelf = self {
-                var previousContentOffsetValue: CGFloat?
-                if let previousContentOffset = strongSelf.previousContentOffset, case let .known(value) = previousContentOffset {
-                    previousContentOffsetValue = value
+        if !self.usesWegramLayout {
+            self.controllerNode.gridNode.visibleContentOffsetChanged = { [weak self] offset in
+                if let strongSelf = self {
+                    var previousContentOffsetValue: CGFloat?
+                    if let previousContentOffset = strongSelf.previousContentOffset, case let .known(value) = previousContentOffset {
+                        previousContentOffsetValue = value
+                    }
+                    switch offset {
+                        case let .known(value):
+                            let transition: ContainedViewLayoutTransition
+                            if let previousContentOffsetValue = previousContentOffsetValue, value <= 0.0, previousContentOffsetValue > 30.0 {
+                                transition = .animated(duration: 0.2, curve: .easeInOut)
+                            } else {
+                                transition = .immediate
+                            }
+                            strongSelf.navigationBar?.updateBackgroundAlpha(min(30.0, max(0.0, value - 54.0)) / 30.0, transition: transition)
+                        case .unknown, .none:
+                            strongSelf.navigationBar?.updateBackgroundAlpha(1.0, transition: .immediate)
+                    }
+
+                    strongSelf.previousContentOffset = offset
                 }
-                switch offset {
-                    case let .known(value):
-                        let transition: ContainedViewLayoutTransition
-                        if let previousContentOffsetValue = previousContentOffsetValue, value <= 0.0, previousContentOffsetValue > 30.0 {
-                            transition = .animated(duration: 0.2, curve: .easeInOut)
-                        } else {
-                            transition = .immediate
-                        }
-                        strongSelf.navigationBar?.updateBackgroundAlpha(min(30.0, max(0.0, value - 54.0)) / 30.0, transition: transition)
-                    case .unknown, .none:
-                        strongSelf.navigationBar?.updateBackgroundAlpha(1.0, transition: .immediate)
-                }
-                
-                strongSelf.previousContentOffset = offset
             }
         }
-        
+
         self._ready.set(self.controllerNode.ready.get())
         
-        self.navigationBar?.updateBackgroundAlpha(0.0, transition: .immediate)
+        self.navigationBar?.updateBackgroundAlpha(self.usesWegramLayout ? 1.0 : 0.0, transition: .immediate)
         
         self.displayNodeDidLoad()
         
@@ -478,7 +497,7 @@ public final class ThemeGridController: ViewController {
     
     @objc func editPressed() {
         self.editingMode = true
-        self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "___done", style: .done, target: self, action: #selector(self.donePressed))
+        self.navigationItem.rightBarButtonItem = UIBarButtonItem(title: self.usesWegramLayout ? self.presentationData.strings.Common_Done : "___done", style: .done, target: self, action: #selector(self.donePressed))
         self.controllerNode.updateState { state in
             var state = state
             state.editing = true

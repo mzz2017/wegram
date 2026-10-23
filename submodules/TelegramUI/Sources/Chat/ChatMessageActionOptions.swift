@@ -47,7 +47,7 @@ private func maybePresentForwardRichTextPremiumToast(selfController: ChatControl
             presentationData: selfController.presentationData,
             content: .premiumPaywall(
                 title: nil,
-                text: "Subscribe to [Telegram Premium]() to forward formatted messages without the sender's name.",
+                text: "Subscribe to [WeGram Premium]() to forward formatted messages without the sender's name.",
                 customUndoText: nil,
                 timeout: 5.0,
                 linkAction: { [weak selfController, weak contextController] _ in

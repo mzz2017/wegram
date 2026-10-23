@@ -42,3 +42,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/ContextActionNode.swift"])

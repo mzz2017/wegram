@@ -432,6 +432,28 @@ private final class StoryContainerScreenComponent: Component {
         private var previousSeekTime: Double?
         private var initialSeekTimestamp: Double?
         
+        private var isWegramInteractionScheduled = false
+        func consumeWegramInteraction(controller: StoryContainerScreen) {
+            guard controller.hasWegramInteraction, !self.isWegramInteractionScheduled else { return }
+            self.isWegramInteractionScheduled = true
+            Queue.mainQueue().async { [weak self, weak controller] in
+                guard let self else { return }
+                self.isWegramInteractionScheduled = false
+                guard let controller, let slice = self.stateValue?.slice,
+                    let itemSet = self.visibleItemSetViews[slice.peer.id], let itemView = itemSet.view.view as? StoryItemSetContainerComponent.View else { return }
+                let current = WegramStoryInteractionTarget(peerId: slice.item.id.peerId.toInt64(), storyId: slice.item.id.id)
+                let interacting = self.isAnimatingOut || self.didAnimateOut || self.itemSetPanState != nil || self.itemSetPinchState != nil || itemSet.externalState.dismissFraction > 0
+                guard let action = controller.takeWegramInteraction(current: current, expiration: slice.item.storyItem.expirationTimestamp, expired: slice.item.storyItem.isExpired, ready: self.didAnimateIn, interacting: interacting) else { return }
+                if !itemView.performWegramInteraction(action, target: current) {
+                    let data = self.component?.context.sharedContext.currentPresentationData.with { $0 }
+                    if let data {
+                        let text = data.strings.baseLanguageCode.hasPrefix("zh") ? "当前动态不支持此操作" : "This action is unavailable for this story"
+                        controller.present(UndoOverlayController(presentationData: data, content: .info(title: nil, text: text, timeout: nil, customUndoText: nil), elevatedLayout: false, action: { _ in true }), in: .current)
+                    }
+                }
+            }
+        }
+
         private var isUpdating: Bool = false
         
         override init(frame: CGRect) {
@@ -1273,6 +1295,9 @@ private final class StoryContainerScreenComponent: Component {
             self.isUpdating = true
             defer {
                 self.isUpdating = false
+                if let controller = self.environment?.controller() as? StoryContainerScreen {
+                    self.consumeWegramInteraction(controller: controller)
+                }
             }
             
             let environment = environment[ViewControllerComponentContainer.Environment.self].value
@@ -2108,6 +2133,22 @@ public class StoryContainerScreen: ViewControllerComponentContainer, KeyShortcut
         return self.focusedItemPromise.get()
     }
     
+    private var wegramInteractionRequest: WegramStoryInteractionRequest?
+    fileprivate var hasWegramInteraction: Bool { self.wegramInteractionRequest?.action != nil }
+    public func requestWegramInteraction(_ action: WegramStoryInteraction, peerId: EnginePeer.Id, storyId: Int32) {
+        self.wegramInteractionRequest = WegramStoryInteractionRequest(target: WegramStoryInteractionTarget(peerId: peerId.toInt64(), storyId: storyId), action: action)
+        if self.isNodeLoaded, let view = self.node.hostView.componentView as? StoryContainerScreenComponent.View {
+            view.consumeWegramInteraction(controller: self)
+        }
+    }
+    fileprivate func takeWegramInteraction(current: WegramStoryInteractionTarget, expiration: Int32, expired: Bool, ready: Bool, interacting: Bool) -> WegramStoryInteraction? {
+        self.wegramInteractionRequest?.take(current: current, expiration: expiration, expired: expired, now: Int64(Date().timeIntervalSince1970), visible: self.isNodeLoaded && self.view.window != nil && self.isInFocus, ready: ready, interacting: interacting)
+    }
+    override public func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        self.wegramInteractionRequest?.cancel()
+    }
+
     public var customBackAction: (() -> Void)?
     public var performReorderAction: (() -> Void)?
     
@@ -2287,6 +2328,7 @@ public class StoryContainerScreen: ViewControllerComponentContainer, KeyShortcut
         
         if let componentView = self.node.hostView.componentView as? StoryContainerScreenComponent.View {
             componentView.inFocusUpdated(isInFocus: isInFocus)
+            if isInFocus { componentView.consumeWegramInteraction(controller: self) }
         }
     }
 }

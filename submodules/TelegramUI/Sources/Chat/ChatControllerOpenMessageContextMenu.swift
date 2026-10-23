@@ -336,8 +336,20 @@ extension ChatControllerImpl {
                 }
                 
                 let isSecret = self.presentationInterfaceState.copyProtectionEnabled || self.presentationInterfaceState.myCopyProtectionEnabled || self.chatLocation.peerId?.namespace == Namespaces.Peer.SecretChat
+                var wegramMenu: WegramMessageMenu?
+                if self.usesWegramNavigation, self.subject == nil {
+                    var isImage = false
+                    for media in topMessage.effectiveMedia where media is TelegramMediaImage { isImage = true }
+                    let saveIds = Set((selectAll || isImage ? updatedMessages : [topMessage]).map { $0.id })
+                    wegramMenu = WegramMessageMenu(items: actions, itemsSignal: actionsSignal, presentationData: self.presentationData, save: isSecret ? nil : { [weak self] in
+                        self?.saveContextMessagesToSavedMessages(saveIds)
+                    })
+                    if let wegramMenu { actionsSignal = .single(wegramMenu.items) }
+                }
                 let controller = makeContextController(presentationData: self.presentationData, source: source, items: actionsSignal, recognizer: recognizer, gesture: gesture, disableScreenshots: isSecret, hideReactionPanelTail: hideReactionPanelTail)
-                controller.dismissed = { [weak self] in
+                wegramMenu?.controller = controller
+                controller.dismissed = { [weak self, weak wegramMenu] in
+                    wegramMenu?.invalidate()
                     self?.canReadHistory.set(true)
                 }
                 controller.immediateItemsTransitionAnimation = disableTransitionAnimations

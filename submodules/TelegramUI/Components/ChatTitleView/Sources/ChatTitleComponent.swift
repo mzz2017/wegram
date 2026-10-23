@@ -75,6 +75,7 @@ public final class ChatNavigationBarTitleView: UIView, NavigationBarTitleView {
     private var ignoreParentTransitionRequests: Bool = false
     public var requestUpdate: ((ContainedViewLayoutTransition) -> Void)?
     
+    public var usesWegramAppearance = false
     public var tapAction: (() -> Void)?
     public var longTapAction: (() -> Void)?
     
@@ -168,7 +169,8 @@ public final class ChatNavigationBarTitleView: UIView, NavigationBarTitleView {
                     strings: contentData.strings,
                     dateTimeFormat: contentData.dateTimeFormat,
                     nameDisplayOrder: contentData.nameDisplayOrder,
-                    displayBackground: displayBackground,
+                    displayBackground: displayBackground && !self.usesWegramAppearance,
+                    usesWegramAppearance: self.usesWegramAppearance,
                     content: contentData.content,
                     activities: self.activities,
                     networkState: self.networkState,
@@ -235,6 +237,7 @@ public final class ChatTitleComponent: Component {
     public let strings: PresentationStrings
     public let dateTimeFormat: PresentationDateTimeFormat
     public let nameDisplayOrder: PresentationPersonNameOrder
+    public let usesWegramAppearance: Bool
     public let displayBackground: Bool
     public let content: ChatTitleContent
     public let activities: Activities?
@@ -250,6 +253,7 @@ public final class ChatTitleComponent: Component {
         dateTimeFormat: PresentationDateTimeFormat,
         nameDisplayOrder: PresentationPersonNameOrder,
         displayBackground: Bool,
+        usesWegramAppearance: Bool = false,
         content: ChatTitleContent,
         activities: Activities?,
         networkState: AccountNetworkState?,
@@ -263,6 +267,7 @@ public final class ChatTitleComponent: Component {
         self.dateTimeFormat = dateTimeFormat
         self.nameDisplayOrder = nameDisplayOrder
         self.displayBackground = displayBackground
+        self.usesWegramAppearance = usesWegramAppearance
         self.content = content
         self.activities = activities
         self.networkState = networkState
@@ -289,6 +294,7 @@ public final class ChatTitleComponent: Component {
         if lhs.nameDisplayOrder != rhs.nameDisplayOrder {
             return false
         }
+        if lhs.usesWegramAppearance != rhs.usesWegramAppearance { return false }
         if lhs.displayBackground != rhs.displayBackground {
             return false
         }
@@ -339,6 +345,18 @@ public final class ChatTitleComponent: Component {
                 return .waitForSingleTap
             }
             self.contentContainer.addGestureRecognizer(recognizer)
+
+            // The title labels itself in update(); like the legacy ChatTitleView it is one header element.
+            self.isAccessibilityElement = true
+            self.accessibilityTraits = [.header, .button]
+        }
+
+        public override func accessibilityActivate() -> Bool {
+            guard let component = self.component else {
+                return false
+            }
+            component.tapped()
+            return true
         }
         
         required init?(coder: NSCoder) {
@@ -596,6 +614,20 @@ public final class ChatTitleComponent: Component {
                 isEnabled = enabled
             }
             
+            if component.usesWegramAppearance,
+               case let .peer(peerData, _, _, onlineCount, isScheduled, _, _, _, _) = component.content,
+               !isScheduled {
+                var memberCount: Int?
+                if let group = peerData.peer as? TelegramGroup {
+                    memberCount = group.participantCount
+                } else if let channel = peerData.peer as? TelegramChannel, case .group = channel.info {
+                    memberCount = (onlineCount.total ?? (peerData.cachedData as? CachedChannelData)?.participantsSummary.memberCount).map(Int.init)
+                }
+                if let suffix = WegramChatTitle.memberSuffix(memberCount: memberCount), titleSegments.count == 1,
+                   case let .text(title) = titleSegments[0].content {
+                    titleSegments[0].content = .text(title + suffix)
+                }
+            }
             var accessibilityText = ""
             for segment in titleSegments {
                 switch segment.content {
@@ -837,6 +869,17 @@ public final class ChatTitleComponent: Component {
                 }
             }
             
+            if component.usesWegramAppearance,
+               case .peer = component.content,
+               component.activities?.items.isEmpty ?? true {
+                switch component.networkState {
+                case .online, .none:
+                    self.accessibilityValue = state.string
+                    state = .none
+                default:
+                    break
+                }
+            }
             var rightIconSize: CGSize?
             if let titleRightIcon {
                 let rightIcon: ComponentView<Empty>
@@ -1044,8 +1087,8 @@ public final class ChatTitleComponent: Component {
             let titleSize = self.title.update(
                 transition: transition,
                 component: AnyComponent(AnimatedTextComponent(
-                    font: Font.semibold(17.0),
-                    color: component.theme.chat.inputPanel.panelControlColor,
+                    font: component.usesWegramAppearance ? wegramNavigationTitleFont : Font.semibold(17.0),
+                    color: component.usesWegramAppearance ? WegramNavigationColors(isDark: component.theme.overallDarkAppearance).control : component.theme.chat.inputPanel.panelControlColor,
                     items: titleSegments,
                     noDelay: false,
                     animateScale: true,
@@ -1084,7 +1127,10 @@ public final class ChatTitleComponent: Component {
             let containerSize = CGSize(width: contentSize.width + containerSideInset * 2.0, height: 44.0)
             let containerFrame = CGRect(origin: CGPoint(x: 0.0, y: floorToScreenPixels((availableSize.height - containerSize.height) * 0.5)), size: containerSize)
             
-            let titleFrame = CGRect(origin: CGPoint(x: titleLeftIconsWidth + floor((containerFrame.width - titleSize.width - titleLeftIconsWidth - titleRightIconsWidth) * 0.5), y: floor((containerFrame.height - contentSize.height) * 0.5)), size: titleSize)
+            // WeGram draws the title a pixel lower: centring its whole-point box left it 1.09px above WeChat's
+            // (IMG_2437, the weighted centre of a character's bottom stroke), as on the bar's own titles.
+            let titleY = floor((containerFrame.height - contentSize.height) * 0.5) + (component.usesWegramAppearance ? UIScreenPixel : 0.0)
+            let titleFrame = CGRect(origin: CGPoint(x: titleLeftIconsWidth + floor((containerFrame.width - titleSize.width - titleLeftIconsWidth - titleRightIconsWidth) * 0.5), y: titleY), size: titleSize)
             if let titleView = self.title.view {
                 if titleView.superview == nil {
                     titleView.isUserInteractionEnabled = false

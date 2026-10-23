@@ -129,6 +129,7 @@ public protocol ChatMessageItem: ListViewItem, ChatHistoryItemWithHeaders {
     var controllerInteraction: ChatControllerInteraction { get }
     var content: ChatMessageItemContent { get }
     var disableDate: Bool { get }
+    var usesWegramMessageLayout: Bool { get }
     var effectiveAuthorId: EnginePeer.Id? { get }
     var additionalContent: ChatMessageItemAdditionalContent? { get }
 
@@ -183,4 +184,43 @@ public func hasCommentButton(item: ChatMessageItem) -> Bool {
         return true
     }
     return false
+}
+
+public extension ChatMessageItem {
+    var usesWegramMessageLayout: Bool { false }
+
+    var usesWegramSelectionAppearance: Bool {
+        guard !self.presentationData.isPreview, self.controllerInteraction.chatIsRotated, !self.controllerInteraction.isSidePanelOpen else { return false }
+        if case .messageOptions = self.associatedData.subject { return false }
+        if case .customChatContents = self.associatedData.subject { return false }
+        if case .customChatContents = self.chatLocation { return false }
+        return true
+    }
+}
+
+public func wegramMessageLayoutIsSupported(presentationData: ChatPresentationData, content: ChatMessageItemContent, chatLocation: ChatLocation, associatedData: ChatMessageItemAssociatedData, accountPeerId: EnginePeer.Id, isRotated: Bool) -> Bool {
+    guard !presentationData.isPreview, isRotated else { return false }
+    if case .messageOptions = associatedData.subject { return false }
+    if case .customChatContents = associatedData.subject { return false }
+    if case .customChatContents = chatLocation { return false }
+    let message = content.firstMessage
+    // Saved Messages is WeChat's File Transfer Assistant: an ordinary two-sided chat. Replies and
+    // verification codes keep Telegram's layout.
+    if message.id.peerId != accountPeerId && message.id.peerId.isRepliesOrSavedMessages(accountPeerId: accountPeerId) { return false }
+    if message.adAttribute != nil { return false }
+    if Namespaces.Message.allEphemeral.contains(message.id.namespace) || Namespaces.Message.allWelcomeMessages.contains(message.id.namespace) { return false }
+    if let channel = message.peers[message.id.peerId] as? TelegramChannel, case .broadcast = channel.info { return false }
+    for media in message.media {
+        if media is TelegramMediaAction || media is TelegramMediaDice || media is TelegramMediaExpiredContent { return false }
+        if let file = media as? TelegramMediaFile {
+            if (file.isAnimatedSticker || file.isVideoSticker) && !file.isSticker { return false }
+        }
+    }
+    if presentationData.largeEmoji && message.media.isEmpty {
+        switch content.firstMessageAttributes.contentTypeHint {
+        case .largeEmoji, .animatedEmoji: return false
+        default: break
+        }
+    }
+    return true
 }

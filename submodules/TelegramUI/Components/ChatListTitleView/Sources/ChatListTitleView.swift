@@ -82,7 +82,7 @@ public final class ChatListTitleView: UIView, NavigationBarTitleView, Navigation
         self._title = title
         
         if self._title != oldValue {
-            self.titleNode.attributedText = NSAttributedString(string: self.title.text, font: titleFont, textColor: self.theme.rootController.navigationBar.primaryTextColor)
+            self.titleNode.attributedText = NSAttributedString(string: self.title.text, font: self.effectiveTitleFont, textColor: self.effectiveTitleColor)
             self.buttonView.accessibilityLabel = self.title.text
             self.activityIndicator.isHidden = !self.title.activity
            
@@ -208,10 +208,20 @@ public final class ChatListTitleView: UIView, NavigationBarTitleView, Navigation
     private var isPasscodeSet = false
     private var isManuallyLocked = false
     
+    public var usesWegramAppearance = false {
+        didSet {
+            if self.usesWegramAppearance != oldValue {
+                self.titleNode.attributedText = NSAttributedString(string: self.title.text, font: self.effectiveTitleFont, textColor: self.effectiveTitleColor)
+            }
+        }
+    }
+    private var effectiveTitleFont: UIFont { self.usesWegramAppearance ? wegramNavigationTitleFont : titleFont }
+    private var effectiveTitleColor: UIColor { self.usesWegramAppearance ? WegramNavigationColors(isDark: self.theme.overallDarkAppearance).control : self.theme.rootController.navigationBar.primaryTextColor }
+
     public var theme: PresentationTheme {
         didSet {
             if self.theme !== oldValue {
-                self.titleNode.attributedText = NSAttributedString(string: self.title.text, font: titleFont, textColor: self.theme.rootController.navigationBar.primaryTextColor)
+                self.titleNode.attributedText = NSAttributedString(string: self.title.text, font: self.effectiveTitleFont, textColor: self.effectiveTitleColor)
                 
                 self.lockView.updateTheme(self.theme)
                 

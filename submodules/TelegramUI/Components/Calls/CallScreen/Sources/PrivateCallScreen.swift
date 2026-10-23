@@ -83,6 +83,8 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
         public var isEnergySavingEnabled: Bool
         public var isConferencePossible: Bool
         public var enableVideoSharpening: Bool
+        /// WeGram: WeChat words an outgoing wait and an incoming ring differently, and both map to `.ringing`.
+        public var isOutgoing: Bool = true
         
         public init(
             strings: PresentationStrings,
@@ -164,6 +166,9 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
             if lhs.enableVideoSharpening != rhs.enableVideoSharpening {
                 return false
             }
+            if lhs.isOutgoing != rhs.isOutgoing {
+                return false
+            }
             return true
         }
     }
@@ -199,6 +204,9 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
     private let titleView: TextView
     private let backButtonView: BackButtonView
     private var conferenceButtonView: ConferenceButtonView?
+    // WeGram: WeChat's voice-call screen, shown above the upstream content while no video is on. The
+    // encryption emoji key, its tooltip and its explanation are added later and stay above it.
+    private let wegramVoiceView: WegramVoiceCallView
     
     private var statusView: StatusView
     private var weakSignalView: WeakSignalView?
@@ -280,6 +288,7 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
         self.statusView = StatusView()
         
         self.backButtonView = BackButtonView(frame: CGRect())
+        self.wegramVoiceView = WegramVoiceCallView(frame: CGRect())
         
         self.pipView = PrivateCallPictureInPictureView(frame: CGRect(origin: CGPoint(), size: CGSize()))
         
@@ -313,6 +322,7 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
         }
         
         self.addSubview(self.backButtonView)
+        self.addSubview(self.wegramVoiceView)
         
         (self.layer as? SimpleLayer)?.didEnterHierarchy = { [weak self] in
             guard let self else {
@@ -341,6 +351,33 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
             self.backAction?()
         }
         
+        self.wegramVoiceView.minimizeAction = { [weak self] in
+            self?.backAction?()
+        }
+        self.wegramVoiceView.microphoneAction = { [weak self] in
+            self?.microhoneMuteAction?()
+        }
+        self.wegramVoiceView.endAction = { [weak self] in
+            self?.endCallAction?()
+        }
+        self.wegramVoiceView.speakerAction = { [weak self] in
+            self?.speakerAction?()
+        }
+        self.wegramVoiceView.videoAction = { [weak self] in
+            self?.videoAction?()
+        }
+        self.wegramVoiceView.addParticipantAction = { [weak self] in
+            self?.conferenceAddParticipant?()
+        }
+        self.wegramVoiceView.encryptionKeyAction = { [weak self] in
+            guard let self, !self.isEmojiKeyExpanded else {
+                return
+            }
+            self.isEmojiKeyExpanded = true
+            self.displayEmojiTooltip = false
+            self.update(transition: .spring(duration: 0.4))
+        }
+
         self.buttonGroupView.closePressed = { [weak self] in
             guard let self else {
                 return
@@ -979,13 +1016,53 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
             let conferenceButtonFrame = CGRect(origin: CGPoint(x: params.size.width - params.insets.right - 10.0 - conferenceButtonSize.width, y: conferenceButtonY), size: conferenceButtonSize)
             
             conferenceButtonTransition.setFrame(view: conferenceButtonView, frame: conferenceButtonFrame)
-            genericAlphaTransition.setAlpha(view: conferenceButtonView, alpha: (currentAreControlsHidden || self.isAnimatedOutToGroupCall) ? 0.0 : 1.0)
+            // WeGram: without video the WeChat screen's "+" carries this action instead.
+            genericAlphaTransition.setAlpha(view: conferenceButtonView, alpha: (currentAreControlsHidden || self.isAnimatedOutToGroupCall || !havePrimaryVideo) ? 0.0 : 1.0)
         } else {
             if let conferenceButtonView = self.conferenceButtonView {
                 self.conferenceButtonView = nil
                 conferenceButtonView.removeFromSuperview()
             }
         }
+        
+        let showsWegramVoiceView = !havePrimaryVideo
+        if showsWegramVoiceView {
+            let phase: WegramVoiceCallView.Content.Phase
+            var canEnableVideo = false
+            var canShowEncryptionKey = false
+            switch params.state.lifecycleState {
+            case .requesting, .ringing:
+                phase = .waiting(isOutgoing: params.state.isOutgoing)
+            case .connecting, .reconnecting:
+                phase = .connecting
+            case let .active(activeState):
+                phase = .active(startTime: activeState.startTime)
+                canEnableVideo = params.state.localVideo == nil
+                canShowEncryptionKey = true
+            case let .terminated(terminatedState):
+                phase = .terminated(duration: terminatedState.duration)
+            }
+            transition.setFrame(view: self.wegramVoiceView, frame: CGRect(origin: CGPoint(), size: params.size))
+            self.wegramVoiceView.update(size: params.size, insets: params.insets, content: WegramVoiceCallView.Content(
+                strings: params.state.strings,
+                phase: phase,
+                name: params.state.name,
+                avatarImage: params.state.avatarImage,
+                isMicrophoneMuted: params.state.isLocalAudioMuted,
+                isSpeakerOn: params.state.audioOutput == .speaker,
+                canSwitchAudioOutput: params.state.canSwitchAudioOutput,
+                canEnableVideo: canEnableVideo,
+                canAddParticipant: isConferencePossible && self.conferenceAddParticipant != nil,
+                canShowEncryptionKey: canShowEncryptionKey,
+                isEncryptionKeyShown: self.isEmojiKeyExpanded
+            ))
+        }
+        self.wegramVoiceView.isUserInteractionEnabled = showsWegramVoiceView && !self.isAnimatedOutToGroupCall
+        // The covered upstream controls must not stay reachable by VoiceOver under the WeChat screen.
+        self.buttonGroupView.accessibilityElementsHidden = showsWegramVoiceView
+        self.backButtonView.accessibilityElementsHidden = showsWegramVoiceView
+        self.wegramVoiceView.accessibilityElementsHidden = !showsWegramVoiceView
+        genericAlphaTransition.setAlpha(view: self.wegramVoiceView, alpha: (showsWegramVoiceView && !self.isAnimatedOutToGroupCall) ? 1.0 : 0.0)
         
         let collapsedAvatarSize: CGFloat = 136.0
         let blobSize: CGFloat = collapsedAvatarSize + 40.0
@@ -1374,8 +1451,9 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
                     emojiView.animateIn()
                 }
             }
-            emojiView.isUserInteractionEnabled = !self.isEmojiKeyExpanded
-            
+            // WeGram: the WeChat screen has no key row; its "+" menu expands the key instead.
+            emojiView.isUserInteractionEnabled = !self.isEmojiKeyExpanded && !showsWegramVoiceView
+
             let emojiViewSize = emojiView.update(isExpanded: self.isEmojiKeyExpanded, transition: emojiTransition)
             emojiViewSizeValue = emojiViewSize
             
@@ -1461,9 +1539,9 @@ public final class PrivateCallScreen: OverlayMaskContainerView, AVPictureInPictu
                     emojiTransition.setPosition(view: emojiView, position: emojiViewFrame.center)
                 }
                 emojiTransition.setBounds(view: emojiView, bounds: CGRect(origin: CGPoint(), size: emojiViewFrame.size))
-                emojiAlphaTransition.setAlpha(view: emojiView, alpha: (currentAreControlsHidden || self.isAnimatedOutToGroupCall) ? 0.0 : 1.0)
-                
-                if self.displayEmojiTooltip {
+                emojiAlphaTransition.setAlpha(view: emojiView, alpha: (currentAreControlsHidden || self.isAnimatedOutToGroupCall || showsWegramVoiceView) ? 0.0 : 1.0)
+
+                if self.displayEmojiTooltip && !showsWegramVoiceView {
                     let emojiTooltipView: EmojiTooltipView
                     var emojiTooltipTransition = transition
                     var animateIn = false

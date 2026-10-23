@@ -144,7 +144,7 @@ private final class DeviceContactDataModernContext: DeviceContactDataContext {
                         let stableIdAndContact = DeviceContactDataModernContext.parseContact(contact)
                         contacts[stableIdAndContact.0] = stableIdAndContact.1
                         for address in contact.urlAddresses {
-                            if address.label == "Telegram", let peerId = parseAppSpecificContactReference(address.value as String) {
+                            if (address.label == "WeGram" || address.label == "Telegram"), let peerId = parseAppSpecificContactReference(address.value as String) {
                                 telegramReferences[peerId] = stableIdAndContact.0
                                 if reverseTelegramReferences[stableIdAndContact.0] == nil {
                                     reverseTelegramReferences[stableIdAndContact.0] = Set()
@@ -157,7 +157,7 @@ private final class DeviceContactDataModernContext: DeviceContactDataContext {
                         let stableIdAndContact = DeviceContactDataModernContext.parseContact(contact)
                         contacts[stableIdAndContact.0] = stableIdAndContact.1
                         for address in contact.urlAddresses {
-                            if address.label == "Telegram", let peerId = parseAppSpecificContactReference(address.value as String) {
+                            if (address.label == "WeGram" || address.label == "Telegram"), let peerId = parseAppSpecificContactReference(address.value as String) {
                                 telegramReferences[peerId] = stableIdAndContact.0
                                 telegramReferences[peerId] = stableIdAndContact.0
                                 if reverseTelegramReferences[stableIdAndContact.0] == nil {
@@ -211,7 +211,7 @@ private final class DeviceContactDataModernContext: DeviceContactDataContext {
                     let stableIdAndContact = DeviceContactDataModernContext.parseContact(contact)
                     contacts[stableIdAndContact.0] = stableIdAndContact.1
                     for address in contact.urlAddresses {
-                        if address.label == "Telegram", let peerId = parseAppSpecificContactReference(address.value as String) {
+                        if (address.label == "WeGram" || address.label == "Telegram"), let peerId = parseAppSpecificContactReference(address.value as String) {
                             telegramReferences[peerId] = stableIdAndContact.0
                         }
                     }

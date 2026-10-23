@@ -19,7 +19,8 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
     private let context: AccountContext
     private var theme: PresentationTheme
     private var preferClearGlass: Bool
-    private let strings: PresentationStrings
+    private var strings: PresentationStrings
+    private let usesWegramAppearance: Bool
     private let chatLocation: ChatLocation
     
     private let backgroundContainer: GlassBackgroundContainerView
@@ -27,6 +28,10 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
     private let iconView: UIImageView
     private var activityIndicator: ActivityIndicator?
     private let searchBar: SearchBarNode
+    private let optionsButton = HighlightableButtonNode()
+    public var openSearchOptions: (() -> Void)? {
+        didSet { self.optionsButton.isHidden = self.openSearchOptions == nil }
+    }
     private let close: (background: GlassBackgroundView, icon: UIImageView)
     
     private let interaction: ChatPanelInterfaceInteraction
@@ -36,8 +41,9 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
     
     private var params: (size: CGSize, leftInset: CGFloat, rightInset: CGFloat)?
     
-    public init(context: AccountContext, theme: PresentationTheme, strings: PresentationStrings, chatLocation: ChatLocation, interaction: ChatPanelInterfaceInteraction, presentationInterfaceState: ChatPresentationInterfaceState) {
+    public init(context: AccountContext, theme: PresentationTheme, strings: PresentationStrings, chatLocation: ChatLocation, interaction: ChatPanelInterfaceInteraction, presentationInterfaceState: ChatPresentationInterfaceState, usesWegramAppearance: Bool = false) {
         self.context = context
+        self.usesWegramAppearance = usesWegramAppearance
         self.theme = theme
         self.preferClearGlass = presentationInterfaceState.preferredGlassType == .clear
         self.strings = strings
@@ -71,7 +77,9 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
             fieldStyle: .inlineNavigation,
             forceSeparator: false,
             displayBackground: false,
-            cancelText: nil
+            cancelText: nil,
+            hasOwnGlassContainer: !usesWegramAppearance,
+            usesWegramAppearance: usesWegramAppearance
         )
         let placeholderText: String
         switch chatLocation {
@@ -90,11 +98,20 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
         
         super.init()
         
-        self.view.addSubview(self.backgroundContainer)
-        self.backgroundView.contentView.addSubview(self.searchBar.view)
-        
-        self.backgroundContainer.contentView.addSubview(self.close.background)
-        self.close.background.contentView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.onCloseTapGesture(_:))))
+        if usesWegramAppearance {
+            self.addSubnode(self.searchBar)
+            self.optionsButton.isHidden = true
+            self.optionsButton.isAccessibilityElement = true
+            self.optionsButton.accessibilityTraits = .button
+            self.optionsButton.accessibilityIdentifier = "Wegram.Search.Options"
+            self.optionsButton.addTarget(self, action: #selector(self.optionsPressed), forControlEvents: .touchUpInside)
+            self.addSubnode(self.optionsButton)
+        } else {
+            self.view.addSubview(self.backgroundContainer)
+            self.backgroundView.contentView.addSubview(self.searchBar.view)
+            self.backgroundContainer.contentView.addSubview(self.close.background)
+            self.close.background.contentView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.onCloseTapGesture(_:))))
+        }
         
         self.searchBar.cancel = { [weak self] in
             self?.searchBar.deactivate(clear: false)
@@ -135,12 +152,20 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
         }
     }
 
+    @objc private func optionsPressed() {
+        self.openSearchOptions?()
+    }
+
     deinit {
         self.searchingActivityDisposable?.dispose()
     }
     
+    override public var replacementRespectsTopInset: Bool {
+        return self.usesWegramAppearance
+    }
+
     override public var nominalHeight: CGFloat {
-        return 60.0
+        return self.usesWegramAppearance ? 52.0 : 60.0
     }
     
     @objc private func onCloseTapGesture(_ recognizer: UITapGestureRecognizer) {
@@ -151,7 +176,16 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
     
     override public func updateLayout(size: CGSize, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition) -> CGSize {
         self.params = (size, leftInset, rightInset)
-        
+        if self.usesWegramAppearance {
+            self.searchBar.activity = self.hasActivity
+            transition.updateFrame(node: self.searchBar, frame: CGRect(origin: .zero, size: size))
+            self.searchBar.updateLayout(boundingSize: size, leftInset: leftInset, rightInset: rightInset, transition: transition)
+            self.backgroundColor = self.searchBar.backgroundColor
+            self.optionsButton.accessibilityLabel = self.strings.Common_More
+            transition.updateFrame(node: self.optionsButton, frame: CGRect(x: leftInset, y: (size.height - 44.0) / 2.0, width: 44.0, height: 44.0))
+            return size
+        }
+
         let transition = ComponentTransition(transition)
         
         let backgroundFrame = CGRect(origin: CGPoint(x: leftInset + 16.0, y: 6.0), size: CGSize(width: size.width - 16.0 * 2.0 - leftInset - rightInset - 44.0 - 8.0, height: 44.0))
@@ -238,6 +272,7 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
     }
     
     public func update(presentationInterfaceState: ChatPresentationInterfaceState) {
+        self.strings = presentationInterfaceState.strings
         if let search = presentationInterfaceState.search {
             self.searchBar.updateThemeAndStrings(
                 theme: SearchBarNodeTheme(
@@ -258,7 +293,11 @@ public final class ChatSearchNavigationContentNode: NavigationBarContentNode {
             
             switch search.domain {
             case .everything, .tag:
-                self.searchBar.tokens = []
+                if let title = search.mediaTitle(strings: self.strings), let tags = search.mediaTags {
+                    self.searchBar.tokens = [SearchBarToken(id: tags.rawValue, icon: nil, title: title, permanent: false)]
+                } else {
+                    self.searchBar.tokens = []
+                }
                 self.searchBar.prefixString = nil
                 let placeholderText: String
                 switch self.chatLocation {

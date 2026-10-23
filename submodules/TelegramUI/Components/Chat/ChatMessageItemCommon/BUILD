@@ -13,6 +13,7 @@ swift_library(
     ],
     deps = [
         "//submodules/Display",
+        "//submodules/AsyncDisplayKit",
         "//submodules/TelegramCore",
         "//submodules/Emoji",
     ],

@@ -8,7 +8,7 @@ import ContextUI
 import TelegramPresentationData
 import SwiftSignalKit
 
-/// An account-free, opt-in integration gallery using the actual Telegram menu stack.
+/// An account-free, opt-in integration gallery using the actual WeGram menu stack.
 final class ContextMenuMorphDebugController: ViewController {
     private final class Source: ContextReferenceContentSource {
         let button: UIView
@@ -47,7 +47,7 @@ final class ContextMenuMorphDebugController: ViewController {
         self.displayNode = ASDisplayNode()
         self.displayNode.backgroundColor = .systemGroupedBackground
         self.displayNodeDidLoad()
-        self.status.text = "Telegram custom menu integration"
+        self.status.text = "WeGram custom menu integration"
         self.status.font = .systemFont(ofSize: 16)
         self.status.numberOfLines = 2
         self.view.addSubview(self.status)

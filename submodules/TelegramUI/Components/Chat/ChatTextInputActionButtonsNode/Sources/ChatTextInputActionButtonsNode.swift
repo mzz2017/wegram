@@ -135,6 +135,12 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
     private let strings: PresentationStrings
     
     public let micButtonBackgroundView: GlassBackgroundView
+    public var usesWegramAppearance = false
+    public var usesWegramSendButton = false
+    private let wegramSendLabel = UILabel()
+    private var wegramIsEditing = false
+    private var wegramScheduledActionTitle: String?
+    private var wegramPaidAmount: Int64?
     public let micButtonTintMaskView: UIImageView
     public let micButton: ChatTextInputMediaRecordingButton
     public let stopButtonIcon: GlassBackgroundView.ContentImageView
@@ -259,6 +265,13 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
         self.sendContainerNode.view.addSubview(self.sendButtonBackgroundView)
         self.sendContainerNode.addSubnode(self.sendButton)
         self.sendContainerNode.addSubnode(self.textNode)
+        self.wegramSendLabel.isUserInteractionEnabled = false
+        self.wegramSendLabel.textAlignment = .center
+        self.wegramSendLabel.text = "发送"
+        self.wegramSendLabel.font = Font.medium(16)
+        self.wegramSendLabel.textColor = .white
+        self.wegramSendLabel.isHidden = true
+        self.sendContainerNode.view.addSubview(self.wegramSendLabel)
         self.view.addSubview(self.expandMediaInputButtonBackgroundView)
         
         self.expandMediaInputButton.highligthedChanged = { [weak self] highlighted in
@@ -312,11 +325,11 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
         }
     }
     
-    public func updateLayout(size: CGSize, isMediaInputExpanded: Bool, showTitle: Bool, currentMessageEffectId: Int64?, transition: ContainedViewLayoutTransition, interfaceState: ChatPresentationInterfaceState) -> CGSize {
+    public func updateLayout(size: CGSize, isMediaInputExpanded: Bool, showTitle: Bool, currentMessageEffectId: Int64?, transition: ContainedViewLayoutTransition, interfaceState: ChatPresentationInterfaceState, wegramMaxSendButtonWidth: CGFloat? = nil) -> CGSize {
         self.validLayout = size
         
         var innerSize = size
-        innerSize.width = 40.0 + 3.0 * 2.0
+        innerSize.width = self.usesWegramSendButton ? 58 : 46
         
         let defaultGlassTintColor: GlassBackgroundView.TintColor
         if case .clear = interfaceState.preferredGlassType {
@@ -344,6 +357,7 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
             starsAmount = amount
         }
         
+        self.wegramPaidAmount = starsAmount
         if let amount = starsAmount {
             self.sendButton.imageNode.alpha = 0.0
             self.textNode.isHidden = false
@@ -363,12 +377,14 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
             }
             self.textNode.segments = segments
             
-            let textSize = self.textNode.updateLayout(size: CGSize(width: 100.0, height: 100.0), animated: transition.isAnimated)
-            let buttonInset: CGFloat = 14.0
-            if showTitle {
-                innerSize.width = textSize.width + buttonInset * 2.0
+            if self.usesWegramSendButton {
+                innerSize = layoutWegramPaidSendLabel(self.textNode, maximumWidth: wegramMaxSendButtonWidth ?? .greatestFiniteMagnitude, height: size.height, transition: transition)
+            } else {
+                let textSize = self.textNode.updateLayout(size: CGSize(width: 100.0, height: 100.0), animated: transition.isAnimated)
+                if showTitle { innerSize.width = textSize.width + 28.0 }
+                transition.updateTransformScale(node: self.textNode, scale: 1)
+                transition.updateFrame(node: self.textNode, frame: CGRect(origin: CGPoint(x: showTitle ? 12.0 : floorToScreenPixels((innerSize.width - textSize.width) / 2.0), y: floorToScreenPixels((size.height - textSize.height) / 2.0)), size: textSize))
             }
-            transition.updateFrame(node: self.textNode, frame: CGRect(origin: CGPoint(x: showTitle ? 5.0 + 7.0 : floorToScreenPixels((innerSize.width - textSize.width) / 2.0), y: floorToScreenPixels((size.height - textSize.height) / 2.0)), size: textSize))
         } else {
             self.textNode.isHidden = true
         }
@@ -378,7 +394,7 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
         // does not follow its view's alpha (the panel's fade-out leaves it on screen, under the translucent blob), so
         // it is dissolved through the glass itself.
         let isRecording = interfaceState.inputTextPanelState.mediaRecordingState != nil
-        self.micButtonBackgroundView.update(size: size, cornerRadius: size.height * 0.5, isDark:  interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintColor, isInteractive: true, isVisible: !isRecording, transition: ComponentTransition(transition))
+        self.micButtonBackgroundView.update(size: size, cornerRadius: size.height * 0.5, isDark:  interfaceState.theme.overallDarkAppearance, tintColor: defaultGlassTintColor, isInteractive: !self.usesWegramAppearance, isVisible: !isRecording && !self.usesWegramAppearance, transition: ComponentTransition(transition))
         
         transition.updatePosition(layer: self.micButton.layer, position: CGRect(origin: CGPoint(), size: size).center)
         transition.updateBounds(layer: self.micButton.layer, bounds: CGRect(origin: CGPoint(), size: size))
@@ -414,7 +430,7 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
         transition.updateFrame(view: self.stopButton, frame: CGRect(origin: CGPoint(), size: size))
         
         var sendSlowmodeTimerTimestamp: (duration: Int32, timestamp: Int32)?
-        if let slowmodeState = interfaceState.slowmodeState {
+        if let slowmodeState = interfaceState.slowmodeState, !(self.usesWegramSendButton && interfaceState.subject == .scheduledMessages) {
             switch slowmodeState.variant {
             case .pendingMessages:
                 break
@@ -427,7 +443,7 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
         // Corner radius = min(width, height) / 2: a true capsule whatever the frame. The stretchable image
         // must be generated at that diameter — a fixed one (it was 34) reads as a rounded rect the moment
         // the frame's shorter side differs from it.
-        let sendButtonCornerDiameter = min(sendButtonBackgroundFrame.width, sendButtonBackgroundFrame.height)
+        let sendButtonCornerDiameter = self.usesWegramSendButton ? 8 : min(sendButtonBackgroundFrame.width, sendButtonBackgroundFrame.height)
         if self.sendButtonBackgroundImageDiameter != sendButtonCornerDiameter {
             self.sendButtonBackgroundImageDiameter = sendButtonCornerDiameter
             self.sendButtonBackgroundView.image = generateStretchableFilledCircleImage(diameter: sendButtonCornerDiameter, color: .white)?.withRenderingMode(.alwaysTemplate)
@@ -455,8 +471,10 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
             slowmodeProgressLayer.strokeColor = (self.customSendColor ?? interfaceState.theme.chat.inputPanel.panelControlAccentColor).cgColor
             
             if slowmodeProgressLayer.bounds.size != sendButtonBackgroundFrame.size {
-                let pathFrame = CGRect(origin: CGPoint(), size: sendButtonBackgroundFrame.size).insetBy(dx: 2.0, dy: 2.0)
-                slowmodeProgressLayer.path = UIBezierPath(roundedRect: pathFrame, cornerRadius: min(pathFrame.width, pathFrame.height) * 0.5).cgPath
+                // The progress layer is below the opaque fill; keep its stroke outside the full-size WeGram button.
+                let progressInset: CGFloat = self.usesWegramSendButton ? -2.0 : 2.0
+                let pathFrame = CGRect(origin: CGPoint(), size: sendButtonBackgroundFrame.size).insetBy(dx: progressInset, dy: progressInset)
+                slowmodeProgressLayer.path = UIBezierPath(roundedRect: pathFrame, cornerRadius: self.usesWegramSendButton ? 6.0 : min(pathFrame.width, pathFrame.height) * 0.5).cgPath
             }
             slowmodeProgressTransition.updateFrame(layer: slowmodeProgressLayer, frame: sendButtonBackgroundFrame)
             
@@ -483,7 +501,7 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
         ComponentTransition(transition).setPosition(view: self.sendButtonBackgroundView, position: sendButtonBackgroundFrame.center)
         ComponentTransition(transition).setBounds(view: self.sendButtonBackgroundView, bounds: CGRect(origin: CGPoint(), size: sendButtonBackgroundFrame.size))
         var sendButtonBackgroundScale: CGFloat = 1.0
-        if sendSlowmodeTimerTimestamp != nil, let image = self.sendButtonBackgroundView.image {
+        if !self.usesWegramSendButton, sendSlowmodeTimerTimestamp != nil, let image = self.sendButtonBackgroundView.image {
             sendButtonBackgroundScale = (image.size.height - slowmodeInset * 2.0) / image.size.height
         }
         transition.updateTransformScale(layer: self.sendButtonBackgroundView.layer, scale: sendButtonBackgroundScale)
@@ -491,7 +509,7 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
         if self.isSendDisabled {
             transition.updateTintColor(view: self.sendButtonBackgroundView, color: interfaceState.theme.chat.inputPanel.panelControlAccentColor.withMultiplied(hue: 1.0, saturation: 0.0, brightness: 0.5).withMultipliedAlpha(0.25))
         } else {
-            transition.updateTintColor(view: self.sendButtonBackgroundView, color: self.customSendColor ?? interfaceState.theme.chat.inputPanel.panelControlAccentColor)
+            transition.updateTintColor(view: self.sendButtonBackgroundView, color: self.usesWegramSendButton ? UIColor(rgb: 0x07c160) : (self.customSendColor ?? interfaceState.theme.chat.inputPanel.panelControlAccentColor))
         }
         
         if starsAmount == nil {
@@ -566,6 +584,17 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
             })
         }
         
+        self.wegramIsEditing = interfaceState.interfaceState.editMessage != nil
+        self.wegramScheduledActionTitle = nil
+        let isReminder = interfaceState.chatLocation.peerId == self.context.account.peerId
+        if case .scheduledMessages = interfaceState.subject {
+            self.wegramScheduledActionTitle = isReminder ? interfaceState.strings.Conversation_SendMessage_SetReminder : interfaceState.strings.Conversation_SendMessage_ScheduleMessage
+        }
+        self.wegramSendLabel.text = self.wegramIsEditing ? interfaceState.strings.Common_Done : (self.wegramScheduledActionTitle != nil ? (isReminder ? "提醒" : "定时") : "发送")
+        self.wegramSendLabel.isHidden = !self.usesWegramSendButton || starsAmount != nil
+        self.wegramSendLabel.frame = CGRect(origin: .zero, size: innerSize)
+        self.wegramSendLabel.alpha = self.isSendDisabled ? 0.4 : 1
+        self.sendButton.imageNode.isHidden = self.usesWegramSendButton
         return innerSize
     }
     
@@ -583,6 +612,7 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
     
     public func updateAccessibility() {
         self.accessibilityTraits = .button
+        self.accessibilityValue = nil
         if !self.stopButtonIcon.alpha.isZero {
             self.accessibilityLabel = self.strings.VoiceOver_Chat_Stop
             self.accessibilityHint = nil
@@ -595,6 +625,13 @@ public final class ChatTextInputActionButtonsNode: ASDisplayNode, ChatSendMessag
                     self.accessibilityLabel = self.strings.VoiceOver_Chat_RecordModeVideoMessage
                     self.accessibilityHint = self.strings.VoiceOver_Chat_RecordModeVideoMessageInfo
             }
+        } else if self.usesWegramSendButton, let amount = self.wegramPaidAmount {
+            self.accessibilityLabel = self.wegramScheduledActionTitle ?? self.strings.MediaPicker_Send
+            self.accessibilityValue = "⭐️ \(amount)"
+            self.accessibilityHint = nil
+        } else if self.usesWegramSendButton && (self.wegramIsEditing || self.wegramScheduledActionTitle != nil) {
+            self.accessibilityLabel = self.wegramIsEditing ? self.wegramSendLabel.text : self.wegramScheduledActionTitle
+            self.accessibilityHint = nil
         } else {
             self.accessibilityLabel = self.strings.MediaPicker_Send
             self.accessibilityHint = nil

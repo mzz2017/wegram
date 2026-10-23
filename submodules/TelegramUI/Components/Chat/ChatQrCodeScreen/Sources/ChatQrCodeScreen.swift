@@ -30,6 +30,7 @@ import UniversalMediaPlayer
 import TelegramUniversalVideoContent
 import GalleryUI
 import SaveToCameraRoll
+import OverlayStatusController
 import SegmentedControlNode
 import AnimatedCountLabelNode
 import HexColor
@@ -581,15 +582,10 @@ public final class ChatQrCodeScreenImpl: ViewController, ChatQrCodeScreen {
         
         public var fileName: String {
             switch self {
-            case let .peer(peer, threadId, _):
-                var result: String
-                if let addressName = peer.addressName, !addressName.isEmpty {
-                    result = "t_me-\(peer.addressName ?? "")"
-                } else if case let .user(peer) = peer {
-                    result = "t_me-\(peer.phone ?? "")"
-                } else {
-                    result = "t_me-\(Int32.random(in: 0 ..< Int32.max))"
-                }
+            case let .peer(peer, threadId, temporary):
+                let phone: String?
+                if case let .user(user) = peer { phone = user.phone ?? "" } else { phone = nil }
+                var result = WegramQrCardView.exportFileName(addressName: peer.addressName, phone: phone, temporary: temporary)
                 if let threadId = threadId, threadId != 0 {
                     result.append("-\(threadId)")
                 }
@@ -610,6 +606,10 @@ public final class ChatQrCodeScreenImpl: ViewController, ChatQrCodeScreen {
         return self.displayNode as! ChatQrCodeScreenNode
     }
     
+    fileprivate let usesWegramProfileLayout: Bool
+    private let wegramBack = ASButtonNode()
+    private let wegramMore = ASButtonNode()
+    private let wegramTitle = UILabel()
     private var animatedIn = false
     
     private let context: AccountContext
@@ -621,14 +621,20 @@ public final class ChatQrCodeScreenImpl: ViewController, ChatQrCodeScreen {
     
     public var dismissed: (() -> Void)?
     
-    public init(context: AccountContext, subject: ChatQrCodeScreenImpl.Subject) {
+    public init(context: AccountContext, subject: ChatQrCodeScreenImpl.Subject, usesWegramProfileLayout: Bool = false) {
         self.context = context
         self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
         self.subject = subject
-                
-        super.init(navigationBarPresentationData: nil)
+        if case let .peer(peer, threadId, _) = subject {
+            self.usesWegramProfileLayout = usesWegramProfileLayout && peer.id == context.account.peerId && threadId == nil
+        } else {
+            self.usesWegramProfileLayout = false
+        }
+        super.init(navigationBarPresentationData: self.usesWegramProfileLayout ? NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: self.presentationData.theme), strings: NavigationBarStrings(presentationStrings: self.presentationData.strings)) : nil)
         
-        self.navigationPresentation = .flatModal
+        if !self.usesWegramProfileLayout { self.navigationPresentation = .flatModal }
+        self.wegramBack.addTarget(self, action: #selector(self.wegramBackPressed), forControlEvents: .touchUpInside)
+        self.wegramMore.addTarget(self, action: #selector(self.wegramMorePressed), forControlEvents: .touchUpInside)
         
         self.statusBar.statusBarStyle = .Ignore
         self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
@@ -646,14 +652,76 @@ public final class ChatQrCodeScreenImpl: ViewController, ChatQrCodeScreen {
                 }
                 strongSelf.presentationData = presentationData
                 strongSelf.controllerNode.updatePresentationData(presentationData)
+                strongSelf.updateWegramNavigation()
             }
         })
         
-        self.statusBar.statusBarStyle = .Ignore
+        if !self.usesWegramProfileLayout { self.statusBar.statusBarStyle = .Ignore }
         
         self.ready.set(self.controllerNode.ready.get())
     }
     
+    private func updateWegramNavigation() {
+        guard self.usesWegramProfileLayout else { return }
+        let data = self.presentationData
+        let control = WegramNavigationColors(isDark: data.theme.overallDarkAppearance).control
+        self.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: NavigationBarTheme(wegramTheme: data.theme), strings: NavigationBarStrings(presentationStrings: data.strings)), transition: .immediate)
+        self.wegramTitle.text = data.strings.baseLanguageCode.hasPrefix("zh") ? "我的二维码" : "My QR Code"
+        self.wegramTitle.font = wegramNavigationTitleFont
+        self.wegramTitle.textAlignment = .center
+        self.wegramTitle.textColor = control
+        self.wegramTitle.accessibilityTraits = .header
+        self.navigationItem.titleView = self.wegramTitle
+        let arrow = wegramNavigationBackArrowImage(color: control)
+        self.wegramBack.setImage(arrow, for: .normal)
+        let size = arrow?.size ?? .zero
+        self.wegramBack.contentEdgeInsets = UIEdgeInsets(top: (44 - size.height) / 2, left: 0, bottom: (44 - size.height) / 2, right: 44 - size.width)
+        self.wegramBack.accessibilityLabel = data.strings.Common_Back
+        let back = UIBarButtonItem(customDisplayNode: self.wegramBack)
+        back?.accessibilityLabel = data.strings.Common_Back
+        back?.target = self
+        back?.action = #selector(self.wegramBackPressed)
+        self.navigationItem.leftBarButtonItem = back
+        self.wegramMore.setImage(WegramIcon.chatMore.image()?.withTintColor(control, renderingMode: .alwaysOriginal), for: .normal)
+        self.wegramMore.contentEdgeInsets = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        let more = UIBarButtonItem(customDisplayNode: self.wegramMore)
+        more?.accessibilityLabel = data.strings.baseLanguageCode.hasPrefix("zh") ? "更多" : "More"
+        more?.target = self
+        more?.action = #selector(self.wegramMorePressed)
+        self.navigationItem.rightBarButtonItem = more
+        self.statusBar.statusBarStyle = data.theme.rootController.statusBarStyle.style
+    }
+
+    @objc private func wegramBackPressed() { self.dismiss() }
+    @objc private func wegramMorePressed() {
+        let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        let menu = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: self.presentationData.theme, fontSize: self.presentationData.listsFontSize))
+        let available = self.controllerNode.canShareWegramCard
+        menu.setItemGroups([
+            ActionSheetItemGroup(items: [
+                ActionSheetButtonItem(title: chinese ? "换个样式" : "Change Style", action: { [weak self, weak menu] in
+                    menu?.dismissAnimated()
+                    guard let self else { return }
+                    self.push(ChatQrCodeScreenImpl(context: self.context, subject: self.subject))
+                }),
+                ActionSheetButtonItem(title: chinese ? "保存图片" : "Save Image", color: available ? .accent : .disabled, enabled: available, action: { [weak self, weak menu] in
+                    menu?.dismissAnimated()
+                    self?.controllerNode.saveWegramCard()
+                }),
+                ActionSheetButtonItem(title: self.presentationData.strings.PeerInfo_QRCode_Scan, action: { [weak self, weak menu] in
+                    menu?.dismissAnimated()
+                    self?.controllerNode.scanWegramCode()
+                }),
+                ActionSheetButtonItem(title: self.presentationData.strings.InviteLink_QRCode_Share, color: available ? .accent : .disabled, enabled: available, action: { [weak self, weak menu] in
+                    menu?.dismissAnimated()
+                    self?.controllerNode.shareWegramCard()
+                })
+            ]),
+            ActionSheetItemGroup(items: [ActionSheetButtonItem(title: self.presentationData.strings.Common_Cancel, action: { [weak menu] in menu?.dismissAnimated() })])
+        ])
+        self.present(menu, in: .window(.root))
+    }
+
     required public init(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
@@ -687,13 +755,13 @@ public final class ChatQrCodeScreenImpl: ViewController, ChatQrCodeScreen {
     override public func loadView() {
         super.loadView()
         
-        self.view.disablesInteractiveTransitionGestureRecognizer = true
+        self.view.disablesInteractiveTransitionGestureRecognizer = !self.usesWegramProfileLayout
     }
     
     override public func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         
-        if !self.animatedIn {
+        if !self.usesWegramProfileLayout && !self.animatedIn {
             self.animatedIn = true
             self.controllerNode.animateIn()
         }
@@ -707,7 +775,7 @@ public final class ChatQrCodeScreenImpl: ViewController, ChatQrCodeScreen {
             return true
         })
         
-        if flag {
+        if flag && !self.usesWegramProfileLayout {
             self.controllerNode.animateOut(completion: {
                 super.dismiss(animated: false, completion: completion)
             })
@@ -839,7 +907,7 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
         
         switch controller.subject {
             case let .peer(peer, threadId, temporary):
-                self.contentNode = QrContentNode(context: context, peer: peer, threadId: threadId, isStatic: false, temporary: temporary)
+                self.contentNode = QrContentNode(context: context, peer: peer, threadId: threadId, isStatic: false, temporary: temporary, usesWegramProfileLayout: controller.usesWegramProfileLayout)
             case let .messages(messages):
                 self.contentNode = MessageContentNode(context: context, messages: messages)
         }
@@ -1142,6 +1210,8 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
     }
     
     deinit {
+        self.wegramSaveDisposable.dispose()
+        self.wegramSaveStatus?.dismiss()
         self.disposable.dispose()
         self.contactDisposable.dispose()
     }
@@ -1236,6 +1306,63 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
         self.cancel?()
     }
 
+    private let wegramSaveDisposable = MetaDisposable()
+    private var wegramSaveStatus: ViewController?
+    private var wegramShareInProgress = false
+    var canShareWegramCard: Bool { !self.wegramShareInProgress && ((self.contentNode as? QrContentNode)?.canShareCard ?? false) }
+    func shareWegramCard() {
+        guard !self.wegramShareInProgress else { return }
+        guard self.canShareWegramCard else { self.wegramShareUnavailable(); return }
+        self.wegramShareInProgress = true
+        self.doneButtonPressed()
+    }
+    func saveWegramCard() {
+        guard self.canShareWegramCard, let code = self.contentNode as? QrContentNode else { self.wegramShareUnavailable(saving: true); return }
+        self.wegramShareInProgress = true
+        let status = OverlayStatusController(style: self.presentationData.theme.overallDarkAppearance ? .dark : .light, type: .loading(cancelled: { [weak self] in
+            self?.wegramShareInProgress = false
+            self?.wegramSaveDisposable.set(nil)
+            self?.wegramSaveStatus?.dismiss()
+            self?.wegramSaveStatus = nil
+        }))
+        self.wegramSaveStatus = status
+        self.controller?.present(status, in: .window(.root))
+        code.generateImageWithValidity { [weak self, weak status] image, expires in
+            guard let self, let status, self.wegramSaveStatus === status, self.wegramShareInProgress else { return }
+            guard let image else {
+                self.wegramShareInProgress = false
+                self.wegramSaveStatus?.dismiss()
+                self.wegramSaveStatus = nil
+                self.wegramShareUnavailable(saving: true)
+                return
+            }
+            self.wegramSaveDisposable.set((saveImageToCameraRoll(context: self.context, image: image, validUntil: expires.map { Date(timeIntervalSince1970: Double($0)) }) |> deliverOnMainQueue).start(next: { [weak self, weak status] result in
+                guard let self, let status, self.wegramSaveStatus === status, self.wegramShareInProgress else { return }
+                self.wegramShareInProgress = false
+                self.wegramSaveStatus?.dismiss()
+                self.wegramSaveStatus = nil
+                switch result {
+                case .saved:
+                    self.controller?.present(OverlayStatusController(style: self.presentationData.theme.overallDarkAppearance ? .dark : .light, type: .genericSuccess(self.presentationData.strings.Gallery_ImageSaved, false)), in: .window(.root))
+                case .accessDenied:
+                    break
+                case .failed:
+                    self.wegramShareUnavailable(saving: true)
+                }
+            }))
+        }
+    }
+
+    func scanWegramCode() { self.scanButtonPressed() }
+
+    private func wegramShareUnavailable(saving: Bool = false) {
+        let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        let message = saving ? (chinese ? "暂时无法保存二维码，请重试。" : "This QR code cannot be saved right now. Please try again.") : (chinese ? "暂时无法分享二维码，请重试。" : "This QR code cannot be shared right now. Please try again.")
+        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: self.presentationData.strings.Common_OK, style: .default))
+        self.controller?.present(alert, animated: true)
+    }
+
     private func doneButtonPressed() {
         self.doneButton.view?.isUserInteractionEnabled = false
 
@@ -1266,11 +1393,29 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
             }
         } else {
             self.contentNode.generateImage { [weak self] image in
-                if let strongSelf = self, let image = image, let jpgData = image.jpegData(compressionQuality: 0.9) {
+                let wasWegramShare = self?.wegramShareInProgress == true
+                self?.wegramShareInProgress = false
+                if image == nil {
+                    self?.doneButton.view?.isUserInteractionEnabled = true
+                    if wasWegramShare || self?.contentNode is QrContentNode { self?.wegramShareUnavailable() }
+                    return
+                }
+                if let strongSelf = self, let image = image {
+                    guard let jpgData = image.jpegData(compressionQuality: 0.9) else {
+                        strongSelf.doneButton.view?.isUserInteractionEnabled = true
+                        strongSelf.wegramShareUnavailable()
+                        return
+                    }
                     let tempFilePath = NSTemporaryDirectory() + "\(strongSelf.fileName).jpg"
                     try? FileManager.default.removeItem(atPath: tempFilePath)
                     let tempFileUrl = URL(fileURLWithPath: tempFilePath)
-                    try? jpgData.write(to: tempFileUrl)
+                    do {
+                        try jpgData.write(to: tempFileUrl, options: .atomic)
+                    } catch {
+                        strongSelf.doneButton.view?.isUserInteractionEnabled = true
+                        strongSelf.wegramShareUnavailable()
+                        return
+                    }
 
                     let activityController = UIActivityViewController(activityItems: [tempFileUrl], applicationActivities: [ShareToInstagramActivity(context: strongSelf.context)])
                     activityController.completionWithItemsHandler = { [weak self] _, finished, _, _ in
@@ -1293,7 +1438,7 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
     }
 
     private func scanButtonPressed() {
-        let controller = QrCodeScanScreen(context: self.context, subject: .peer)
+        let controller = QrCodeScanScreen(context: self.context, subject: .peer, usesWegramAppearance: self.controller?.usesWegramProfileLayout == true)
         self.controller?.push(controller)
     }
 
@@ -1410,6 +1555,7 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
     }
 
     func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        if self.controller?.usesWegramProfileLayout == true { return }
         let contentOffset = scrollView.contentOffset
         let additionalTopHeight = max(0.0, -contentOffset.y)
         
@@ -1421,6 +1567,7 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
     }
     
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        if self.controller?.usesWegramProfileLayout == true { return }
         guard let (layout, _) = self.containerLayout else {
             return
         }
@@ -1433,6 +1580,20 @@ private class ChatQrCodeScreenNode: ViewControllerTracingNode, ASScrollViewDeleg
     
     public func containerLayoutUpdated(_ layout: ContainerViewLayout, navigationBarHeight: CGFloat, transition: ContainedViewLayoutTransition) {
         self.containerLayout = (layout, navigationBarHeight)
+        if self.controller?.usesWegramProfileLayout == true {
+            self.backgroundColor = UIColor(rgb: self.presentationData.theme.overallDarkAppearance ? 0x191919 : 0xededed)
+            self.backgroundNode.isHidden = true
+            self.contentContainerNode.isHidden = true
+            self.topContentContainerNode.isHidden = true
+            transition.updateFrame(node: self.wrappingScrollNode, frame: CGRect(origin: .zero, size: layout.size))
+            let cardHeight = (self.contentNode as? QrContentNode)?.wegramCardHeight(width: layout.size.width) ?? 0
+            let contentSize = CGSize(width: layout.size.width, height: max(layout.size.height, navigationBarHeight + 16 + cardHeight + layout.intrinsicInsets.bottom + 24))
+            self.wrappingScrollNode.view.contentSize = contentSize
+            transition.updateFrame(node: self.scrollNodeContentNode, frame: CGRect(origin: .zero, size: contentSize))
+            self.contentNode.updateLayout(size: contentSize, topInset: navigationBarHeight + 16, bottomInset: layout.intrinsicInsets.bottom, transition: transition)
+            transition.updateFrame(node: self.contentNode, frame: CGRect(origin: .zero, size: contentSize))
+            return
+        }
         
         let cleanInsets = layout.insets(options: [.statusBar])
         
@@ -1650,6 +1811,10 @@ private class QrContentNode: ASDisplayNode, ContentNode {
     private let threadId: Int64?
     private let isStatic: Bool
     private let temporary: Bool
+    private let usesWegramProfileLayout: Bool
+    private let wegramCard = WegramQrCardView()
+    private let wegramCenterAvatar = ImageNode()
+    var canShareCard: Bool { WegramQrCardView.canShare(temporary: self.temporary, tokenExpires: self.token?.expires, now: Int32(Date().timeIntervalSince1970)) }
     
     fileprivate let containerNode: ASDisplayNode
     fileprivate let wallpaperBackgroundNode: WallpaperBackgroundNode
@@ -1688,12 +1853,13 @@ private class QrContentNode: ASDisplayNode, ContentNode {
     private var tokenUpdated = false
     var requestNextToken: () -> Void = {}
     
-    init(context: AccountContext, peer: EnginePeer, threadId: Int64?, isStatic: Bool = false, temporary: Bool) {
+    init(context: AccountContext, peer: EnginePeer, threadId: Int64?, isStatic: Bool = false, temporary: Bool, usesWegramProfileLayout: Bool = false) {
         self.context = context
         self.peer = peer
         self.threadId = threadId
         self.isStatic = isStatic
         self.temporary = temporary
+        self.usesWegramProfileLayout = usesWegramProfileLayout
                 
         self.containerNode = ASDisplayNode()
         
@@ -1776,7 +1942,7 @@ private class QrContentNode: ASDisplayNode, ContentNode {
         
         self.avatarNode = ImageNode()
         self.avatarNode.displaysAsynchronously = false
-        self.avatarNode.setSignal(peerAvatarCompleteImage(account: context.account, peer: peer, size: CGSize(width: 180.0, height: 180.0), font: avatarPlaceholderFont(size: 78.0), fullSize: true))
+        self.avatarNode.setSignal(peerAvatarCompleteImage(account: context.account, peer: peer, size: CGSize(width: 180.0, height: 180.0), round: !usesWegramProfileLayout, font: avatarPlaceholderFont(size: 78.0), fullSize: !usesWegramProfileLayout))
         
         super.init()
         
@@ -1785,6 +1951,7 @@ private class QrContentNode: ASDisplayNode, ContentNode {
         self.containerNode.addSubnode(self.wallpaperBackgroundNode)
         
         self.containerNode.addSubnode(self.codeBackgroundNode)
+        if usesWegramProfileLayout { self.containerNode.view.addSubview(self.wegramCard) }
         self.containerNode.addSubnode(self.codeForegroundNode)
         
         self.codeForegroundNode.addSubnode(self.codeForegroundDimNode)
@@ -1806,6 +1973,15 @@ private class QrContentNode: ASDisplayNode, ContentNode {
             self.addSubnode(codeAnimatedIconNode)
         }
         
+        if usesWegramProfileLayout {
+            self.wegramCenterAvatar.displaysAsynchronously = false
+            self.wegramCenterAvatar.setSignal(peerAvatarCompleteImage(account: context.account, peer: peer, size: CGSize(width: 64, height: 64), round: false, font: avatarPlaceholderFont(size: 26), fullSize: false))
+            self.wegramCenterAvatar.cornerRadius = 2
+            self.wegramCenterAvatar.clipsToBounds = true
+            self.containerNode.addSubnode(self.wegramCenterAvatar)
+            self.avatarNode.cornerRadius = 5
+            self.avatarNode.clipsToBounds = true
+        }
         var codeLink: String
         if let addressName = peer.addressName, !addressName.isEmpty {
             codeLink = "https://t.me/\(peer.addressName ?? "")"
@@ -1945,15 +2121,23 @@ private class QrContentNode: ASDisplayNode, ContentNode {
     }
     
     func generateImage(completion: @escaping (UIImage?) -> Void) {
+        self.generateImageWithValidity { image, _ in completion(image) }
+    }
+
+    func generateImageWithValidity(completion: @escaping (UIImage?, Int32?) -> Void) {
+        if self.temporary && !self.canShareCard { completion(nil, nil); return }
         guard let (theme, wallpaper, isDarkAppearance, selectedEmoticon) = self.currentParams else {
+            completion(nil, nil)
             return
         }
         
+        let exportToken = self.token
+        let temporaryExport = self.temporary
         let size = CGSize(width: 390.0, height: 844.0)
         let scale: CGFloat = 3.0
         
-        let copyNode = QrContentNode(context: self.context, peer: self.peer, threadId: self.threadId, isStatic: true, temporary: false)
-        if let token = self.token {
+        let copyNode = QrContentNode(context: self.context, peer: self.peer, threadId: self.threadId, isStatic: true, temporary: false, usesWegramProfileLayout: self.usesWegramProfileLayout)
+        if let token = exportToken {
             copyNode.setContactToken(token, animated: false)
         }
         
@@ -1975,6 +2159,11 @@ private class QrContentNode: ASDisplayNode, ContentNode {
         |> take(1)
         |> deliverOnMainQueue).startStandalone(next: { [weak copyNode] _ in
             Queue.mainQueue().after(0.1) {
+                if temporaryExport && !WegramQrCardView.canShare(temporary: true, tokenExpires: exportToken?.expires, now: Int32(Date().timeIntervalSince1970)) {
+                    copyNode?.removeFromSupernode()
+                    completion(nil, nil)
+                    return
+                }
                 if #available(iOS 10.0, *) {
                     let format = UIGraphicsImageRendererFormat()
                     format.scale = scale
@@ -1982,13 +2171,13 @@ private class QrContentNode: ASDisplayNode, ContentNode {
                     let image = renderer.image { rendererContext in
                         copyNode?.containerNode.layer.render(in: rendererContext.cgContext)
                     }
-                    completion(image)
+                    completion(image, temporaryExport ? exportToken?.expires : nil)
                 } else {
                     UIGraphicsBeginImageContextWithOptions(size, true, scale)
                     copyNode?.containerNode.view.drawHierarchy(in: CGRect(origin: CGPoint(), size: size), afterScreenUpdates: true)
                     let image = UIGraphicsGetImageFromCurrentImageContext()
                     UIGraphicsEndImageContext()
-                    completion(image)
+                    completion(image, temporaryExport ? exportToken?.expires : nil)
                 }
                 copyNode?.removeFromSupernode()
             }
@@ -2003,6 +2192,11 @@ private class QrContentNode: ASDisplayNode, ContentNode {
         
         self.wallpaperBackgroundNode.update(wallpaper: wallpaper, animated: false)
         
+        if self.usesWegramProfileLayout {
+            self.codeForegroundDimNode.isHidden = true
+            self.codeForegroundContentNode?.isHidden = true
+            return
+        }
         self.codeForegroundDimNode.alpha = isDarkAppearance ? 0.5 : 0.3
         
         if self.codeForegroundContentNode == nil, let contentNode = self.wallpaperBackgroundNode.makeDimmedNode() {
@@ -2026,6 +2220,10 @@ private class QrContentNode: ASDisplayNode, ContentNode {
             displayMode = .aspectFill
         }
         self.wallpaperBackgroundNode.updateLayout(size: size, displayMode: displayMode, transition: transition)
+        if self.usesWegramProfileLayout {
+            self.updateWegramLayout(size: size, topInset: topInset, bottomInset: bottomInset, transition: transition)
+            return
+        }
         
         let textLength = self.codeTextNode.attributedText?.string.count ?? 0
         
@@ -2128,6 +2326,64 @@ private class QrContentNode: ASDisplayNode, ContentNode {
             }
         }
     }
+    func wegramCardHeight(width: CGFloat) -> CGFloat {
+        let data = self.context.sharedContext.currentPresentationData.with { $0 }
+        self.wegramCard.update(name: self.peer.displayTitle(strings: data.strings, displayOrder: data.nameDisplayOrder), address: self.peer.addressName, chinese: data.strings.baseLanguageCode.hasPrefix("zh"), fontSize: data.listsFontSize.itemListBaseFontSize, temporary: self.temporary)
+        if self.isStatic, let token = self.token {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: data.strings.baseLanguageCode)
+            formatter.dateStyle = .short
+            formatter.timeStyle = .short
+            let expires = formatter.string(from: Date(timeIntervalSince1970: Double(token.expires)))
+            self.wegramCard.hintLabel.text = (data.strings.baseLanguageCode.hasPrefix("zh") ? "二维码有效期至 " : "QR code expires at ") + expires
+        }
+        return self.wegramCard.layoutCard(width: min(360, max(0, width - 40)))
+    }
+
+    private func updateWegramLayout(size: CGSize, topInset: CGFloat, bottomInset: CGFloat, transition: ContainedViewLayoutTransition) {
+        self.wallpaperBackgroundNode.isHidden = true
+        self.codeBackgroundNode.isHidden = true
+        self.codeForegroundDimNode.isHidden = true
+        self.codeForegroundContentNode?.isHidden = true
+        self.codeTextNode.isHidden = true
+        self.codeCountdownNode.isHidden = !self.temporary
+        self.codeIconBackgroundNode.isHidden = true
+        self.codeStaticIconNode?.isHidden = true
+        self.codeAnimatedIconNode?.isHidden = true
+        let width = min(360, max(0, size.width - 40))
+        let height = self.wegramCardHeight(width: size.width)
+        let data = self.context.sharedContext.currentPresentationData.with { $0 }
+        let chinese = data.strings.baseLanguageCode.hasPrefix("zh")
+        self.containerNode.backgroundColor = UIColor(rgb: data.theme.overallDarkAppearance ? 0x191919 : 0xededed)
+        self.codeForegroundNode.isAccessibilityElement = true
+        self.codeForegroundNode.accessibilityTraits = .image
+        self.codeForegroundNode.accessibilityLabel = chinese ? "二维码" : "QR Code"
+        if self.temporary {
+            self.codeForegroundNode.accessibilityValue = self.canShareCard ? (chinese ? "有效期：" : "Expires in ") + stringForDuration(max(0, (self.token?.expires ?? 0) - Int32(Date().timeIntervalSince1970))) : (chinese ? "正在更新" : "Updating")
+        }
+        let card = CGRect(x: floor((size.width - width) / 2), y: max(topInset, floor((size.height - bottomInset - height) / 2)), width: width, height: height)
+        transition.updateFrame(view: self.wegramCard, frame: card)
+        transition.updateFrame(node: self.codeForegroundNode, frame: card)
+        transition.updateFrame(node: self.codeMaskNode, frame: CGRect(origin: .zero, size: card.size))
+        let frame = self.wegramCard.codeFrame
+        for node in [self.codeImageNode, self.codeMarkersNode] {
+            let apply = node.asyncLayout()(TransformImageArguments(corners: ImageCorners(), imageSize: frame.size, boundingSize: frame.size, intrinsicInsets: .zero, emptyColor: nil, scale: self.isStatic ? 3 : nil))
+            let _ = apply()
+            transition.updateFrame(node: node, frame: frame)
+        }
+        let placeholder = frame.insetBy(dx: 10, dy: 10)
+        self.codePlaceholderNode.updateLayout(size: placeholder.size)
+        transition.updateFrame(node: self.codePlaceholderNode, frame: placeholder)
+        transition.updateFrame(node: self.avatarNode, frame: self.wegramCard.avatarFrame.offsetBy(dx: card.minX, dy: card.minY))
+        let countdown = self.codeCountdownNode.updateLayout(size: self.wegramCard.countdownFrame.size, animated: !self.isStatic)
+        transition.updateFrame(node: self.codeCountdownNode, frame: CGRect(x: (width - countdown.width) / 2, y: self.wegramCard.countdownFrame.minY, width: countdown.width, height: countdown.height))
+        if let qrCodeSize = self.qrCodeSize {
+            let (_, cutout, _) = qrCodeCutout(size: qrCodeSize, dimensions: frame.size, scale: nil)
+            let side = max(0, cutout.width - 4)
+            transition.updateFrame(node: self.wegramCenterAvatar, frame: CGRect(x: card.minX + frame.midX - side / 2, y: card.minY + frame.midY - side / 2, width: side, height: side))
+        }
+    }
+
 }
 
 private class MessageContentNode: ASDisplayNode, ContentNode {

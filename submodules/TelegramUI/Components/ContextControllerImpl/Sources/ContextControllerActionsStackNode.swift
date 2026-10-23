@@ -91,7 +91,8 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
         
         self.isAccessibilityElement = true
         self.accessibilityLabel = item.text
-        self.accessibilityTraits = [.button]
+        self.accessibilityTraits = item.isSelected ? [.button, .selected] : [.button]
+        self.accessibilityValue = item.badge?.value
         
         self.addSubnode(self.titleLabelNode)
         self.addSubnode(self.subtitleNode)
@@ -207,6 +208,8 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
     public func setItem(item: ContextMenuActionItem) {
         self.item = item
         self.accessibilityLabel = item.text
+        self.accessibilityTraits = item.isSelected ? [.button, .selected] : [.button]
+        self.accessibilityValue = item.badge?.value
     }
     
     public func update(presentationData: PresentationData, constrainedSize: CGSize) -> (minSize: CGSize, apply: (_ size: CGSize, _ transition: ContainedViewLayoutTransition) -> Void) {
@@ -445,9 +448,18 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
             if let currentBadge = self.currentBadge, currentBadge.badge == badge {
                 badgeImage = currentBadge.image
             } else {
+                let badgeTextColor: UIColor
+                let badgeFillColor: UIColor
+                switch badge.color {
+                case .accent:
+                    badgeTextColor = presentationData.theme.list.itemCheckColors.foregroundColor
+                    badgeFillColor = presentationData.theme.list.itemCheckColors.fillColor
+                case .inactive:
+                    badgeTextColor = presentationData.theme.contextMenu.badgeInactiveForegroundColor
+                    badgeFillColor = presentationData.theme.contextMenu.badgeInactiveFillColor
+                }
                 switch badge.style {
                 case .badge:
-                    let badgeTextColor: UIColor = presentationData.theme.list.itemCheckColors.foregroundColor
                     let badgeString = NSAttributedString(string: badge.value, font: Font.regular(13.0), textColor: badgeTextColor)
                     let badgeTextBounds = badgeString.boundingRect(with: CGSize(width: 100.0, height: 100.0), options: [.usesLineFragmentOrigin], context: nil)
                     
@@ -457,7 +469,7 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
                     badgeBackgroundSize.width = max(badgeBackgroundSize.width, badgeBackgroundSize.height)
                     badgeImage = generateImage(badgeBackgroundSize, rotatedContext: { size, context in
                         context.clear(CGRect(origin: CGPoint(), size: size))
-                        context.setFillColor(presentationData.theme.list.itemCheckColors.fillColor.cgColor)
+                        context.setFillColor(badgeFillColor.cgColor)
                         context.addPath(UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: size.height * 0.5).cgPath)
                         context.fillPath()
                         
@@ -468,7 +480,6 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
                         UIGraphicsPopContext()
                     })
                 case .label:
-                    let badgeTextColor: UIColor = presentationData.theme.list.itemCheckColors.foregroundColor
                     let badgeString = NSAttributedString(string: badge.value, font: Font.semibold(11.0), textColor: badgeTextColor)
                     let badgeTextBounds = badgeString.boundingRect(with: CGSize(width: 100.0, height: 100.0), options: [.usesLineFragmentOrigin], context: nil)
                     
@@ -477,7 +488,7 @@ public final class ContextControllerActionsListActionItemNode: HighlightTracking
                     let badgeBackgroundSize = CGSize(width: badgeSideInset * 2.0 + ceil(badgeTextBounds.width), height: badgeVerticalInset * 2.0 + ceil(badgeTextBounds.height))
                     badgeImage = generateImage(badgeBackgroundSize, rotatedContext: { size, context in
                         context.clear(CGRect(origin: CGPoint(), size: size))
-                        context.setFillColor(presentationData.theme.list.itemCheckColors.fillColor.cgColor)
+                        context.setFillColor(badgeFillColor.cgColor)
                         context.addPath(UIBezierPath(roundedRect: CGRect(origin: CGPoint(), size: size), cornerRadius: 5.0).cgPath)
                         context.fillPath()
                         
@@ -1315,19 +1326,23 @@ final class ContextControllerActionsCustomStackItem: ContextControllerActionsSta
         }
         
         func highlightGestureShouldBegin(location: CGPoint) -> Bool {
-            return true
+            return self.contentNode.highlightGestureShouldBegin(location: location)
         }
         
         func highlightGestureMoved(location: CGPoint) {
+            self.contentNode.highlightGestureMoved(location: location)
         }
         
         func highlightGestureFinished(performAction: Bool) {
+            self.contentNode.highlightGestureFinished(performAction: performAction)
         }
         
         func decreaseHighlightedIndex() {
+            self.contentNode.decreaseHighlightedIndex()
         }
         
         func increaseHighlightedIndex() {
+            self.contentNode.increaseHighlightedIndex()
         }
     }
     

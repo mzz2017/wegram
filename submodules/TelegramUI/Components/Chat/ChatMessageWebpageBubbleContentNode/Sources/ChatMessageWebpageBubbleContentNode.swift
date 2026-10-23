@@ -597,6 +597,18 @@ public final class ChatMessageWebpageBubbleContentNode: ChatMessageBubbleContent
                 displayLine = true
             }
             
+            if item.presentationData.chatBubbleCorners.usesWegramShape,
+               !item.presentationData.isPreview, !item.controllerInteraction.isSidePanelOpen,
+               item.associatedData.subject == nil, !item.associatedData.isRecentActions,
+               item.message.groupingKey == nil, item.message.adAttribute == nil,
+               let webpage = webPageContent, WegramLinkPreviewLayout.supports(webpage),
+               item.message.webpagePreviewAttribute?.forceLargeMedia != true,
+               actionTitle == nil, titleBadge == nil {
+                title = webpage.websiteName.flatMap { $0.isEmpty ? nil : $0 } ?? URL(string: webpage.url)?.host
+                mediaAndFlags = (webpage.image.map { [$0 as EngineRawMedia] } ?? [], [.preferMediaInline, .wegramLinkCard])
+                displayLine = false
+            }
+
             let (initialWidth, continueLayout) = contentNodeLayout(item.presentationData, item.controllerInteraction.automaticMediaDownloadSettings, item.associatedData, item.attributes, item.context, item.controllerInteraction, item.message, item.read, item.chatLocation, title, titleBadge, subtitle, text, entities, mediaAndFlags, badge, actionIcon, actionTitle, displayLine, layoutConstants, preparePosition, constrainedSize, item.controllerInteraction.presentationContext.animationCache, item.controllerInteraction.presentationContext.animationRenderer)
             
             let contentProperties = ChatMessageBubbleContentProperties(hidesSimpleAuthorHeader: false, headerSpacing: 8.0, hidesBackground: .never, forceFullCorners: false, forceAlignment: .none)

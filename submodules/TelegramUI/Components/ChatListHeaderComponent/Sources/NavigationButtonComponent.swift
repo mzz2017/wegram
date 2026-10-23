@@ -8,12 +8,15 @@ import MoreHeaderButton
 
 public final class NavigationButtonComponentEnvironment: Equatable {
     public let theme: PresentationTheme
+    public let usesWegramAppearance: Bool
     
-    public init(theme: PresentationTheme) {
+    public init(theme: PresentationTheme, usesWegramAppearance: Bool = false) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.theme = theme
     }
     
     public static func ==(lhs: NavigationButtonComponentEnvironment, rhs: NavigationButtonComponentEnvironment) -> Bool {
+        if lhs.usesWegramAppearance != rhs.usesWegramAppearance { return false }
         if lhs.theme != rhs.theme {
             return false
         }
@@ -64,6 +67,7 @@ public final class NavigationButtonComponent: Component {
         
         private var component: NavigationButtonComponent?
         private var theme: PresentationTheme?
+        private var usesWegramAppearance = false
         
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -103,8 +107,11 @@ public final class NavigationButtonComponent: Component {
             self.component = component
             
             let theme = environment[NavigationButtonComponentEnvironment.self].value.theme
+            let usesWegramAppearance = environment[NavigationButtonComponentEnvironment.self].value.usesWegramAppearance
+            let controlColor = usesWegramAppearance ? WegramNavigationColors(isDark: theme.overallDarkAppearance).control : theme.chat.inputPanel.panelControlColor
             var themeUpdated = false
-            if self.theme !== theme {
+            if self.theme !== theme || self.usesWegramAppearance != usesWegramAppearance {
+                self.usesWegramAppearance = usesWegramAppearance
                 self.theme = theme
                 themeUpdated = true
             }
@@ -119,7 +126,7 @@ public final class NavigationButtonComponent: Component {
                 if title == "___done" {
                     imageName = "Navigation/Done"
                 } else {
-                    textString = NSAttributedString(string: title, font: isBold ? Font.bold(17.0) : Font.medium(17.0), textColor: theme.chat.inputPanel.panelControlColor)
+                    textString = NSAttributedString(string: title, font: isBold ? Font.bold(17.0) : Font.medium(17.0), textColor: controlColor)
                 }
             case .more:
                 isMore = true
@@ -153,7 +160,20 @@ public final class NavigationButtonComponent: Component {
                 textView.removeFromSuperview()
             }
             
+            self.accessibilityLabel = textString?.string
             if let imageName = imageName {
+                switch WegramIcon(rawValue: imageName) {
+                case .star:
+                    self.accessibilityLabel = "收藏与快捷入口"
+                case .plus:
+                    self.accessibilityLabel = "添加与聊天管理"
+                case .addContact:
+                    self.accessibilityLabel = "添加联系人"
+                case .navigationSearch:
+                    self.accessibilityLabel = "搜索"
+                default:
+                    break
+                }
                 let iconView: UIImageView
                 if let current = self.iconView {
                     iconView = current
@@ -165,7 +185,7 @@ public final class NavigationButtonComponent: Component {
                 }
                 if self.iconImageName != imageName || themeUpdated {
                     self.iconImageName = imageName
-                    iconView.image = generateTintedImage(image: UIImage(bundleImageName: imageName), color: theme.chat.inputPanel.panelControlColor)
+                    iconView.image = generateTintedImage(image: WegramIcon(rawValue: imageName)?.image() ?? UIImage(bundleImageName: imageName), color: controlColor)
                 }
                 
                 if let iconSize = iconView.image?.size {
@@ -212,9 +232,9 @@ public final class NavigationButtonComponent: Component {
                         self.moreButton = nil
                     }
                     
-                    moreButton = MoreHeaderButton(color: theme.chat.inputPanel.panelControlColor)
+                    moreButton = MoreHeaderButton(color: controlColor)
                     moreButton.isUserInteractionEnabled = true
-                    moreButton.setContent(.more(MoreHeaderButton.optionsCircleImage(color: theme.chat.inputPanel.panelControlColor)))
+                    moreButton.setContent(.more(MoreHeaderButton.optionsCircleImage(color: controlColor)))
                     moreButton.onPressed = { [weak self] in
                         guard let self, let component = self.component else {
                             return

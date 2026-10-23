@@ -24,7 +24,8 @@ func textInputAccessoryPanel(
     context: AccountContext,
     chatPresentationInterfaceState: ChatPresentationInterfaceState,
     chatControllerInteraction: ChatControllerInteraction?,
-    interfaceInteraction: ChatPanelInterfaceInteraction?
+    interfaceInteraction: ChatPanelInterfaceInteraction?,
+    usesWegramAppearance: Bool
 ) -> AnyComponentWithIdentity<ChatInputAccessoryPanelEnvironment>? {
     if case .standard(.previewing) = chatPresentationInterfaceState.mode {
         return nil
@@ -63,7 +64,8 @@ func textInputAccessoryPanel(
                 },
                 dismiss: { _ in
                     interfaceInteraction?.dismissUrlPreview()
-                }
+                },
+                usesWegramAppearance: usesWegramAppearance
             )))
         }
         
@@ -78,7 +80,8 @@ func textInputAccessoryPanel(
             },
             dismiss: { _ in
                 interfaceInteraction?.setupEditMessage(nil, { _ in })
-            }
+            },
+            usesWegramAppearance: usesWegramAppearance
         )))
     } else if let urlPreview = chatPresentationInterfaceState.urlPreview, !chatPresentationInterfaceState.interfaceState.composeDisableUrlPreviews.contains(urlPreview.url) {
         var previousTapTimestamp: Double?
@@ -99,7 +102,8 @@ func textInputAccessoryPanel(
             },
             dismiss: { _ in
                 interfaceInteraction?.dismissUrlPreview()
-            }
+            },
+            usesWegramAppearance: usesWegramAppearance
         )))
     } else if let forwardMessageIds = chatPresentationInterfaceState.interfaceState.forwardMessageIds {
         var chatPeerId: EnginePeer.Id?
@@ -164,6 +168,35 @@ func textInputAccessoryPanel(
                         let bold = MarkdownAttributeSet(font: boldFont, textColor: theme.actionSheet.primaryTextColor)
                         let text = addAttributesToStringWithRanges(string._tuple, body: body, argumentAttributes: [0: bold, 1: bold], textAlignment: .natural)
                         
+                        if usesWegramAppearance {
+                            let isCurrentForward: () -> Bool = { [weak sourceView] in
+                                guard let sourceView, sourceView.window != nil,
+                                      let panel = sourceView as? ChatInputMessageAccessoryPanel.View else { return false }
+                                return panel.matchesForwardMessageIds(forwardMessageIds)
+                            }
+                            guard isCurrentForward() else { return }
+                            let data = context.sharedContext.currentPresentationData.with { $0 }
+                            let controller = wegramConfirmationController(
+                                updatedPresentationData: (initial: data, signal: context.sharedContext.presentationData),
+                                title: strings.Conversation_ForwardOptions_Title(messageCount),
+                                text: text.string,
+                                cancelTitle: strings.Common_Cancel,
+                                styledActions: [
+                                    (title: strings.Conversation_ForwardOptions_ShowOptions, color: .accent, action: { [weak sourceView] in
+                                        guard isCurrentForward(), let sourceView else { return }
+                                        interfaceInteraction?.presentForwardOptions(sourceView)
+                                        let _ = ApplicationSpecificNotice.incrementChatForwardOptionsTip(accountManager: context.sharedContext.accountManager, count: 3).start()
+                                    }),
+                                    (title: strings.Conversation_ForwardOptions_CancelForwarding, color: .destructive, action: {
+                                        guard isCurrentForward() else { return }
+                                        interfaceInteraction?.dismissForwardMessages()
+                                    })
+                                ]
+                            )
+                            interfaceInteraction?.presentController(controller, nil)
+                            return
+                        }
+
                         var content: [AnyComponentWithIdentity<AlertComponentEnvironment>] = []
                         content.append(AnyComponentWithIdentity(
                             id: "title",
@@ -199,7 +232,8 @@ func textInputAccessoryPanel(
                         )
                         interfaceInteraction?.presentController(alertController, nil)
                     }
-                }
+                },
+                usesWegramAppearance: usesWegramAppearance
             )))
         } else {
             return nil
@@ -213,7 +247,10 @@ func textInputAccessoryPanel(
         }
         if let chatPeerId {
             var previousTapTimestamp: Double?
-            return AnyComponentWithIdentity(id: "reply", component: AnyComponent(ChatInputMessageAccessoryPanel(
+            let usesWegramReply = usesWegramAppearance && replyMessageSubject.innerSubject == nil
+                && replyMessageSubject.messageId.peerId == chatPeerId
+                && replyMessageSubject.messageId.namespace != Namespaces.Message.EphemeralLocal
+            return AnyComponentWithIdentity(id: usesWegramReply ? "wegramReply" : "reply", component: AnyComponent(ChatInputMessageAccessoryPanel(
                 context: context,
                 contents: .reply(ChatInputMessageAccessoryPanel.Contents.Reply(
                     id: replyMessageSubject.messageId,
@@ -235,7 +272,8 @@ func textInputAccessoryPanel(
                 },
                 dismiss: { _ in
                     interfaceInteraction?.setupReplyMessage(nil, nil, { _, f in f() })
-                }
+                },
+                usesWegramAppearance: usesWegramReply
             )))
         } else {
             return nil
@@ -258,7 +296,8 @@ func textInputAccessoryPanel(
             },
             dismiss: { _ in
                 interfaceInteraction?.dismissSuggestPost()
-            }
+            },
+            usesWegramAppearance: usesWegramAppearance
         )))
     }
     

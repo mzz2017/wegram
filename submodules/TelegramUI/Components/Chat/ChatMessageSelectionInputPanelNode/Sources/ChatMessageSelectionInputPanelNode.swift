@@ -184,6 +184,11 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
     private let shareButton: GlassButtonView
     private let tagButton: GlassButtonView
     private let tagEditButton: GlassButtonView
+    private let usesWegramAppearance: Bool
+    private let wegramBar = WegramMessageSelectionBar(frame: .zero)
+    private let wegramBackground = UIView()
+    private var actionsMessageIds = Set<EngineMessage.Id>()
+    public var wegramHistoryAction: (title: String, perform: () -> Void)?
     
     private let reactionOverlayContainer: ChatMessageSelectionInputPanelNodeViewForOverlayContent
     
@@ -199,14 +204,16 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
     public var selectedMessages = Set<EngineMessage.Id>() {
         didSet {
             if oldValue != self.selectedMessages {
+                if self.usesWegramAppearance { self.reactionOverlayContainer.dismissReactionSelection() }
                 self.updateActions()
             }
         }
     }
     
-    public init(theme: PresentationTheme, strings: PresentationStrings, peerMedia: Bool = false) {
+    public init(theme: PresentationTheme, strings: PresentationStrings, peerMedia: Bool = false, usesWegramAppearance: Bool = false) {
         self.theme = theme
         self.peerMedia = peerMedia
+        self.usesWegramAppearance = usesWegramAppearance
         
         self.deleteButton = GlassButtonView()
         self.deleteButton.icon = "Chat/Input/Accessory Panels/MessageSelectionTrash"
@@ -243,6 +250,14 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
         self.reactionOverlayContainer = ChatMessageSelectionInputPanelNodeViewForOverlayContent()
         
         super.init()
+
+        self.view.addSubview(self.wegramBackground)
+        self.view.addSubview(self.wegramBar)
+        self.wegramBackground.isHidden = !usesWegramAppearance
+        self.wegramBar.isHidden = !usesWegramAppearance
+        self.wegramBar.selected = { [weak self] action in
+            self?.performWegramAction(action)
+        }
         
         self.view.addSubview(self.deleteButton)
         self.view.addSubview(self.reportButton)
@@ -270,18 +285,29 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
     
     private func updateActions() {
         self.forwardButton.isEnabled = self.selectedMessages.count != 0
+        if self.usesWegramAppearance {
+            self.actionsMessageIds = []
+            for button in self.wegramBar.buttons {
+                button.isEnabled = false
+                button.alpha = 0.3
+                button.accessibilityTraits = [.button, .notEnabled]
+            }
+        }
         
         if self.selectedMessages.isEmpty {
             self.actions = nil
+            self.actionsMessageIds = []
             if let (width, leftInset, rightInset, bottomInset, additionalSideInsets, maxHeight, maxOverlayHeight, metrics, isSecondary, isMediaInputExpanded, deviceMetrics) = self.validLayout, let interfaceState = self.presentationInterfaceState {
                 let _ = self.updateLayout(width: width, leftInset: leftInset, rightInset: rightInset, bottomInset: bottomInset, additionalSideInsets: additionalSideInsets, maxHeight: maxHeight, maxOverlayHeight: maxOverlayHeight, isSecondary: isSecondary, transition: .immediate, interfaceState: interfaceState, metrics: metrics, deviceMetrics: deviceMetrics, isMediaInputExpanded: isMediaInputExpanded)
             }
             self.canDeleteMessagesDisposable.set(nil)
         } else if let context = self.context {
+            let requestedIds = self.selectedMessages
             self.canDeleteMessagesDisposable.set((context.sharedContext.chatAvailableMessageActions(engine: context.engine, accountPeerId: context.account.peerId, messageIds: self.selectedMessages, keepUpdated: true)
             |> deliverOnMainQueue).startStrict(next: { [weak self] actions in
-                if let strongSelf = self {
+                if let strongSelf = self, strongSelf.selectedMessages == requestedIds {
                     strongSelf.actions = actions
+                    strongSelf.actionsMessageIds = requestedIds
                     if let (width, leftInset, rightInset, bottomInset, additionalSideInsets, maxHeight, maxOverlayHeight: maxOverlayHeight, metrics, isSecondary, isMediaInputExpanded, deviceMetrics) = strongSelf.validLayout, let interfaceState = strongSelf.presentationInterfaceState {
                         let _ = strongSelf.updateLayout(width: width, leftInset: leftInset, rightInset: rightInset, bottomInset: bottomInset, additionalSideInsets: additionalSideInsets, maxHeight: maxHeight, maxOverlayHeight: maxOverlayHeight, isSecondary: isSecondary, transition: .immediate, interfaceState: interfaceState, metrics: metrics, deviceMetrics: deviceMetrics, isMediaInputExpanded: isMediaInputExpanded)
                     }
@@ -309,7 +335,7 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
             return
         }
         if let actions = self.actions, actions.isCopyProtected {
-            self.interfaceInteraction?.displayCopyProtectionTip(self.forwardButton, false)
+            self.interfaceInteraction?.displayCopyProtectionTip(self.usesWegramAppearance ? self.wegramBar.buttons[0] : self.forwardButton, false)
         } else if !self.forwardButton.isImplicitlyDisabled {
             self.interfaceInteraction?.forwardSelectedMessages()
         }
@@ -320,9 +346,59 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
             return
         }
         if let actions = self.actions, actions.isCopyProtected {
-            self.interfaceInteraction?.displayCopyProtectionTip(self.shareButton, true)
+            self.interfaceInteraction?.displayCopyProtectionTip(self.usesWegramAppearance ? self.wegramBar.buttons[3] : self.shareButton, true)
         } else if !self.shareButton.isImplicitlyDisabled {
             self.interfaceInteraction?.shareSelectedMessages()
+        }
+    }
+
+    private var wegramExtras: [WegramSelectionExtra] {
+        return wegramSelectionExtras(self.actionsMessageIds == self.selectedMessages ? self.actions : nil, hasSelection: !self.selectedMessages.isEmpty, isSecret: self.presentationInterfaceState?.renderedPeer?.peer is TelegramSecretChat, hasHistoryAction: self.wegramHistoryAction != nil)
+    }
+
+    private func performWegramAction(_ action: WegramMessageSelectionBar.Action) {
+        guard self.usesWegramAppearance, self.isNodeLoaded, self.view.window != nil,
+              !self.wegramBar.isHidden,
+              self.wegramBar.buttons[action.rawValue].isEnabled else { return }
+        if action != .more {
+            guard !self.selectedMessages.isEmpty, self.actionsMessageIds == self.selectedMessages else { return }
+        }
+        switch action {
+        case .forward: self.forwardButtonPressed()
+        case .save:
+            guard let actions = self.actions, actions.options.contains(.forward), !actions.isCopyProtected,
+                  !(self.presentationInterfaceState?.renderedPeer?.peer is TelegramSecretChat) else { return }
+            self.interfaceInteraction?.saveSelectedMessages?()
+        case .delete:
+            guard self.deleteButton.isEnabled else { return }
+            self.interfaceInteraction?.deleteSelectedMessages(self.wegramBar.buttons[action.rawValue])
+        case .more:
+            guard let state = self.presentationInterfaceState, !self.wegramExtras.isEmpty else { return }
+            let ids = self.selectedMessages
+            let historyAction = self.wegramHistoryAction
+            let sheet = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: state.theme, fontSize: state.fontSize))
+            let items: [ActionSheetItem] = self.wegramExtras.map { extra in
+                let title: String
+                switch extra {
+                case .share: title = state.strings.VoiceOver_MessageContextShare
+                case .report: title = state.strings.VoiceOver_MessageContextReport
+                case .tag: title = state.strings.VoiceOver_MessageSelectionButtonTag
+                case .history: title = historyAction?.title ?? state.strings.Conversation_ClearAll
+                }
+                return ActionSheetButtonItem(title: title, action: { [weak self, weak sheet] in
+                    sheet?.dismissAnimated()
+                    guard let self, self.isNodeLoaded, self.view.window != nil, self.selectedMessages == ids,
+                          self.wegramExtras.contains(extra) else { return }
+                    switch extra {
+                    case .share: self.shareButtonPressed()
+                    case .report: self.reportButtonPressed()
+                    case .tag: self.tagButtonPressed()
+                    case .history: historyAction?.perform()
+                    }
+                })
+            }
+            sheet.setItemGroups([ActionSheetItemGroup(items: items), ActionSheetItemGroup(items: [ActionSheetButtonItem(title: state.strings.Common_Cancel, action: { [weak sheet] in sheet?.dismissAnimated() })])])
+            self.interfaceInteraction?.presentController(sheet, nil)
         }
     }
     
@@ -330,6 +406,7 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
         guard let context = self.context else {
             return
         }
+        let requestedIds = self.selectedMessages
         
         if self.reactionOverlayContainer.reactionContextNode != nil {
             return
@@ -342,6 +419,10 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
         |> deliverOnMainQueue).start(next: { [weak self] reactionItems in
             guard let self, let actions = self.actions, let context = self.context else {
                 return
+            }
+            if self.usesWegramAppearance {
+                guard self.isNodeLoaded, self.view.window != nil, self.selectedMessages == requestedIds,
+                      self.actionsMessageIds == requestedIds, self.wegramExtras.contains(.tag) else { return }
             }
             
             let presentationData = context.sharedContext.currentPresentationData.with { $0 }
@@ -399,6 +480,10 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
                 guard let self, let context = self.context, let presentationInterfaceState = self.presentationInterfaceState, let actions = self.actions else {
                     return
                 }
+                if self.usesWegramAppearance {
+                    guard self.isNodeLoaded, self.view.window != nil, self.selectedMessages == requestedIds,
+                          self.actionsMessageIds == requestedIds, self.wegramExtras.contains(.tag) else { return }
+                }
                 
                 self.interfaceInteraction?.cancelMessageSelection(.animated(duration: 0.4, curve: .spring))
                 
@@ -448,6 +533,11 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
     
     override public func updateLayout(width: CGFloat, leftInset: CGFloat, rightInset: CGFloat, bottomInset: CGFloat, additionalSideInsets: UIEdgeInsets, maxHeight: CGFloat, maxOverlayHeight: CGFloat, isSecondary: Bool, transition: ContainedViewLayoutTransition, interfaceState: ChatPresentationInterfaceState, metrics: LayoutMetrics, deviceMetrics: DeviceMetrics, isMediaInputExpanded: Bool) -> CGFloat {
         self.validLayout = (width, leftInset, rightInset, bottomInset, additionalSideInsets, maxHeight, maxOverlayHeight, metrics, isSecondary, isMediaInputExpanded, deviceMetrics)
+        let wegramWidth = width
+        let wegramLeftInset = leftInset + max(0, additionalSideInsets.left)
+        let wegramRightInset = rightInset + max(0, additionalSideInsets.right)
+        self.forwardButton.isHidden = false
+        self.shareButton.isHidden = false
         
         var leftInset = leftInset + 8.0
         var rightInset = rightInset + 8.0
@@ -456,7 +546,7 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
         leftInset += compactBottomSideInset
         rightInset += compactBottomSideInset
         
-        let panelHeight = defaultHeight(metrics: metrics)
+        let panelHeight: CGFloat = self.usesWegramAppearance ? 56 : defaultHeight(metrics: metrics)
         
         if self.presentationInterfaceState != interfaceState {
             self.presentationInterfaceState = interfaceState
@@ -583,25 +673,39 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
         let availableWidth = width - leftInset - rightInset
         let spacing: CGFloat = floor((availableWidth - buttonSize.width * CGFloat(buttons.count)) / CGFloat(buttons.count - 1))
         var offset: CGFloat = leftInset
-        for i in 0 ..< buttons.count {
-            let button = buttons[i]
-            let buttonFrame: CGRect
-            if i == buttons.count - 1 {
-                buttonFrame = CGRect(origin: CGPoint(x: width - rightInset - buttonSize.width, y: 0.0), size: buttonSize)
-            } else {
-                buttonFrame = CGRect(origin: CGPoint(x: offset, y: 0.0), size: buttonSize)
+        if !self.usesWegramAppearance {
+            for i in 0 ..< buttons.count {
+                let button = buttons[i]
+                let buttonFrame: CGRect
+                if i == buttons.count - 1 {
+                    buttonFrame = CGRect(origin: CGPoint(x: width - rightInset - buttonSize.width, y: 0.0), size: buttonSize)
+                } else {
+                    buttonFrame = CGRect(origin: CGPoint(x: offset, y: 0.0), size: buttonSize)
+                }
+                transition.updateFrame(view: button, frame: buttonFrame)
+                button.update(theme: interfaceState.theme, preferClearGlass: interfaceState.preferredGlassType == .clear, size: buttonFrame.size, transition: ComponentTransition(transition))
+
+                offset += buttonSize.width + spacing
             }
-            transition.updateFrame(view: button, frame: buttonFrame)
-            button.update(theme: interfaceState.theme, preferClearGlass: interfaceState.preferredGlassType == .clear, size: buttonFrame.size, transition: ComponentTransition(transition))
-            
-            offset += buttonSize.width + spacing
+        }
+
+        if self.usesWegramAppearance {
+            let currentActions = self.actionsMessageIds == self.selectedMessages && !self.selectedMessages.isEmpty ? self.actions : nil
+            let isSecret = interfaceState.renderedPeer?.peer is TelegramSecretChat
+            self.wegramBar.update(isDark: interfaceState.theme.overallDarkAppearance, titles: [interfaceState.strings.VoiceOver_MessageContextForward, interfaceState.strings.baseLanguageCode.hasPrefix("zh") ? "收藏" : "Save to Saved Messages", interfaceState.strings.VoiceOver_MessageContextDelete, interfaceState.strings.Common_More], enabled: [currentActions != nil && !isSecret && self.forwardButton.isEnabled && !self.forwardButton.isImplicitlyDisabled, currentActions?.options.contains(.forward) == true && currentActions?.isCopyProtected == false && !isSecret && self.interfaceInteraction?.saveSelectedMessages != nil, currentActions != nil && self.deleteButton.isEnabled, !self.wegramExtras.isEmpty])
+            transition.updateFrame(view: self.wegramBar, frame: CGRect(x: wegramLeftInset, y: 0, width: max(0, wegramWidth - wegramLeftInset - wegramRightInset), height: panelHeight))
+            self.wegramBar.layoutIfNeeded()
+            self.wegramBackground.backgroundColor = UIColor(rgb: interfaceState.theme.overallDarkAppearance ? 0x202020 : 0xf7f7f7)
+            transition.updateFrame(view: self.wegramBackground, frame: CGRect(x: 0, y: 0, width: wegramWidth, height: panelHeight + bottomInset))
+            for button in [self.deleteButton, self.reportButton, self.forwardButton, self.shareButton, self.tagButton, self.tagEditButton] { button.isHidden = true }
         }
         
         if let reactionContextNode = self.reactionOverlayContainer.reactionContextNode, let tagButton {
             let isFirstTime = reactionContextNode.bounds.isEmpty
             
             let size = CGSize(width: width, height: maxHeight)
-            let reactionsAnchorRect = tagButton.frame.offsetBy(dx: -54.0, dy: -(panelHeight - size.height) + 14.0)
+            let tagFrame = self.usesWegramAppearance ? self.wegramBar.convert(self.wegramBar.buttons[3].frame, to: self.view) : tagButton.frame
+            let reactionsAnchorRect = tagFrame.offsetBy(dx: -54.0, dy: -(panelHeight - size.height) + 14.0)
             transition.updateFrame(node: reactionContextNode, frame: CGRect(origin: CGPoint(x: 0.0, y: panelHeight - size.height), size: size))
             reactionContextNode.updateLayout(size: size, insets: UIEdgeInsets(), anchorRect: reactionsAnchorRect, centerAligned: true, isCoveredByInput: false, isAnimatingOut: false, transition: transition)
             reactionContextNode.updateIsIntersectingContent(isIntersectingContent: true, transition: .immediate)
@@ -614,6 +718,6 @@ public final class ChatMessageSelectionInputPanelNode: ChatInputPanelNode {
     }
     
     override public func minimalHeight(interfaceState: ChatPresentationInterfaceState, metrics: LayoutMetrics) -> CGFloat {
-        return defaultHeight(metrics: metrics)
+        return self.usesWegramAppearance ? 56 : defaultHeight(metrics: metrics)
     }
 }

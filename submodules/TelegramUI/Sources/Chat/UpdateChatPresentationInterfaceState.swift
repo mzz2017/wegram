@@ -20,7 +20,7 @@ import ComponentDisplayAdapters
 extension ChatControllerImpl {
     func updateRightNavigationButtons(presentationInterfaceState: ChatPresentationInterfaceState, transition: ContainedViewLayoutTransition) {
         var buttonsAnimated = transition.isAnimated
-        if let button = rightNavigationButtonForChatInterfaceState(context: self.context, presentationInterfaceState: presentationInterfaceState, strings: presentationInterfaceState.strings, currentButton: self.rightNavigationButton, target: self, selector: #selector(self.rightNavigationButtonAction), chatInfoNavigationButton: self.chatInfoNavigationButton, moreInfoNavigationButton: self.moreInfoNavigationButton) {
+        if let button = rightNavigationButtonForChatInterfaceState(context: self.context, presentationInterfaceState: presentationInterfaceState, strings: presentationInterfaceState.strings, currentButton: self.rightNavigationButton, target: self, selector: #selector(self.rightNavigationButtonAction), chatInfoNavigationButton: self.chatInfoNavigationButton, moreInfoNavigationButton: self.moreInfoNavigationButton, usesWegramAppearance: true) {
             if self.rightNavigationButton != button {
                 if let currentButton = self.rightNavigationButton?.action, currentButton == button.action {
                     buttonsAnimated = false
@@ -478,6 +478,9 @@ func updateChatPresentationInterfaceStateImpl(
     if updatedChatPresentationInterfaceState.displayHistoryFilterAsList {
         var canDisplayAsList = false
         if updatedChatPresentationInterfaceState.search != nil {
+            if selfController.usesWegramNavigation {
+                canDisplayAsList = true
+            }
             if updatedChatPresentationInterfaceState.search?.resultsState != nil {
                 canDisplayAsList = true
             }
@@ -563,7 +566,7 @@ func updateChatPresentationInterfaceStateImpl(
         selfController.stateServiceTasks.removeValue(forKey: id)?.dispose()
     }
     
-    if let button = leftNavigationButtonForChatInterfaceState(updatedChatPresentationInterfaceState, subject: selfController.subject, strings: updatedChatPresentationInterfaceState.strings, currentButton: selfController.leftNavigationButton, target: selfController, selector: #selector(selfController.leftNavigationButtonAction)) {
+    if let button = leftNavigationButtonForChatInterfaceState(updatedChatPresentationInterfaceState, subject: selfController.subject, strings: updatedChatPresentationInterfaceState.strings, currentButton: selfController.leftNavigationButton, target: selfController, selector: #selector(selfController.leftNavigationButtonAction), usesWegramAppearance: true) {
         if selfController.leftNavigationButton != button {
             var animated = transition.isAnimated
             if let currentButton = selfController.leftNavigationButton?.action, currentButton == button.action {

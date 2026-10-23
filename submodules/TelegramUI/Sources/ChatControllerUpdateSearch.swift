@@ -45,7 +45,7 @@ extension ChatControllerImpl {
             
             switch search.domain {
             case .everything:
-                derivedSearchState = ChatSearchState(query: search.query, location: .peer(peerId: peerId, fromId: nil, tags: nil, reactions: reactions, threadId: threadId, minDate: nil, maxDate: nil), loadMoreState: loadMoreStateFromResultsState(search.resultsState))
+                derivedSearchState = ChatSearchState(query: search.query, location: .peer(peerId: peerId, fromId: nil, tags: search.mediaTags, reactions: reactions, threadId: threadId, minDate: nil, maxDate: nil), loadMoreState: loadMoreStateFromResultsState(search.resultsState))
             case let .tag(reaction):
                 derivedSearchState = ChatSearchState(query: search.query, location: .peer(peerId: peerId, fromId: nil, tags: nil, reactions: reactions ?? [reaction], threadId: threadId, minDate: nil, maxDate: nil), loadMoreState: loadMoreStateFromResultsState(search.resultsState))
             case .members:
@@ -58,13 +58,19 @@ extension ChatControllerImpl {
         if derivedSearchState != self.searchState {
             let previousSearchState = self.searchState
             self.searchState = derivedSearchState
+            if self.isNodeLoaded && (previousSearchState?.query != derivedSearchState?.query || previousSearchState?.location != derivedSearchState?.location) {
+                self.chatDisplayNode.cancelSearchResultsPagination()
+            }
             if let searchState = derivedSearchState {
                 if previousSearchState?.query != searchState.query || previousSearchState?.location != searchState.location {
                     var queryIsEmpty = false
                     if searchState.query.isEmpty {
-                        if case let .peer(_, fromId, _, reactions, _, _, _) = searchState.location {
+                        if case let .peer(_, fromId, tags, reactions, _, _, _) = searchState.location {
                             if fromId == nil {
                                 queryIsEmpty = true
+                            }
+                            if let tags, !tags.isEmpty {
+                                queryIsEmpty = false
                             }
                             if let reactions, !reactions.isEmpty {
                                 queryIsEmpty = false
@@ -104,6 +110,7 @@ extension ChatControllerImpl {
                             guard let strongSelf = self else {
                                 return
                             }
+                            guard strongSelf.searchState?.query == searchState.query, strongSelf.searchState?.location == searchState.location else { return }
                             strongSelf.searchResultsCount.set(results.totalCount)
                             var navigateIndex: EngineMessage.Index?
                             strongSelf.updateChatPresentationInterfaceState(animated: true, interactive: true, { current in
@@ -133,6 +140,7 @@ extension ChatControllerImpl {
                             strongSelf.updateItemNodesSearchTextHighlightStates()
                         }, completed: { [weak self] in
                             if let strongSelf = self {
+                                guard strongSelf.searchState?.query == searchState.query, strongSelf.searchState?.location == searchState.location else { return }
                                 strongSelf.searching.set(false)
                             }
                         }))
@@ -153,6 +161,7 @@ extension ChatControllerImpl {
                             guard let strongSelf = self else {
                                 return
                             }
+                            guard strongSelf.searchState?.query == searchState.query, strongSelf.searchState?.location == searchState.location else { return }
                             strongSelf.searchResultsCount.set(results.totalCount)
                             strongSelf.updateChatPresentationInterfaceState(animated: true, interactive: true, { current in
                                 if let data = current.search, let previousResultsState = data.resultsState {
@@ -164,6 +173,7 @@ extension ChatControllerImpl {
                             })
                         }, completed: { [weak self] in
                             if let strongSelf = self {
+                                guard strongSelf.searchState?.query == searchState.query, strongSelf.searchState?.location == searchState.location else { return }
                                 strongSelf.searching.set(false)
                             }
                         }))

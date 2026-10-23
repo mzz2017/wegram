@@ -6089,7 +6089,31 @@ public final class StoryItemSetContainerComponent: Component {
             component.reorder()
         }
         
-        private func performLikeAction() {
+        func performWegramInteraction(_ action: WegramStoryInteraction, target: WegramStoryInteractionTarget) -> Bool {
+            guard let component = self.component, self.window != nil, component.isCentral, !component.isPanning, !component.isDismissed, component.visibilityFraction > 0.99 else { return false }
+            let current = WegramStoryInteractionTarget(peerId: component.slice.item.id.peerId.toInt64(), storyId: component.slice.item.id.id)
+            guard target.matches(current, expiration: component.slice.item.storyItem.expirationTimestamp, expired: component.slice.item.storyItem.isExpired, now: Int64(Date().timeIntervalSince1970)) else { return false }
+            guard component.slice.effectivePeer.id != component.context.account.peerId, !component.slice.effectivePeer.isService else { return false }
+            if case .liveStream = component.slice.item.storyItem.media { return false }
+            if case .unsupported = component.slice.item.storyItem.media { return false }
+            switch action {
+            case .reply:
+                guard case .user = component.slice.effectivePeer, let panel = self.inputPanel.view as? MessageInputPanelComponent.View, panel.window != nil, !panel.isHidden else { return false }
+                let _ = self.activateInput()
+            case .like, .unlike:
+                var button: UIView?
+                if let visible = self.visibleItems[component.slice.item.id], let footer = visible.footerPanel?.view as? StoryFooterPanelComponent.View { button = footer.likeButtonView }
+                else if let panel = self.inputPanel.view as? MessageInputPanelComponent.View { button = panel.likeButtonView }
+                guard let button, button.window != nil, !button.isHidden, button.alpha > 0.01 else { return false }
+                let desired = action == .like
+                if (component.slice.item.storyItem.myReaction != nil) != desired {
+                    self.performLikeAction(expectedTarget: target, desiredReaction: desired)
+                }
+            }
+            return true
+        }
+
+        private func performLikeAction(expectedTarget: WegramStoryInteractionTarget? = nil, desiredReaction: Bool? = nil) {
             guard let component = self.component else {
                 return
             }
@@ -6099,6 +6123,12 @@ public final class StoryItemSetContainerComponent: Component {
                     return
                 }
                 
+                if let expectedTarget {
+                    let current = WegramStoryInteractionTarget(peerId: component.slice.item.id.peerId.toInt64(), storyId: component.slice.item.id.id)
+                    guard self.window != nil, component.isCentral, !component.isPanning, !component.isDismissed, component.visibilityFraction > 0.99, expectedTarget.matches(current, expiration: component.slice.item.storyItem.expirationTimestamp, expired: component.slice.item.storyItem.isExpired, now: Int64(Date().timeIntervalSince1970)) else { return }
+                }
+                if let desiredReaction, (component.slice.item.storyItem.myReaction != nil) == desiredReaction { return }
+
                 var likeButtonView: UIView?
                 var addTracingOffset: ((UIView) -> Void)?
                 

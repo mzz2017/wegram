@@ -42,10 +42,12 @@ public final class GlassControlGroupComponent: Component {
         public let id: AnyHashable
         public let content: Content
         public let action: (() -> Void)?
+        public let accessibilityLabel: String?
 
-        public init(id: AnyHashable, content: Content, action: (() -> Void)?) {
+        public init(id: AnyHashable, content: Content, accessibilityLabel: String? = nil, action: (() -> Void)?) {
             self.id = id
             self.content = content
+            self.accessibilityLabel = accessibilityLabel
             self.action = action
         }
         
@@ -54,6 +56,9 @@ public final class GlassControlGroupComponent: Component {
                 return false
             }
             if lhs.content != rhs.content {
+                return false
+            }
+            if lhs.accessibilityLabel != rhs.accessibilityLabel {
                 return false
             }
             if (lhs.action == nil) != (rhs.action == nil) {
@@ -272,6 +277,15 @@ public final class GlassControlGroupComponent: Component {
                     itemTransition.setFrame(view: itemComponentView, frame: itemFrame)
                     alphaTransition.setAlpha(view: itemComponentView, alpha: item.action != nil ? 1.0 : 0.5)
                     
+                    // A text item reads its own title; an icon item needs an explicit label.
+                    var accessibilityLabel = item.accessibilityLabel
+                    if accessibilityLabel == nil, case let .text(string) = item.content {
+                        accessibilityLabel = string
+                    }
+                    itemComponentView.isAccessibilityElement = accessibilityLabel != nil
+                    itemComponentView.accessibilityLabel = accessibilityLabel
+                    itemComponentView.accessibilityTraits = item.action != nil ? .button : [.button, .notEnabled]
+
                     if animateIn {
                         alphaTransition.animateBlur(layer: itemComponentView.layer, fromRadius: 8.0, toRadius: 0.0)
                     }

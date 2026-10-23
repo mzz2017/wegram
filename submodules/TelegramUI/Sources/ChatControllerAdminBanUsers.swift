@@ -452,18 +452,44 @@ extension ChatControllerImpl {
         }), in: .current)
     }
     
+    func presentMessageDeletionConfirmation(title: String, text: String, actions: [TextAlertAction], parseMarkdown: Bool = false, actionLayout: TextAlertContentActionLayout = .vertical, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)? = nil) {
+        if self.usesWegramNavigation {
+            guard self.isNodeLoaded, self.view.window != nil else { return }
+            let selection = self.presentationInterfaceState.interfaceState.selectionState?.selectedIds
+            let guardedActions = actions.filter { action in
+                if case .genericAction = action.type { return false }
+                return true
+            }.map { action in
+                TextAlertAction(type: action.type, title: action.title, action: { [weak self] in
+                    guard let self, self.isNodeLoaded, self.view.window != nil,
+                          self.presentationInterfaceState.interfaceState.selectionState?.selectedIds == selection else { return }
+                    action.action()
+                })
+            }
+            self.present(wegramMessageDeletionConfirmationController(updatedPresentationData: self.updatedPresentationData, title: title, text: text, actions: guardedActions, parseMarkdown: parseMarkdown), in: .window(.root))
+        } else {
+            self.present(textAlertController(context: self.context, updatedPresentationData: updatedPresentationData, title: title, text: text, actions: actions, actionLayout: actionLayout, parseMarkdown: parseMarkdown), in: .window(.root))
+        }
+    }
+
     func presentDeleteMessageOptions(messageIds: Set<EngineMessage.Id>, options: ChatAvailableMessageActionOptions, contextController: ContextControllerProtocol?, sourceView: UIView? = nil, completion: @escaping (ContextMenuActionResult) -> Void) {
+        let selectionSnapshot = self.presentationInterfaceState.interfaceState.selectionState?.selectedIds
+        let usesWegram = self.usesWegramNavigation
+        let isCurrent = { [weak self] () -> Bool in
+            guard let self, self.isNodeLoaded, self.view.window != nil else { return false }
+            return self.presentationInterfaceState.interfaceState.selectionState?.selectedIds == selectionSnapshot
+        }
         let _ = (self.context.engine.data.get(
             EngineDataMap(messageIds.map(TelegramEngine.EngineData.Item.Messages.Message.init(id:)))
         )
         |> deliverOnMainQueue).start(next: { [weak self] messages in
-            guard let self else {
+            guard let self, !usesWegram || isCurrent() else {
                 return
             }
             
             if let message = messages.values.compactMap({ $0 }).first(where: { message in message.attributes.contains(where: { $0 is PublishedSuggestedPostMessageAttribute }) }), let attribute = message.attributes.first(where: { $0 is PublishedSuggestedPostMessageAttribute }) as? PublishedSuggestedPostMessageAttribute, message.timestamp > Int32(Date().timeIntervalSince1970) - 60 * 60 * 24 {
                 let commit = { [weak self] in
-                    guard let self else {
+                    guard let self, !usesWegram || isCurrent() else {
                         return
                     }
                     let titleString: String
@@ -476,8 +502,7 @@ extension ChatControllerImpl {
                         titleString = self.presentationData.strings.Chat_DeletePaidMessageTon_Title
                         textString = self.presentationData.strings.Chat_DeletePaidMessageTon_Text
                     }
-                    self.present(textAlertController(
-                        context: self.context,
+                    self.presentMessageDeletionConfirmation(
                         title: titleString,
                         text: textString,
                         actions: [
@@ -489,9 +514,8 @@ extension ChatControllerImpl {
                             }),
                             TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {})
                         ],
-                        actionLayout: .vertical,
                         parseMarkdown: true
-                    ), in: .window(.root))
+                    )
                 }
                 if let contextController {
                     contextController.dismiss(completion: commit)
@@ -504,7 +528,7 @@ extension ChatControllerImpl {
             
             if messageIds.count == 1, let message = messages.values.compactMap({ $0 }).first, let repeatAttribute = message.attributes.first(where: { $0 is ScheduledRepeatAttribute }) as? ScheduledRepeatAttribute {
                 let commit = { [weak self] in
-                    guard let self else {
+                    guard let self, !usesWegram || isCurrent() else {
                         return
                     }
                     let title: String
@@ -522,8 +546,7 @@ extension ChatControllerImpl {
                         deleteOneAction = self.presentationData.strings.ScheduledMessages_DeleteRepeatingActionSingle
                         deleteAllAction = self.presentationData.strings.ScheduledMessages_DeleteRepeatingActionMultiple
                     }
-                    self.present(textAlertController(
-                        context: self.context,
+                    self.presentMessageDeletionConfirmation(
                         title: title,
                         text: text,
                         actions: [
@@ -553,9 +576,8 @@ extension ChatControllerImpl {
                             }),
                             TextAlertAction(type: .genericAction, title: self.presentationData.strings.Common_Cancel, action: {})
                         ],
-                        actionLayout: .vertical,
                         parseMarkdown: true
-                    ), in: .window(.root))
+                    )
                 }
                 if let contextController {
                     contextController.dismiss(completion: commit)
@@ -565,7 +587,20 @@ extension ChatControllerImpl {
                 return
             }
             
-            let actionSheet = ActionSheetController(presentationData: self.presentationData)
+            let actionSheet: ActionSheetController
+            if self.usesWegramNavigation {
+                actionSheet = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: self.presentationData.theme, fontSize: self.presentationData.listsFontSize), allowInputInset: true)
+            } else {
+                actionSheet = ActionSheetController(presentationData: self.presentationData)
+            }
+            var consumed = false
+            let consumeAction = { () -> Bool in
+                if !usesWegram { return true }
+                guard !consumed, isCurrent() else { return false }
+                consumed = true
+                return true
+            }
+            if usesWegram { actionSheet.willDismiss = { consumed = true } }
             var items: [ActionSheetItem] = []
             var personalPeerName: String?
             var isChannel = false
@@ -589,6 +624,7 @@ extension ChatControllerImpl {
                     }
                 })))
                 items.append(ActionSheetButtonItem(title: self.presentationData.strings.Conversation_ContextMenuCancelSending, color: .destructive, action: { [weak self, weak actionSheet] in
+                    guard consumeAction() else { return }
                     actionSheet?.dismissAnimated()
                     if let strongSelf = self {
                         strongSelf.updateChatPresentationInterfaceState(animated: true, interactive: true, { $0.updatedInterfaceState { $0.withoutSelectionState() } })
@@ -602,6 +638,7 @@ extension ChatControllerImpl {
                 canDisplayContextMenu = false
                 items.append(ActionSheetTextItem(title: self.presentationData.strings.Chat_UnsendMyMessagesAlertTitle(personalPeerName ?? "").string))
                 items.append(ActionSheetSwitchItem(title: self.presentationData.strings.Chat_UnsendMyMessages, isOn: false, action: { value in
+                    guard !usesWegram || (!consumed && isCurrent()) else { return }
                     unsendPersonalMessages = value
                 }))
             } else if options.contains(.deleteGlobally) {
@@ -633,11 +670,12 @@ extension ChatControllerImpl {
                             let currentTime = Int32(CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970)
                             if currentTime < giveaway.untilDate {
                                 Queue.mainQueue().after(0.2) {
+                                    guard !usesWegram || isCurrent() else { return }
                                     let dateString = stringForDate(timestamp: giveaway.untilDate, timeZone: .current, strings: strongSelf.presentationData.strings)
-                                    strongSelf.present(textAlertController(context: strongSelf.context, updatedPresentationData: strongSelf.updatedPresentationData, title: strongSelf.presentationData.strings.Chat_Giveaway_DeleteConfirmation_Title, text: strongSelf.presentationData.strings.Chat_Giveaway_DeleteConfirmation_Text(dateString).string, actions: [TextAlertAction(type: .destructiveAction, title: strongSelf.presentationData.strings.Common_Delete, action: {
+                                    strongSelf.presentMessageDeletionConfirmation(title: strongSelf.presentationData.strings.Chat_Giveaway_DeleteConfirmation_Title, text: strongSelf.presentationData.strings.Chat_Giveaway_DeleteConfirmation_Text(dateString).string, actions: [TextAlertAction(type: .destructiveAction, title: strongSelf.presentationData.strings.Common_Delete, action: {
                                         commit()
                                     }), TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {
-                                    })], parseMarkdown: true), in: .window(.root))
+                                    })], parseMarkdown: true, actionLayout: .horizontal, updatedPresentationData: strongSelf.updatedPresentationData)
                                 }
                                 f(.default)
                             } else {
@@ -659,6 +697,7 @@ extension ChatControllerImpl {
                     }
                 })))
                 items.append(ActionSheetButtonItem(title: globalTitle, color: .destructive, action: { [weak self, weak actionSheet] in
+                    guard consumeAction() else { return }
                     actionSheet?.dismissAnimated()
                     if let strongSelf = self {
                         strongSelf.updateChatPresentationInterfaceState(animated: true, interactive: true, { $0.updatedInterfaceState { $0.withoutSelectionState() } })
@@ -714,6 +753,7 @@ extension ChatControllerImpl {
                     }
                 })))
                 items.append(ActionSheetButtonItem(title: localOptionText, color: .destructive, action: { [weak self, weak actionSheet] in
+                    guard consumeAction() else { return }
                     actionSheet?.dismissAnimated()
                     if let strongSelf = self {
                         strongSelf.updateChatPresentationInterfaceState(animated: true, interactive: true, { $0.updatedInterfaceState { $0.withoutSelectionState() } })
@@ -723,7 +763,30 @@ extension ChatControllerImpl {
                 }))
             }
             
-            if canDisplayContextMenu, let contextController = contextController {
+            if self.usesWegramNavigation, canDisplayContextMenu, !contextItems.isEmpty {
+                let selection = self.presentationInterfaceState.interfaceState.selectionState?.selectedIds
+                let deleteActions = contextItems.compactMap { item -> TextAlertAction? in
+                    guard case let .action(item) = item, let action = item.action else { return nil }
+                    return TextAlertAction(type: .destructiveAction, title: item.text, action: { [weak self] in
+                        guard let self, self.isNodeLoaded, self.view.window != nil,
+                              self.presentationInterfaceState.interfaceState.selectionState?.selectedIds == selection else { return }
+                        // The source menu and confirmation are already dismissed before this original handler runs.
+                        action(ContextMenuActionItem.Action(controller: nil, dismissWithResult: { _ in }, updateAction: { _, _ in }))
+                    })
+                }
+                let present = { [weak self] in
+                    guard let self, self.isNodeLoaded, self.view.window != nil,
+                          self.presentationInterfaceState.interfaceState.selectionState?.selectedIds == selection else { return }
+                    let controller = wegramMessageDeletionConfirmationController(updatedPresentationData: self.updatedPresentationData, title: self.presentationData.strings.Chat_DeleteMessagesConfirmation(Int32(messageIds.count)), text: "", actions: deleteActions)
+                    self.present(controller, in: .window(.root))
+                }
+                if let contextController { contextController.dismiss(completion: present) }
+                else {
+                    self.chatDisplayNode.dismissInput()
+                    present()
+                    completion(.default)
+                }
+            } else if canDisplayContextMenu, let contextController = contextController {
                 contextController.setItems(.single(ContextController.Items(content: .list(contextItems))), minHeight: nil, animated: true)
             } else if canDisplayContextMenu, let sourceView = sourceView {
                 let contextController = makeContextController(

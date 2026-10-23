@@ -16,6 +16,7 @@ import ComponentDisplayAdapters
 import BundleIconComponent
 import AnimatedTextComponent
 import GlassBackgroundComponent
+import PresentationDataUtils
 
 private let labelFont = Font.regular(15.0)
 
@@ -73,6 +74,11 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
     private var alwaysShowTotalMessagesCount = false
     
     private var currentLayout: Layout?
+    private var wegramOptions = (calendar: false, members: false, mode: false, result: "")
+    private weak var optionsSheet: ActionSheetController?
+    private var usesWegramAppearance: Bool {
+        return (self.interfaceInteraction?.chatController() as? ChatControllerImpl)?.usesWegramNavigation == true
+    }
     
     private var tagMessageCount: (tag: EngineMemoryBuffer, count: Int?, disposable: Disposable?)?
     
@@ -112,6 +118,8 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
     }
     
     override func updateLayout(width: CGFloat, leftInset: CGFloat, rightInset: CGFloat, bottomInset: CGFloat, additionalSideInsets: UIEdgeInsets, maxHeight: CGFloat, maxOverlayHeight: CGFloat, isSecondary: Bool, transition: ContainedViewLayoutTransition, interfaceState: ChatPresentationInterfaceState, metrics: LayoutMetrics, deviceMetrics: DeviceMetrics, isMediaInputExpanded: Bool) -> CGFloat {
+        self.view.isHidden = self.usesWegramAppearance
+        self.view.accessibilityElementsHidden = self.usesWegramAppearance
         var leftInset = leftInset + 8.0
         var rightInset = rightInset + 8.0
         
@@ -288,6 +296,16 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
             canChangeListMode = false
         }
         
+        let resultsAccessibilityLabel = resultsTextString.map { item in
+            switch item.content {
+            case let .text(text): return text
+            case let .number(number, _): return presentationStringsFormattedNumber(Int32(clamping: number), params.interfaceState.dateTimeFormat.groupingSeparator)
+            case .icon: return ""
+            }
+        }.joined()
+        self.wegramOptions = (!self.alwaysShowTotalMessagesCount && self.externalSearchResultsCount == nil, displaySearchMembers, canChangeListMode, resultsAccessibilityLabel)
+        if self.usesWegramAppearance { return 0.0 }
+
         let height: CGFloat
         if case .regular = params.metrics.widthClass {
             height = 40.0
@@ -338,6 +356,8 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
                 containerSize: size
             )
             if let buttonView = listModeButton.view {
+                buttonView.accessibilityLabel = params.interfaceState.strings.Chat_BottomSearchPanel_DisplayModeFormat(params.interfaceState.displayHistoryFilterAsList ? params.interfaceState.strings.Chat_BottomSearchPanel_DisplayModeChat : params.interfaceState.strings.Chat_BottomSearchPanel_DisplayModeList).string
+                buttonView.accessibilityIdentifier = "Wegram.Search.DisplayMode"
                 if buttonView.superview == nil {
                     buttonView.layer.anchorPoint = CGPoint(x: 1.0, y: 0.5)
                     buttonView.alpha = 0.0
@@ -390,6 +410,8 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
             let calendarButtonFrame = CGRect(origin: CGPoint(x: nextLeftX, y: floor((size.height - calendarButtonSize.height) * 0.5)), size: calendarButtonSize)
             calendarButtonFrameValue = calendarButtonFrame
             if let calendarButtonView = self.calendarButton.view {
+                calendarButtonView.accessibilityLabel = params.interfaceState.strings.SharedMedia_ShowCalendar
+                calendarButtonView.accessibilityIdentifier = "Wegram.Search.Calendar"
                 if calendarButtonView.superview == nil {
                     self.view.addSubview(calendarButtonView)
                     
@@ -445,6 +467,8 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
                 containerSize: size
             )
             if let buttonView = membersButton.view {
+                buttonView.accessibilityLabel = params.interfaceState.strings.Conversation_SearchByName_Placeholder
+                buttonView.accessibilityIdentifier = "Wegram.Search.Members"
                 var membersButtonTransition = transition
                 var animateIn = false
                 if buttonView.superview == nil {
@@ -516,6 +540,8 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
             }
             resultsTextFrameValue = resultsTextFrame
             if let resultsTextView = resultsText.view {
+                resultsTextView.accessibilityLabel = resultsAccessibilityLabel
+                resultsTextView.accessibilityIdentifier = "Wegram.Search.ResultCount"
                 if resultsTextView.superview == nil {
                     resultsTextView.alpha = 0.0
                     self.view.addSubview(resultsTextView)
@@ -592,7 +618,73 @@ final class ChatTagSearchInputPanelNode: ChatInputPanelNode {
         return height
     }
     
+    func presentWegramSearchOptions() {
+        guard self.usesWegramAppearance, self.optionsSheet == nil,
+              let owner = self.interfaceInteraction?.chatController() as? ChatControllerImpl,
+              let search = owner.presentationInterfaceState.search, let params = self.currentLayout?.params,
+              owner.isNodeLoaded, owner.view.window != nil else { return }
+        let strings = params.interfaceState.strings
+        owner.chatDisplayNode.dismissInput()
+        let sheet = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: params.interfaceState.theme, fontSize: owner.presentationData.listsFontSize))
+        self.optionsSheet = sheet
+        var pending: (() -> Void)?
+        var consumed = false
+        let isCurrent = { [weak self, weak owner] () -> Bool in
+            guard let self, let owner, self.usesWegramAppearance, owner.isNodeLoaded, owner.view.window != nil,
+                  owner.chatDisplayNode.inputPanelNode === self || owner.chatDisplayNode.secondaryInputPanelNode === self,
+                  let current = owner.presentationInterfaceState.search,
+                  current.query == search.query, current.domain == search.domain else { return false }
+            return true
+        }
+        sheet.willDismiss = { consumed = true }
+        sheet.dismissed = { [weak self] cancelled in
+            self?.optionsSheet = nil
+            let action = pending
+            pending = nil
+            if !cancelled {
+                DispatchQueue.main.async { if isCurrent() { action?() } }
+            }
+        }
+        var items: [ActionSheetItem] = []
+        if !self.wegramOptions.result.isEmpty {
+            items.append(ActionSheetTextItem(title: self.wegramOptions.result))
+        }
+        func addAction(_ title: String, _ action: @escaping (ChatTagSearchInputPanelNode) -> Void) {
+            items.append(ActionSheetButtonItem(title: title, action: { [weak self, weak sheet] in
+                guard !consumed, isCurrent(), let self else { sheet?.dismissAnimated(); return }
+                consumed = true
+                pending = { [weak self] in if let self { action(self) } }
+                sheet?.dismissAnimated()
+            }))
+        }
+        if self.wegramOptions.calendar {
+            addAction(strings.SharedMedia_ShowCalendar, { panel in
+                if panel.wegramOptions.calendar { panel.interfaceInteraction?.openCalendarSearch() }
+            })
+        }
+        if self.wegramOptions.members {
+            addAction(strings.Conversation_SearchByName_Placeholder, { panel in
+                if panel.wegramOptions.members { panel.interfaceInteraction?.toggleMembersSearch(true) }
+            })
+        }
+        if self.wegramOptions.mode {
+            let desiredListMode = !params.interfaceState.displayHistoryFilterAsList
+            let title = strings.Chat_BottomSearchPanel_DisplayModeFormat(params.interfaceState.displayHistoryFilterAsList ? strings.Chat_BottomSearchPanel_DisplayModeChat : strings.Chat_BottomSearchPanel_DisplayModeList).string
+            addAction(title, { panel in
+                guard panel.wegramOptions.mode, let current = panel.currentLayout?.params else { return }
+                if current.interfaceState.displayHistoryFilterAsList != desiredListMode {
+                    panel.interfaceInteraction?.updateDisplayHistoryFilterAsList(desiredListMode)
+                }
+            })
+        }
+        sheet.setItemGroups([
+            ActionSheetItemGroup(items: items),
+            ActionSheetItemGroup(items: [ActionSheetButtonItem(title: strings.Common_Cancel, action: { [weak sheet] in sheet?.dismissAnimated() })])
+        ])
+        self.interfaceInteraction?.presentController(sheet, nil)
+    }
+
     override func minimalHeight(interfaceState: ChatPresentationInterfaceState, metrics: LayoutMetrics) -> CGFloat {
-        return defaultHeight(metrics: metrics)
+        return self.usesWegramAppearance ? 0.0 : defaultHeight(metrics: metrics)
     }
 }

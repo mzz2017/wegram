@@ -2898,18 +2898,9 @@ final class StorageUsageScreenComponent: Component {
                     clearTitle = presentationData.strings.StorageManagement_ClearSelected
                 }
             }
-            let alertController = textAlertController(
-                context: context,
-                title: presentationData.strings.StorageManagement_ClearConfirmationTitle,
-                text: presentationData.strings.StorageManagement_ClearConfirmationText,
-                actions: [
-                    TextAlertAction(type: .defaultAction, title: clearTitle, action: { [weak self] in
-                        self?.commitClear(fromCategories: fromCategories)
-                    }),
-                    TextAlertAction(type: .genericAction, title: presentationData.strings.Common_Cancel, action: {})
-                ],
-                actionLayout: .vertical
-            )
+            let alertController = storageUsageClearConfirmationController(context: context, clearTitle: clearTitle, confirmed: { [weak self] in
+                self?.commitClear(fromCategories: fromCategories)
+            })
             self.controller?()?.present(alertController, in: .window(.root))
         }
         

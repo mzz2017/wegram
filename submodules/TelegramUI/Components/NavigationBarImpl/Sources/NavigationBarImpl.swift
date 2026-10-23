@@ -7,6 +7,27 @@ import AsyncDisplayKit
 import EdgeEffect
 import ComponentDisplayAdapters
 
+// VoiceOver skips the back button while an unread count replaces its title (the button is faded
+// out), so this transparent, touch-transparent view announces the back action in its place.
+private final class NavigationBarBackAccessibilityView: UIView {
+    var activate: (() -> Bool)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        self.isUserInteractionEnabled = false
+        self.isAccessibilityElement = true
+        self.accessibilityTraits = .button
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func accessibilityActivate() -> Bool {
+        return self.activate?() ?? false
+    }
+}
+
 public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
     public static var defaultSecondaryContentHeight: CGFloat {
         return 38.0
@@ -14,10 +35,13 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
     
     public static let titleFont = Font.with(size: 17.0, design: .regular, weight: .semibold, traits: [.monospacedNumbers])
     
+    public var nominalHeight: CGFloat { return self.presentationData.theme.nominalHeight }
     var presentationData: NavigationBarPresentationData
     
     private var validLayout: (size: CGSize, defaultHeight: CGFloat, additionalTopHeight: CGFloat, additionalContentHeight: CGFloat, additionalBackgroundHeight: CGFloat, additionalCutout: CGSize?, leftInset: CGFloat, rightInset: CGFloat, appearsHidden: Bool, isLandscape: Bool)?
     private var requestedLayout: Bool = false
+    private var wegramBackArrowImage: UIImage?
+    private var backAccessibilityView: NavigationBarBackAccessibilityView?
     public var requestContainerLayout: ((ContainedViewLayoutTransition) -> Void)?
     
     public var backPressed: () -> () = { }
@@ -195,7 +219,7 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
     private var title: String? {
         didSet {
             if let title = self.title {
-                self.titleNode.attributedText = NSAttributedString(string: title, font: NavigationBarImpl.titleFont, textColor: self.presentationData.theme.primaryTextColor)
+                self.titleNode.attributedText = NSAttributedString(string: title, font: self.presentationData.theme.titleFont ?? NavigationBarImpl.titleFont, textColor: self.presentationData.theme.primaryTextColor)
                 self.titleNode.accessibilityLabel = title
                 if self.titleNode.supernode == nil {
                     self.buttonsContainerNode.addSubnode(self.titleNode)
@@ -635,10 +659,11 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
         //self.buttonsContainerNode.clipsToBounds = true
         
         self.backButtonNodeImpl.color = self.presentationData.theme.buttonColor
+        self.backButtonNodeImpl.backAccessibilityLabel = self.presentationData.strings.back
         self.backButtonNodeImpl.disabledColor = self.presentationData.theme.disabledButtonColor
         self.backButtonArrow.image = presentationData.theme.style == .glass ? generateTintedImage(image: glassBackArrowImage, color: self.presentationData.theme.buttonColor) : navigationBarBackArrowImage(color: self.presentationData.theme.buttonColor)
         if let title = self.title {
-            self.titleNode.attributedText = NSAttributedString(string: title, font: NavigationBarImpl.titleFont, textColor: self.presentationData.theme.primaryTextColor)
+            self.titleNode.attributedText = NSAttributedString(string: title, font: self.presentationData.theme.titleFont ?? NavigationBarImpl.titleFont, textColor: self.presentationData.theme.primaryTextColor)
             self.titleNode.accessibilityLabel = title
         }
         self.stripeNode.backgroundColor = self.presentationData.theme.separatorColor
@@ -765,10 +790,12 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
             self.backgroundNode.updateColor(color: self.presentationData.theme.backgroundColor, transition: transition)
             
             self.backButtonNodeImpl.color = self.presentationData.theme.buttonColor
+            self.backButtonNodeImpl.backAccessibilityLabel = self.presentationData.strings.back
             self.backButtonNodeImpl.disabledColor = self.presentationData.theme.disabledButtonColor
+            self.wegramBackArrowImage = nil
             self.backButtonArrow.image = self.presentationData.theme.style == .glass ? generateTintedImage(image: glassBackArrowImage, color: self.presentationData.theme.buttonColor) : navigationBarBackArrowImage(color: self.presentationData.theme.buttonColor)
             if let title = self.title {
-                self.titleNode.attributedText = NSAttributedString(string: title, font: NavigationBarImpl.titleFont, textColor: self.presentationData.theme.primaryTextColor)
+                self.titleNode.attributedText = NSAttributedString(string: title, font: self.presentationData.theme.titleFont ?? NavigationBarImpl.titleFont, textColor: self.presentationData.theme.primaryTextColor)
                 self.titleNode.accessibilityLabel = title
             }
             self.stripeNode.backgroundColor = self.presentationData.theme.separatorColor
@@ -801,7 +828,7 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
         
         self.validLayout = (size, defaultHeight, additionalTopHeight, additionalContentHeight, additionalBackgroundHeight, additionalCutout, leftInset, rightInset, appearsHidden, isLandscape)
         
-        var contentVerticalOrigin = additionalTopHeight
+        var contentVerticalOrigin = additionalTopHeight + self.presentationData.theme.contentTopInset
         if case .glass = self.presentationData.theme.style {
             contentVerticalOrigin += 2.0
         }
@@ -836,8 +863,8 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
         
         let apparentAdditionalHeight: CGFloat = self.secondaryContentNode != nil ? (self.secondaryContentHeight * self.secondaryContentNodeDisplayFraction) : 0.0
         
-        let leftButtonInset: CGFloat = leftInset + 16.0
-        let backButtonInset: CGFloat = leftInset + 27.0
+        let leftButtonInset: CGFloat = leftInset + (self.badgeNode.usesWegramAppearance ? 6 : 16)
+        let backButtonInset: CGFloat = leftInset + (self.badgeNode.usesWegramAppearance ? 0 : 27.0)
         
         transition.updateFrame(node: self.clippingNode, frame: CGRect(origin: CGPoint(), size: size))
         transition.updateFrame(node: self.additionalContentNode, frame: CGRect(origin: CGPoint(), size: CGSize(width: size.width, height: size.height + additionalBackgroundHeight)))
@@ -848,7 +875,11 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
             switch contentNode.mode {
             case .replacement:
                 expansionHeight = contentNode.height - defaultHeight
+                var respectsTopInset = contentNode.replacementRespectsTopInset
                 if case .glass = self.presentationData.theme.style {
+                    respectsTopInset = true
+                }
+                if respectsTopInset {
                     contentNodeFrame = CGRect(origin: CGPoint(x: 0.0, y: contentVerticalOrigin), size: CGSize(width: size.width, height: contentNode.nominalHeight))
                 } else {
                     contentNodeFrame = CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: size.width, height: size.height - additionalContentHeight))
@@ -875,9 +906,13 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
             }
         }
         
-        transition.updateFrame(node: self.stripeNode, frame: CGRect(x: (additionalCutout?.width ?? 0.0), y: size.height + additionalBackgroundHeight, width: size.width - (additionalCutout?.width ?? 0.0), height: UIScreenPixel))
+        // A WeGram bar (contentTopInset > 0) draws its line in its own bottom pixel, as WeChat does (IMG_2437: line at
+        // 300px, content from 301px).
+        let stripeInset: CGFloat = self.presentationData.theme.contentTopInset > 0.0 ? UIScreenPixel : 0.0
+        transition.updateFrame(node: self.stripeNode, frame: CGRect(x: (additionalCutout?.width ?? 0.0), y: size.height + additionalBackgroundHeight - stripeInset, width: size.width - (additionalCutout?.width ?? 0.0), height: UIScreenPixel))
         
-        let nominalHeight: CGFloat = 60.0
+        // Items centre in the content row, below `contentTopInset`.
+        let nominalHeight: CGFloat = self.nominalHeight - self.presentationData.theme.contentTopInset
         
         var leftTitleInset: CGFloat = leftInset
         var rightTitleInset: CGFloat = rightInset
@@ -886,6 +921,8 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
         var leftButtonCount = 0
         if self.backButtonNodeImpl.view.superview != nil {
             leftButtonCount = 1
+            let unreadWidth = self.badgeNode.isHidden ? 0 : self.badgeNode.measure(CGSize(width: 200, height: 100)).width
+            self.backButtonNodeImpl.minimumBackButtonWidth = self.badgeNode.usesWegramAppearance ? max(44, 32 + unreadWidth + 8) : 0
             let backButtonSize = self.backButtonNodeImpl.updateLayout(constrainedSize: CGSize(width: size.width, height: 44.0), isLandscape: isLandscape, isLeftAligned: true)
             leftTitleInset = backButtonSize.width + backButtonInset
             
@@ -909,8 +946,25 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
                     let backButtonArrowSize = CGSize(width: 44.0, height: 44.0)
                     backButtonArrowFrame = CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: backButtonArrowSize)
                 } else {
-                    let backButtonArrowSize = CGSize(width: 13.0, height: 22.0)
-                    backButtonArrowFrame = CGRect(origin: CGPoint(x: leftInset + 8.0, y: contentVerticalOrigin + floor((nominalHeight - backButtonArrowSize.height) / 2.0)), size: backButtonArrowSize)
+                    let backButtonArrowSize: CGSize
+                    let arrowInset: CGFloat
+                    if self.badgeNode.usesWegramAppearance {
+                        backButtonArrowSize = CGSize(width: 10, height: 18)
+                        arrowInset = 16
+                        if self.wegramBackArrowImage == nil {
+                            let color = self.presentationData.theme.buttonColor
+                            self.wegramBackArrowImage = wegramNavigationBackArrowImage(color: color)
+                        }
+                        self.backButtonArrow.image = self.wegramBackArrowImage
+                    } else {
+                        backButtonArrowSize = CGSize(width: 13, height: 22)
+                        arrowInset = 8
+                        if self.wegramBackArrowImage != nil {
+                            self.wegramBackArrowImage = nil
+                            self.backButtonArrow.image = navigationBarBackArrowImage(color: self.presentationData.theme.buttonColor)
+                        }
+                    }
+                    backButtonArrowFrame = CGRect(origin: CGPoint(x: leftInset + arrowInset, y: contentVerticalOrigin + floor((nominalHeight - backButtonArrowSize.height) / 2.0)), size: backButtonArrowSize)
                 }
                 leftButtonsWidth += backButtonArrowFrame.width
                 transition.updateFrame(node: self.backButtonArrow, frame: backButtonArrowFrame)
@@ -952,12 +1006,20 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
         
         let badgeSize = self.badgeNode.measure(CGSize(width: 200.0, height: 100.0))
         let backButtonArrowFrame = self.backButtonArrow.frame
-        if case .glass = self.presentationData.theme.style, self.badgeNode.view.superview != nil, !self.badgeNode.isHidden {
+        if self.badgeNode.usesWegramAppearance {
+            let frame = CGRect(x: backButtonArrowFrame.maxX + 6, y: backButtonArrowFrame.midY - badgeSize.height * 0.5, width: badgeSize.width, height: badgeSize.height)
+            transition.updateFrame(node: self.badgeNode, frame: frame)
+            if self.badgeNode.view.superview != nil && !self.badgeNode.isHidden {
+                leftButtonsWidth = max(leftButtonsWidth, frame.maxX - leftInset)
+                leftTitleInset = max(leftTitleInset, frame.maxX + 8)
+            }
+        } else if case .glass = self.presentationData.theme.style, self.badgeNode.view.superview != nil, !self.badgeNode.isHidden {
             transition.updateFrame(node: self.badgeNode, frame: CGRect(origin: CGPoint(x: leftButtonsWidth - 14.0, y: floor((44.0 - badgeSize.height) * 0.5)), size: badgeSize))
             leftButtonsWidth += badgeSize.width - 3.0
         } else {
             transition.updateFrame(node: self.badgeNode, frame: CGRect(origin: backButtonArrowFrame.origin.offsetBy(dx: 16.0, dy: 2.0), size: badgeSize))
         }
+        self.updateBackAccessibilityView()
         
         var rightButtonsWidth: CGFloat = 0.0
         var rightButtonCount = 0
@@ -1085,11 +1147,15 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
             self.titleNode.alpha = 1.0
             
             let titleSize = self.titleNode.updateLayout(CGSize(width: max(1.0, size.width - leftTitleInset - rightTitleInset), height: nominalHeight))
-            
+            // A WeGram bar draws its own title a pixel lower, where a UILabel title view's text lands: the text node's
+            // box is whole points, so centring it left 设置 0.97px above WeChat's (IMG_2446, glyph-weighted centres),
+            // while the 发现 label matched IMG_2442 exactly.
+            let titleY = contentVerticalOrigin + floorToScreenPixels((nominalHeight - titleSize.height) / 2.0) + (self.presentationData.theme.contentTopInset > 0.0 ? UIScreenPixel : 0.0)
+
             if titleSize.width <= size.width - max(leftTitleInset, rightTitleInset) * 2.0 {
-                transition.updateFrame(node: self.titleNode, frame: CGRect(origin: CGPoint(x: floor((size.width - titleSize.width) / 2.0), y: contentVerticalOrigin + floorToScreenPixels((nominalHeight - titleSize.height) / 2.0)), size: titleSize))
+                transition.updateFrame(node: self.titleNode, frame: CGRect(origin: CGPoint(x: floor((size.width - titleSize.width) / 2.0), y: titleY), size: titleSize))
             } else {
-                transition.updateFrame(node: self.titleNode, frame: CGRect(origin: CGPoint(x: leftTitleInset + floor((size.width - leftTitleInset - rightTitleInset - titleSize.width) / 2.0), y: contentVerticalOrigin + floorToScreenPixels((nominalHeight - titleSize.height) / 2.0)), size: titleSize))
+                transition.updateFrame(node: self.titleNode, frame: CGRect(origin: CGPoint(x: leftTitleInset + floor((size.width - leftTitleInset - rightTitleInset - titleSize.width) / 2.0), y: titleY), size: titleSize))
             }
         }
         
@@ -1287,6 +1353,35 @@ public final class NavigationBarImpl: ASDisplayNode, NavigationBar {
         }
     }
     
+    private func updateBackAccessibilityView() {
+        let backView = self.backButtonNodeImpl.view
+        guard let container = backView.superview, self.backButtonNodeImpl.manualAlpha.isZero, !self.badgeNode.isHidden else {
+            self.backAccessibilityView?.removeFromSuperview()
+            self.backAccessibilityView = nil
+            return
+        }
+        let accessibilityView: NavigationBarBackAccessibilityView
+        if let current = self.backAccessibilityView {
+            accessibilityView = current
+        } else {
+            accessibilityView = NavigationBarBackAccessibilityView()
+            accessibilityView.activate = { [weak self] in
+                return self?.executeBack() ?? false
+            }
+            self.backAccessibilityView = accessibilityView
+        }
+        if accessibilityView.superview !== container {
+            container.insertSubview(accessibilityView, aboveSubview: backView)
+        }
+        var frame = backView.frame
+        if self.badgeNode.view.superview === container {
+            frame = frame.union(self.badgeNode.view.frame)
+        }
+        accessibilityView.frame = frame
+        accessibilityView.accessibilityLabel = self.presentationData.strings.back
+        accessibilityView.accessibilityValue = self.badgeNode.text
+    }
+
     public func executeBack() -> Bool {
         if self.backButtonNodeImpl.isInHierarchy {
             self.backButtonNodeImpl.pressed(0)

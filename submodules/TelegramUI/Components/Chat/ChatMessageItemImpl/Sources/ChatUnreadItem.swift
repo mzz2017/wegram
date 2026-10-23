@@ -18,6 +18,7 @@ public class ChatUnreadItem: ListViewItem, ChatHistoryItemWithHeaders {
     public let presentationData: ChatPresentationData
     public let controllerInteraction: ChatControllerInteraction
     public let header: ChatMessageDateHeader
+    public let usesWegramAppearance: Bool
 
     // The item-side mirror of the node's `headers()` override below. Load-bearing under the CoreList
     // backend: an unread separator that published nothing would split its day's header run in two.
@@ -29,11 +30,12 @@ public class ChatUnreadItem: ListViewItem, ChatHistoryItemWithHeaders {
         return AnyEquatable(ChatHistoryItemNeighbor.unread(dateHeaderId: self.header.id))
     }
 
-    public init(index: EngineMessage.Index, presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction, context: AccountContext) {
+    public init(index: EngineMessage.Index, presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction, context: AccountContext, timeGroupTimestamp: Int32? = nil) {
         self.index = index
+        self.usesWegramAppearance = timeGroupTimestamp != nil && !presentationData.isPreview && controllerInteraction.chatIsRotated
         self.presentationData = presentationData
         self.controllerInteraction = controllerInteraction
-        self.header = ChatMessageDateHeader(timestamp: index.timestamp, separableThreadId: nil, scheduled: false, displayHeader: nil, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context)
+        self.header = ChatMessageDateHeader(timestamp: index.timestamp, separableThreadId: nil, scheduled: false, displayHeader: nil, presentationData: presentationData, controllerInteraction: controllerInteraction, context: context, timeGroupTimestamp: timeGroupTimestamp)
     }
     
     public func nodeConfiguredForParams(async: @escaping (@escaping () -> Void) -> Void, params: ListViewItemLayoutParams, synchronousLoads: Bool, neighbors: ListViewItemNeighbors, completion: @escaping (ListViewItemNode, @escaping () -> (Signal<Void, NoError>?, (ListViewItemApply) -> Void)) -> Void) {
@@ -91,6 +93,7 @@ public class ChatUnreadItemNode: ListViewItemNode {
     private var absolutePosition: (CGRect, CGSize)?
     
     private var theme: ChatPresentationThemeData?
+    private var wegramView: WegramUnreadSeparatorView?
     
     private let layoutConstants = ChatMessageItemLayoutConstants.default
     
@@ -143,10 +146,43 @@ public class ChatUnreadItemNode: ListViewItemNode {
         let labelLayout = TextNode.asyncLayout(self.labelNode)
         let layoutConstants = self.layoutConstants
         let currentTheme = self.theme
+        let hadWegramView = self.wegramView != nil
         
         return { [weak self] item, params, dateAtBottom in
+            if item.usesWegramAppearance {
+                let font = Font.regular(floor(item.presentationData.fontSize.baseDisplaySize * 13 / 17))
+                let height = WegramUnreadSeparatorView.height(font: font)
+                let language = item.presentationData.strings.baseLanguageCode.lowercased()
+                let string: String
+                if language.hasPrefix("zh") {
+                    string = language.contains("hant") || language == "zh-tw" || language == "zh-hk" ? "以下為新訊息" : "以下为新消息"
+                } else {
+                    string = item.presentationData.strings.Conversation_UnreadMessages
+                }
+                let layout = ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: height), insets: UIEdgeInsets(top: 6 + chatMessageDateHeaderSpacing(headers: item.headers, hasDate: dateAtBottom, hasTopic: false, constants: layoutConstants), left: 0, bottom: 5, right: 0))
+                return (layout, { _ in
+                    guard let self else { return }
+                    self.item = item
+                    self.theme = item.presentationData.theme
+                    self.backgroundNode.isHidden = true
+                    self.labelNode.isHidden = true
+                    self.activateArea.isAccessibilityElement = false
+                    self.backgroundContent?.removeFromSupernode()
+                    self.backgroundContent = nil
+                    let view: WegramUnreadSeparatorView
+                    if let current = self.wegramView { view = current }
+                    else {
+                        view = WegramUnreadSeparatorView(frame: .zero)
+                        self.wegramView = view
+                        self.view.addSubview(view)
+                    }
+                    view.frame = CGRect(origin: .zero, size: layout.contentSize)
+                    view.update(text: string, font: font, isDark: item.presentationData.theme.theme.overallDarkAppearance)
+                    view.updateLayout(leftInset: params.leftInset, rightInset: params.rightInset)
+                })
+            }
             var updatedBackgroundImage: UIImage?
-            if currentTheme != item.presentationData.theme {
+            if currentTheme != item.presentationData.theme || hadWegramView {
                 updatedBackgroundImage = PresentationResourcesChat.chatUnreadBarBackgroundImage(item.presentationData.theme.theme)
             }
             
@@ -155,10 +191,14 @@ public class ChatUnreadItemNode: ListViewItemNode {
             
             let backgroundSize = CGSize(width: params.width, height: 25.0)
             
-            return (ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: 25.0), insets: UIEdgeInsets(top: 6.0 + (dateAtBottom ? layoutConstants.timestampHeaderHeight : 0.0), left: 0.0, bottom: 5.0, right: 0.0)), { animation in
+            return (ListViewItemNodeLayout(contentSize: CGSize(width: params.width, height: 25.0), insets: UIEdgeInsets(top: 6.0 + chatMessageDateHeaderSpacing(headers: item.headers, hasDate: dateAtBottom, hasTopic: false, constants: layoutConstants), left: 0.0, bottom: 5.0, right: 0.0)), { animation in
                 if let strongSelf = self {
                     strongSelf.item = item
                     strongSelf.theme = item.presentationData.theme
+                    strongSelf.wegramView?.removeFromSuperview()
+                    strongSelf.wegramView = nil
+                    strongSelf.labelNode.isHidden = false
+                    strongSelf.activateArea.isAccessibilityElement = true
                     
                     if let updatedBackgroundImage = updatedBackgroundImage {
                         strongSelf.backgroundNode.image = updatedBackgroundImage

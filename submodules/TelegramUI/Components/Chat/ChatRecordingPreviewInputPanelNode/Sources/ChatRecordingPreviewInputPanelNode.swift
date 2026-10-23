@@ -210,6 +210,13 @@ private final class ClippedWaveformNode: ASDisplayNode, CustomMediaPlayerScrubbi
 }
 
 public final class ChatRecordingPreviewInputPanelNodeImpl: ChatInputPanelNode {
+    private let initialWaveformColor: UIColor
+    public var usesWegramAppearance = false {
+        didSet {
+            guard oldValue != self.usesWegramAppearance else { return }
+            self.waveformBackgroundNodeImpl.image = generateStretchableFilledCircleImage(diameter: self.usesWegramAppearance ? 8 : 36, color: self.usesWegramAppearance ? UIColor(rgb: 0x07c160) : self.initialWaveformColor)
+        }
+    }
     private let waveformButton: ASButtonNode
     let waveformBackgroundNodeImpl: ASImageNode
     var waveformBackgroundNode: ASDisplayNode {
@@ -250,6 +257,7 @@ public final class ChatRecordingPreviewInputPanelNodeImpl: ChatInputPanelNode {
     public let tintMaskView: UIView = UIView()
     
     public init(theme: PresentationTheme) {
+        self.initialWaveformColor = theme.list.itemCheckColors.fillColor
         self.waveformBackgroundNodeImpl = ASImageNode()
         self.waveformBackgroundNodeImpl.isLayerBacked = true
         self.waveformBackgroundNodeImpl.displaysAsynchronously = false

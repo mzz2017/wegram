@@ -65,6 +65,8 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
         public let layoutConstants: ChatMessageItemLayoutConstants
         public let constrainedSize: CGSize
         public let controllerInteraction: ChatControllerInteraction
+        public let usesWegramVoiceAppearance: Bool
+        public let usesWegramFileAppearance: Bool
         
         public init(
             context: AccountContext,
@@ -88,7 +90,9 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
             isAttachedContentBlock: Bool,
             layoutConstants: ChatMessageItemLayoutConstants,
             constrainedSize: CGSize,
-            controllerInteraction: ChatControllerInteraction
+            controllerInteraction: ChatControllerInteraction,
+            usesWegramVoiceAppearance: Bool = false,
+            usesWegramFileAppearance: Bool = false
         ) {
             self.context = context
             self.presentationData = presentationData
@@ -112,6 +116,8 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
             self.layoutConstants = layoutConstants
             self.constrainedSize = constrainedSize
             self.controllerInteraction = controllerInteraction
+            self.usesWegramVoiceAppearance = usesWegramVoiceAppearance
+            self.usesWegramFileAppearance = usesWegramFileAppearance
         }
     }
     
@@ -193,6 +199,20 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
     private var context: AccountContext?
     private var message: EngineRawMessage?
     private var arguments: Arguments?
+    private var wegramFileIconNode: ASImageNode?
+    private var allowsAudioTranscription: Bool = false
+    private var wegramPlaybackProgressExpanded: Bool = false
+
+    public func voicePlaybackProgressState(messageId: EngineMessage.Id) -> Bool? {
+        guard self.message?.id == messageId, self.arguments?.usesWegramVoiceAppearance == true else { return nil }
+        return self.wegramPlaybackProgressExpanded
+    }
+
+    public func toggleVoicePlaybackProgressFromMenu(messageId: EngineMessage.Id) {
+        guard self.voicePlaybackProgressState(messageId: messageId) != nil, self.isNodeLoaded, self.view.window != nil else { return }
+        self.wegramPlaybackProgressExpanded.toggle()
+        self.requestUpdateLayout(true)
+    }
     private var presentationData: ChatPresentationData?
     private var file: TelegramMediaFile?
     private var progressFrame: CGRect?
@@ -347,6 +367,16 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
         }
     }
     
+    public func canTranscribeAudio(messageId: EngineMessage.Id) -> Bool {
+        if case .inProgress = self.audioTranscriptionState { return false }
+        return self.message?.id == messageId && self.allowsAudioTranscription
+    }
+
+    public func transcribeAudioFromMenu(messageId: EngineMessage.Id) {
+        guard self.canTranscribeAudio(messageId: messageId), self.isNodeLoaded, self.view.window != nil else { return }
+        self.transcribe()
+    }
+
     private func transcribe() {
         guard let arguments = self.arguments, let context = self.context, let message = self.message else {
             return
@@ -562,6 +592,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
     
     public func asyncLayout() -> (Arguments) -> (CGFloat, (CGSize) -> (CGFloat, (CGFloat) -> (CGSize, (Bool, ListViewItemUpdateAnimation, ListViewItemApply?) -> Void))) {
         let currentFile = self.file
+        let currentUsesWegramFile = self.arguments?.usesWegramFileAppearance == true
         
         let titleAsyncLayout = TextNode.asyncLayout(self.titleNode)
         let descriptionAsyncLayout = TextNode.asyncLayout(self.descriptionNode)
@@ -572,12 +603,17 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
         let currentMessage = self.message
         let audioTranscriptionState = self.audioTranscriptionState
         let forcedAudioTranscriptionText = self.forcedAudioTranscriptionText
+        let playbackProgressExpanded = self.wegramPlaybackProgressExpanded
         
         return { [weak self] arguments in
             return (CGFloat.greatestFiniteMagnitude, { [weak self] constrainedSize in
+                let usesWegramFile = arguments.usesWegramFileAppearance
+                let usesWegramVoice = arguments.usesWegramVoiceAppearance
+                let showsVoiceProgress = usesWegramVoice && currentMessage?.id == arguments.message.id && playbackProgressExpanded
+                let compactVoice = usesWegramVoice && !showsVoiceProgress
                 let titleFont = Font.regular(floor(arguments.presentationData.fontSize.baseDisplaySize * 16.0 / 17.0))
                 let descriptionFont = Font.with(size: floor(arguments.presentationData.fontSize.baseDisplaySize * 13.0 / 17.0), design: .regular, weight: .regular, traits: [.monospacedNumbers])
-                let durationFont = Font.regular(floor(arguments.presentationData.fontSize.baseDisplaySize * 11.0 / 17.0))
+                let durationFont = Font.regular(floor(arguments.presentationData.fontSize.baseDisplaySize * (compactVoice ? 14 : 11) / 17.0))
                 
                 var updateImageSignal: Signal<(TransformImageArguments) -> DrawingContext?, NoError>?
                 var updatedStatusSignal: Signal<(FileMediaResourceStatus, EngineMediaResourceStatus?), NoError>?
@@ -604,11 +640,14 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                     hasThumbnailImage = hasThumbnail
                 }
                 
+                if usesWegramFile {
+                    hasThumbnail = false
+                    hasThumbnailImage = false
+                }
+                if hasThumbnailImage && (mediaUpdated || currentUsesWegramFile != usesWegramFile) {
+                    updateImageSignal = chatMessageImageFile(account: arguments.context.account, userLocation: .peer(arguments.message.id.peerId), fileReference: .message(message: MessageReference(arguments.message), media: arguments.file), thumbnail: true)
+                }
                 if mediaUpdated {
-                    if hasThumbnailImage {
-                        updateImageSignal = chatMessageImageFile(account: arguments.context.account, userLocation: .peer(arguments.message.id.peerId), fileReference: .message(message: MessageReference(arguments.message), media: arguments.file), thumbnail: true)
-                    }
-                    
                     updatedFetchControls = FetchControls(fetch: { [weak self] userInitiated in
                         if let strongSelf = self {
                             strongSelf.fetchDisposable.set(messageMediaFileInteractiveFetched(context: arguments.context, message: arguments.message, file: arguments.file, userInitiated: userInitiated).startStrict())
@@ -656,10 +695,14 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                     }
                 }
                                 
+                if usesWegramVoice {
+                    consumableContentIcon = consumableContentIcon != nil && arguments.incoming ? WegramVoiceMessageLayout.unreadIcon : nil
+                }
+
                 var candidateTitleString: NSAttributedString?
                 var candidateDescriptionString: NSAttributedString?
                 
-                let messageTheme = arguments.incoming ? arguments.presentationData.theme.theme.chat.message.incoming : arguments.presentationData.theme.theme.chat.message.outgoing
+                let messageTheme = arguments.incoming || usesWegramFile ? arguments.presentationData.theme.theme.chat.message.incoming : arguments.presentationData.theme.theme.chat.message.outgoing
                 let isInstantVideo = arguments.file.isInstantVideo
                 for attribute in arguments.file.attributes {
                     if case let .Video(videoDuration, _, flags, _, _, _) = attribute, flags.contains(.instantRoundVideo) {
@@ -695,8 +738,8 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                         audioDuration = Int32(duration)
                         if voice {
                             isVoice = true
-                            let durationString = stringForDuration(audioDuration)
-                            candidateDescriptionString = NSAttributedString(string: durationString, font: durationFont, textColor: messageTheme.fileDurationColor)
+                            let durationString = compactVoice ? WegramVoiceMessageLayout.duration(audioDuration) : stringForDuration(audioDuration)
+                            candidateDescriptionString = NSAttributedString(string: durationString, font: durationFont, textColor: compactVoice ? messageTheme.primaryTextColor : messageTheme.fileDurationColor)
                             if let waveform = waveform {
                                 audioWaveform = AudioWaveform(bitstream: waveform, bitsPerSample: 5)
                             }
@@ -726,7 +769,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                 if let candidateTitleString = candidateTitleString {
                     titleString = candidateTitleString
                 } else if !isVoice {
-                    titleString = NSAttributedString(string: arguments.file.fileName ?? "File", font: titleFont, textColor: arguments.customTintColor ?? messageTheme.fileTitleColor)
+                    titleString = NSAttributedString(string: arguments.file.fileName ?? "File", font: titleFont, textColor: usesWegramFile ? messageTheme.primaryTextColor : (arguments.customTintColor ?? messageTheme.fileTitleColor))
                 }
                 
                 if let candidateDescriptionString = candidateDescriptionString {
@@ -741,14 +784,18 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                     descriptionString = NSAttributedString(string: descriptionText, font: descriptionFont, textColor: messageTheme.fileDescriptionColor)
                 }
                 
-                var textConstrainedSize = CGSize(width: constrainedSize.width - 44.0 - 8.0, height: constrainedSize.height)
+                var textConstrainedSize = CGSize(width: max(0, constrainedSize.width - (compactVoice ? 36 : (usesWegramVoice ? 56 : 52))), height: constrainedSize.height)
+                if usesWegramFile {
+                    let width = max(0, min(230, constrainedSize.width))
+                    textConstrainedSize.width = WegramFileMessageLayout.textWidth(width)
+                }
                 if hasThumbnail {
                     textConstrainedSize.width -= 80.0
                 }
                 
                 let streamingProgressDiameter: CGFloat = 20.0
                 
-                let (titleLayout, titleApply) = titleAsyncLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: hasThumbnail ? 2 : 1, truncationType: .middle, constrainedSize: textConstrainedSize, alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+                let (titleLayout, titleApply) = titleAsyncLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: (usesWegramFile || hasThumbnail) ? 2 : 1, truncationType: .middle, constrainedSize: textConstrainedSize, alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 let (descriptionLayout, descriptionApply) = descriptionAsyncLayout(TextNodeLayoutArguments(attributedString: descriptionString, backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .middle, constrainedSize: textConstrainedSize, alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
                 
                 let isViewOnceMessage = isVoice && arguments.message.minAutoremoveOrClearTimeout == viewOnceTimeout
@@ -981,10 +1028,13 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                     
                     let calcDuration = max(minVoiceLength, min(maxVoiceLength, CGFloat(audioDuration)))
                     minLayoutWidth = minVoiceWidth + (maxVoiceWidth - minVoiceWidth) * (calcDuration - minVoiceLength) / (maxVoiceLength - minVoiceLength)
-                    if displayTranscribe {
+                    if displayTranscribe && !usesWegramVoice {
                         minLayoutWidth += 30.0 + 8.0
                     }
                     minLayoutWidth = max(descriptionAndStatusWidth + 56, minLayoutWidth)
+                    if usesWegramVoice {
+                        minLayoutWidth = WegramVoiceMessageLayout.contentWidth(duration: audioDuration, labelWidth: descriptionLayout.size.width, availableWidth: constrainedSize.width, showsProgress: showsVoiceProgress)
+                    }
                 } else {
                     minLayoutWidth = max(titleLayout.size.width, descriptionMaxWidth) + 44.0 + 8.0
                 }
@@ -998,6 +1048,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                 }
                 
                 minLayoutWidth = max(minLayoutWidth, textLayout.size.width + horizontalInset)
+                if usesWegramFile { minLayoutWidth = max(0, min(230, constrainedSize.width)) }
                                 
                 let fileIconImage: UIImage?
                 var viewOnceIconImage: UIImage?
@@ -1011,6 +1062,10 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                 }
                 
                 return (minLayoutWidth, { [weak self] boundingWidth in
+                    let compactLayout = WegramVoiceMessageLayout(width: boundingWidth, outgoing: !arguments.incoming, durationSize: descriptionLayout.size, showsProgress: showsVoiceProgress)
+                    let fileLayout = WegramFileMessageLayout(width: boundingWidth, titleSize: titleLayout.size, descriptionSize: descriptionLayout.size)
+                    let progressFrame = usesWegramFile ? fileLayout.controlFrame : (usesWegramVoice ? compactLayout.controlFrame : progressFrame)
+                    let voiceRowHeight = compactLayout.height
                     let titleAndDescriptionHeight = titleLayout.size.height - 1.0 + descriptionLayout.size.height
                     
                     let normHeight: CGFloat
@@ -1021,30 +1076,36 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                             normHeight = 64.0
                         }
                     } else {
-                        normHeight = 44.0
+                        normHeight = usesWegramVoice ? compactLayout.height : 44.0
                     }
-                    let titleFrame = CGRect(origin: CGPoint(x: controlAreaWidth, y: floor((normHeight - titleAndDescriptionHeight) / 2.0)), size: titleLayout.size)
+                    let titleFrame = usesWegramFile ? fileLayout.titleFrame : CGRect(origin: CGPoint(x: controlAreaWidth, y: floor((normHeight - titleAndDescriptionHeight) / 2.0)), size: titleLayout.size)
                     
                     let descriptionFrame: CGRect
-                    if isVoice {
+                    if usesWegramFile {
+                        descriptionFrame = fileLayout.descriptionFrame
+                    } else if usesWegramVoice {
+                        descriptionFrame = compactLayout.durationFrame
+                    } else if isVoice {
                         descriptionFrame = CGRect(origin: CGPoint(x: 56.0, y: 22.0), size: descriptionLayout.size)
                     } else {
                         descriptionFrame = CGRect(origin: CGPoint(x: titleFrame.minX, y: titleFrame.maxY - 1.0), size: descriptionLayout.size)
                     }
                     
                     var fittedLayoutSize: CGSize
-                    if hasThumbnail {
+                    if usesWegramFile {
+                        fittedLayoutSize = CGSize(width: boundingWidth, height: fileLayout.height)
+                    } else if hasThumbnail {
                         let textSizes = titleFrame.union(descriptionFrame).size
                         fittedLayoutSize = CGSize(width: textSizes.width + controlAreaWidth, height: 59.0)
                     } else if isVoice {
-                        fittedLayoutSize = CGSize(width: minLayoutWidth, height: 38.0)
+                        fittedLayoutSize = CGSize(width: usesWegramVoice ? boundingWidth : minLayoutWidth, height: usesWegramVoice ? voiceRowHeight : 38.0)
                     } else {
                         let unionSize = titleFrame.union(descriptionFrame).union(progressFrame).size
                         fittedLayoutSize = CGSize(width: unionSize.width, height: unionSize.height)
                     }
                     
                     if textString != nil {
-                        fittedLayoutSize.width = max(fittedLayoutSize.width + horizontalInset, textLayout.size.width)
+                        fittedLayoutSize.width = usesWegramVoice ? max(fittedLayoutSize.width, textLayout.size.width + horizontalInset) : max(fittedLayoutSize.width + horizontalInset, textLayout.size.width)
                         fittedLayoutSize.height += textLayout.size.height + 5.0
                     }
                     
@@ -1057,16 +1118,21 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                         fittedLayoutSize.width = max(fittedLayoutSize.width, statusSizeAndApply.0.width)
                         fittedLayoutSize.height += statusSizeAndApply.0.height
                         if textString == nil {
-                            if !statusSizeAndApply.0.height.isZero && iconFrame == nil {
-                                statusOffset = -10.0
+                            if usesWegramFile {
+                                statusOffset = statusSizeAndApply.0.height > 0 ? 6 : 0
                                 fittedLayoutSize.height += statusOffset
+                            } else {
+                                if !usesWegramVoice && !statusSizeAndApply.0.height.isZero && iconFrame == nil {
+                                    statusOffset = -10.0
+                                    fittedLayoutSize.height += statusOffset
+                                }
+                                fittedLayoutSize.height += statusHeightAddition
                             }
-                            fittedLayoutSize.height += statusHeightAddition
                         }
                     }
                     
                     let streamingCacheStatusFrame: CGRect
-                    if (isAudio && !isVoice) || arguments.file.previewRepresentations.isEmpty {
+                    if !usesWegramFile && ((isAudio && !isVoice) || arguments.file.previewRepresentations.isEmpty) {
                         streamingCacheStatusFrame = CGRect(origin: CGPoint(x: progressFrame.maxX - streamingProgressDiameter + 2.0, y: progressFrame.maxY - streamingProgressDiameter + 2.0), size: CGSize(width: streamingProgressDiameter, height: streamingProgressDiameter))
                     } else {
                         streamingCacheStatusFrame = CGRect()
@@ -1078,6 +1144,8 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                             strongSelf.presentationData = arguments.presentationData
                             strongSelf.message = arguments.message
                             strongSelf.arguments = arguments
+                            strongSelf.allowsAudioTranscription = isVoice && displayTranscribe
+                            strongSelf.wegramPlaybackProgressExpanded = showsVoiceProgress
                             strongSelf.file = arguments.file
                             
                             let _ = titleApply()
@@ -1086,6 +1154,19 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                             
                             strongSelf.titleNode.frame = titleFrame
                             strongSelf.descriptionNode.frame = descriptionFrame
+                            if usesWegramFile {
+                                let node = strongSelf.wegramFileIconNode ?? ASImageNode()
+                                if strongSelf.wegramFileIconNode == nil {
+                                    strongSelf.wegramFileIconNode = node
+                                    node.isUserInteractionEnabled = false
+                                    strongSelf.insertSubnode(node, belowSubnode: strongSelf.statusContainerNode)
+                                }
+                                node.image = WegramFileMessageLayout.icon(fileName: arguments.file.fileName)
+                                node.frame = fileLayout.controlFrame
+                            } else if let node = strongSelf.wegramFileIconNode {
+                                node.removeFromSupernode()
+                                strongSelf.wegramFileIconNode = nil
+                            }
                             strongSelf.descriptionMeasuringNode.frame = CGRect(origin: CGPoint(), size: descriptionMeasuringLayout.size)
                                     
                             if let updatedAudioTranscriptionState = updatedAudioTranscriptionState {
@@ -1103,19 +1184,28 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                             }
                             
                             if let consumableContentIcon = consumableContentIcon {
+                                if usesWegramVoice {
+                                    strongSelf.consumableContentNode.isHidden = false
+                                }
                                 if strongSelf.consumableContentNode.supernode == nil {
                                     strongSelf.addSubnode(strongSelf.consumableContentNode)
                                 }
                                 if strongSelf.consumableContentNode.image !== consumableContentIcon {
                                     strongSelf.consumableContentNode.image = consumableContentIcon
                                 }
-                                strongSelf.consumableContentNode.frame = CGRect(origin: CGPoint(x: descriptionFrame.maxX + 5.0, y: descriptionFrame.minY + 5.0), size: consumableContentIcon.size)
+                                strongSelf.consumableContentNode.frame = usesWegramVoice
+                                    ? CGRect(x: boundingWidth + 14, y: (voiceRowHeight - consumableContentIcon.size.height) / 2, width: consumableContentIcon.size.width, height: consumableContentIcon.size.height)
+                                    : CGRect(origin: CGPoint(x: descriptionFrame.maxX + 5.0, y: descriptionFrame.minY + 5.0), size: consumableContentIcon.size)
                             } else if strongSelf.consumableContentNode.supernode != nil {
                                 strongSelf.consumableContentNode.removeFromSupernode()
                             }
                             
                             let statusReferenceFrame: CGRect
-                            if let iconFrame = iconFrame {
+                            if usesWegramFile {
+                                statusReferenceFrame = CGRect(x: 0, y: 0, width: boundingWidth, height: fileLayout.height)
+                            } else if usesWegramVoice {
+                                statusReferenceFrame = CGRect(x: 0, y: 0, width: boundingWidth, height: voiceRowHeight)
+                            } else if let iconFrame = iconFrame {
                                 statusReferenceFrame = iconFrame
                             } else {
                                 statusReferenceFrame = progressFrame.offsetBy(dx: 0.0, dy: 8.0)
@@ -1262,7 +1352,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                                 if textString != nil {
                                     statusFrame = CGRect(origin: CGPoint(x: fittedLayoutSize.width - 6.0 - statusSizeAndApply.0.width, y: textFrame.maxY + 4.0), size: statusSizeAndApply.0)
                                 } else {
-                                    statusFrame = CGRect(origin: CGPoint(x: statusReferenceFrame.minX, y: statusReferenceFrame.maxY + statusOffset + statusHeightAddition), size: statusSizeAndApply.0)
+                                    statusFrame = CGRect(origin: CGPoint(x: statusReferenceFrame.minX, y: statusReferenceFrame.maxY + statusOffset + (usesWegramFile ? 0 : statusHeightAddition)), size: statusSizeAndApply.0)
                                 }
                                 if strongSelf.dateAndStatusNode.supernode == nil {
                                     strongSelf.dateAndStatusNode.frame = statusFrame
@@ -1275,9 +1365,9 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                                 strongSelf.dateAndStatusNode.removeFromSupernode()
                             }
                             
-                            if isVoice {
-                                var scrubbingFrame = CGRect(origin: CGPoint(x: 57.0, y: 1.0), size: CGSize(width: boundingWidth - 60.0, height: 18.0))
-                                if displayTranscribe {
+                            if isVoice && (!usesWegramVoice || showsVoiceProgress) {
+                                var scrubbingFrame = CGRect(origin: CGPoint(x: 57.0, y: 1.0), size: CGSize(width: usesWegramVoice ? max(0, boundingWidth - 60) : boundingWidth - 60, height: 18.0))
+                                if displayTranscribe && !usesWegramVoice {
                                     scrubbingFrame.size.width -= 30.0 + 4.0
                                 }
                                 
@@ -1339,7 +1429,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                                 animation.animator.updateFrame(layer: waveformView.layer, frame: scrubbingFrame, completion: nil)
                                 animation.animator.updateFrame(layer: waveformView.componentView!.layer, frame: CGRect(origin: CGPoint(), size: scrubbingFrame.size), completion: nil)
                                 
-                                if displayTranscribe {
+                                if displayTranscribe && !usesWegramVoice {
                                     var added = false
                                     let audioTranscriptionButton: ComponentHostView<Empty>
                                     if let current = strongSelf.audioTranscriptionButton {
@@ -1619,8 +1709,9 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
             animated = false
         }
         
+        let usesWegramFile = arguments.usesWegramFileAppearance
         let incoming = message.effectivelyIncoming(context.account.peerId)
-        let messageTheme = incoming ? presentationData.theme.theme.chat.message.incoming : presentationData.theme.theme.chat.message.outgoing
+        let messageTheme = incoming || usesWegramFile ? presentationData.theme.theme.chat.message.incoming : presentationData.theme.theme.chat.message.outgoing
         
         var isAudio = false
         var isVoice = false
@@ -1639,7 +1730,8 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
             }
         }
         let isViewOnceMessage = isVoice && message.minAutoremoveOrClearTimeout == viewOnceTimeout
-        
+        let compactVoice = arguments.usesWegramVoiceAppearance && !self.wegramPlaybackProgressExpanded
+
         var state: SemanticStatusNodeState
         var streamingState: SemanticStatusNodeState = .none
         
@@ -1684,7 +1776,7 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                 
                 let durationString = stringForDuration(Int32(effectiveDuration), position: playerPosition.flatMap { Int32($0) })
                 let durationFont = Font.regular(floor(presentationData.fontSize.baseDisplaySize * 11.0 / 17.0))
-                downloadingStrings = (durationString, durationString, durationFont)
+                if !compactVoice { downloadingStrings = (durationString, durationString, durationFont) }
                 
                 playbackState = (playerStatus.timestamp, playerDuration, playerStatus.generationTimestamp)
             }
@@ -1783,7 +1875,17 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
         
         let backgroundNodeColor: UIColor
         let foregroundNodeColor: UIColor
-        if self.iconNode != nil {
+        if usesWegramFile {
+            if case .customIcon = state {
+                backgroundNodeColor = .clear
+            } else {
+                backgroundNodeColor = UIColor(white: 0, alpha: 0.45)
+            }
+            foregroundNodeColor = .white
+        } else if compactVoice {
+            backgroundNodeColor = .clear
+            foregroundNodeColor = messageTheme.primaryTextColor
+        } else if self.iconNode != nil {
             backgroundNodeColor = presentationData.theme.theme.chat.message.mediaOverlayControlColors.fillColor
             foregroundNodeColor = .white
         } else {
@@ -1828,8 +1930,9 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
             statusNode.frame = CGRect(origin: CGPoint(), size: progressFrame.size)
         } else if let statusNode = self.statusNode {
             statusNode.backgroundNodeColor = backgroundNodeColor
+            statusNode.foregroundNodeColor = foregroundNodeColor
         }
-        
+
         let effectsEnabled = self.context?.sharedContext.energyUsageSettings.fullTranslucency ?? true
         var showBlobs = false
         if case .pause = state {
@@ -1837,6 +1940,8 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
         } else if case .secretTimeout = state {
             showBlobs = true
         }
+        if compactVoice || usesWegramFile { showBlobs = false }
+        self.playbackAudioLevelNode?.isHidden = compactVoice || usesWegramFile
         if showBlobs, isVoice, self.playbackAudioLevelNode == nil, effectsEnabled {
             let blobFrame = progressFrame.insetBy(dx: -12.0, dy: -12.0)
             let playbackAudioLevelNode = VoiceBlobNode(
@@ -1884,7 +1989,17 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
                     statusNode.layer.animateAlpha(from: 1.0, to: 0.0, duration: 0.2, removeOnCompletion: false)
                 }
             }
-            statusNode.transitionToState(state, animated: animated, synchronous: presentationData.theme.theme.preview, completion: { [weak statusNode] in
+            let displayState: SemanticStatusNodeState
+            if usesWegramFile, case .customIcon = state {
+                displayState = .none
+            } else if compactVoice && (state == .play || state == .pause) {
+                let animateVoice = state == .pause && !UIAccessibility.isReduceMotionEnabled && effectsEnabled
+                let phase = animateVoice ? Int(CACurrentMediaTime() * 2) % 3 + 1 : 3
+                displayState = .customIcon(WegramVoiceMessageLayout.icon(color: messageTheme.primaryTextColor, outgoing: !incoming, phase: phase))
+            } else {
+                displayState = state
+            }
+            statusNode.transitionToState(displayState, animated: animated, synchronous: presentationData.theme.theme.preview, completion: { [weak statusNode] in
                 if state == .none {
                     statusNode?.removeFromSupernode()
                 }
@@ -1953,7 +2068,9 @@ public final class ChatMessageInteractiveFileNode: ASDisplayNode {
             self.fetchingCompactTextNode.attributedText = nil
         }
         
-        let maxFetchingStatusWidth = max(self.titleNode.frame.width, self.descriptionMeasuringNode.frame.width) + 2.0
+        let maxFetchingStatusWidth = usesWegramFile
+            ? WegramFileMessageLayout.textWidth(self.bounds.width)
+            : (arguments.usesWegramVoiceAppearance ? max(0, self.bounds.width - self.descriptionNode.frame.minX) : max(self.titleNode.frame.width, self.descriptionMeasuringNode.frame.width) + 2.0)
         let fetchingInfo = self.fetchingTextNode.updateLayoutInfo(CGSize(width: maxFetchingStatusWidth, height: CGFloat.greatestFiniteMagnitude))
         let fetchingCompactSize = self.fetchingCompactTextNode.updateLayout(CGSize(width: maxFetchingStatusWidth, height: CGFloat.greatestFiniteMagnitude))
         let countSize = self.countNode.updateLayout(size: CGSize(width: maxFetchingStatusWidth, height: CGFloat.greatestFiniteMagnitude), animated: true)

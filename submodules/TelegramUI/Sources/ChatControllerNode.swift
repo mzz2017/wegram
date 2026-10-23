@@ -218,6 +218,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     
     private var skippedShowSearchResultsAsListAnimationOnce: Bool = false
     var inlineSearchResults: ComponentView<Empty>?
+    private var wegramSearchCategories: WegramChatSearchCategoriesView?
+    private var historyAccessibilityBeforeSearchResults: Bool?
     private var inlineSearchResultsReadyDisposable: Disposable?
     private var inlineSearchResultsReady: Bool = false
     private var inlineSearchResultsScrollingState: (domain: ChatSearchDomain, query: String, state: ChatInlineSearchResultsListComponent.ScrollingState)?
@@ -280,6 +282,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     private let inputContextOverTextPanelContainer: ChatControllerTitlePanelNodeContainer
     private var overlayContextPanelNode: ChatInputContextPanelNode?
     
+    private var wegramCustomInputNode: ChatInputNode?
     private(set) var inputNode: ChatInputNode?
     private var disappearingNode: ChatInputNode?
     
@@ -773,6 +776,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         }
         
         self.controllerInteraction.chatIsRotated = historyNodeRotated
+        self.controllerInteraction.wegramVoiceMenusAvailable = chatPresentationInterfaceState.mode == .standard(.default) && chatPresentationInterfaceState.subject == nil
         
         var displayAdPeer: PeerId?
         var tag: MessageTags?
@@ -938,7 +942,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         
         self.navigationBar?.additionalContentNode.addSubnode(self.titleAccessoryPanelContainer)
         
-        self.textInputPanelNode = ChatTextInputPanelNode(context: context, presentationInterfaceState: chatPresentationInterfaceState, presentationContext: ChatPresentationContext(context: context, backgroundNode: backgroundNode), presentController: { [weak self] controller in
+        self.textInputPanelNode = ChatTextInputPanelNode(context: context, presentationInterfaceState: chatPresentationInterfaceState, presentationContext: ChatPresentationContext(context: context, backgroundNode: backgroundNode), usesWegramAppearance: true, presentController: { [weak self] controller in
             self?.interfaceInteraction?.presentController(controller, nil)
         })
         self.textInputPanelNode?.mediaItemViewFactory = { items, existing in
@@ -1817,9 +1821,16 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             previewing = false
         }
         
-        let inputNodeForState = inputNodeForChatPresentationIntefaceState(self.chatPresentationInterfaceState, context: self.context, currentNode: self.inputNode, interfaceInteraction: self.interfaceInteraction, controllerInteraction: self.controllerInteraction, inputPanelNode: self.inputPanelNode, makeMediaInputNode: {
-            return self.makeMediaInputNode()
-        })
+        let inputNodeForState: ChatInputNode?
+        if let node = self.wegramCustomInputNode, case .none = self.chatPresentationInterfaceState.inputMode, self.textInputPanelNode?.usesWegramAttachmentGrid == true, self.chatPresentationInterfaceState.inputTextPanelState.mediaRecordingState == nil {
+            inputNodeForState = node
+        } else {
+            (self.wegramCustomInputNode as? WegramVoiceInputNode)?.cancelResources()
+            self.wegramCustomInputNode = nil
+            inputNodeForState = inputNodeForChatPresentationIntefaceState(self.chatPresentationInterfaceState, context: self.context, currentNode: self.inputNode, interfaceInteraction: self.interfaceInteraction, controllerInteraction: self.controllerInteraction, inputPanelNode: self.inputPanelNode, makeMediaInputNode: {
+                return self.makeMediaInputNode()
+            })
+        }
         
         var insets: UIEdgeInsets
         var inputPanelBottomInsetTerm: CGFloat = 0.0
@@ -1857,6 +1868,9 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         var dismissedOverlayContextPanelNode: ChatInputContextPanelNode?
         
         let inputPanelNodes = inputPanelForChatPresentationIntefaceState(self.chatPresentationInterfaceState, context: self.context, currentPanel: self.inputPanelNode, currentSecondaryPanel: self.secondaryInputPanelNode, textInputPanelNode: self.textInputPanelNode, chatControllerInteraction: self.controllerInteraction, interfaceInteraction: self.interfaceInteraction)
+        if let textInputPanel = inputPanelNodes.primary as? ChatTextInputPanelNode {
+            textInputPanel.wegramHasCustomInput = inputNodeForState != nil
+        }
         
         let inputPanelBottomInset = max(insets.bottom, inputPanelBottomInsetTerm)
         
@@ -2310,7 +2324,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             self.overlayContextPanelNode = nil
         }
         
-        let inputPanelsInset: CGFloat = 8.0
+        let inputPanelsInset: CGFloat = (self.inputPanelNode as? ChatTextInputPanelNode)?.usesWegramAppearance == true ? 0.0 : 8.0
         let accessoryPanelsInset: CGFloat = 8.0
         var inputPanelsHeight: CGFloat = 0.0
         
@@ -3127,9 +3141,44 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         
         self.updatePlainInputSeparator(transition: transition)
         
+        let displaysWegramCategories: Bool
+        if self.controller?.usesWegramNavigation == true, let search = self.chatPresentationInterfaceState.search,
+           case .everything = search.domain, search.query.isEmpty, search.mediaTags == nil,
+           self.chatPresentationInterfaceState.historyFilter == nil, self.chatLocation.peerId != nil {
+            displaysWegramCategories = true
+        } else { displaysWegramCategories = false }
+        if displaysWegramCategories {
+            let categories: WegramChatSearchCategoriesView
+            if let current = self.wegramSearchCategories { categories = current } else {
+                categories = WegramChatSearchCategoriesView()
+                self.wegramSearchCategories = categories
+                self.contentContainerNode.contentNode.view.addSubview(categories)
+                categories.selectedCategory = { [weak self] tags in
+                    guard let self, let owner = self.controller, owner.usesWegramNavigation, owner.view.window != nil,
+                          let search = owner.presentationInterfaceState.search, search.query.isEmpty, search.mediaTags == nil,
+                          case .everything = search.domain, owner.presentationInterfaceState.historyFilter == nil else { return }
+                    if let tags {
+                        owner.updateChatPresentationInterfaceState(animated: true, interactive: true, { state in
+                            guard let current = state.search else { return state }
+                            return state.updatedSearch(current.withUpdatedMediaTags(tags)).updatedDisplayHistoryFilterAsList(true)
+                        })
+                    } else {
+                        self.interfaceInteraction?.openCalendarSearch()
+                    }
+                }
+            }
+            categories.isHidden = false
+            categories.update(strings: self.chatPresentationInterfaceState.strings, dark: self.chatPresentationInterfaceState.theme.overallDarkAppearance, fontSize: self.controller?.presentationData.listsFontSize.baseDisplaySize ?? 17)
+            categories.bottomInset = max(layout.inputHeight ?? 0, layout.intrinsicInsets.bottom)
+            categories.frame = CGRect(x: 0, y: navigationBarHeight, width: layout.size.width, height: max(0, layout.size.height - navigationBarHeight))
+            self.contentContainerNode.contentNode.view.bringSubviewToFront(categories)
+        } else {
+            self.wegramSearchCategories?.isHidden = true
+        }
+
         var displayInlineSearch = false
         if self.chatPresentationInterfaceState.displayHistoryFilterAsList {
-            if self.chatPresentationInterfaceState.historyFilter != nil || self.chatPresentationInterfaceState.search?.resultsState != nil {
+            if self.chatPresentationInterfaceState.historyFilter != nil || self.chatPresentationInterfaceState.search?.resultsState != nil || self.chatPresentationInterfaceState.search?.mediaTags != nil {
                 displayInlineSearch = true
             }
             if self.alwaysShowSearchResultsAsList {
@@ -3166,6 +3215,16 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             }
         }
         
+        if (displayInlineSearch || displaysWegramCategories) && self.controller?.usesWegramNavigation == true {
+            if self.historyAccessibilityBeforeSearchResults == nil {
+                self.historyAccessibilityBeforeSearchResults = self.historyNodeContainer.view.accessibilityElementsHidden
+            }
+            self.historyNodeContainer.view.accessibilityElementsHidden = true
+        } else if let previousValue = self.historyAccessibilityBeforeSearchResults {
+            self.historyAccessibilityBeforeSearchResults = nil
+            self.historyNodeContainer.view.accessibilityElementsHidden = previousValue
+        }
+
         if displayInlineSearch {
             let peerId = self.chatPresentationInterfaceState.chatLocation.peerId
             
@@ -3180,13 +3239,13 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             }
             
             let mappedContents: ChatInlineSearchResultsListComponent.Contents
-            if let _ = self.chatPresentationInterfaceState.search?.resultsState {
-                mappedContents = .search(query: self.chatPresentationInterfaceState.search?.query ?? "", includeSavedPeers: self.alwaysShowSearchResultsAsList && self.includeSavedPeersInSearchResults)
+            if self.chatPresentationInterfaceState.search?.resultsState != nil || self.chatPresentationInterfaceState.search?.mediaTags != nil {
+                mappedContents = .search(query: self.chatPresentationInterfaceState.search?.query ?? "", includeSavedPeers: self.alwaysShowSearchResultsAsList && self.includeSavedPeersInSearchResults && self.chatPresentationInterfaceState.search?.mediaTags == nil)
             } else if let historyFilter = self.chatPresentationInterfaceState.historyFilter {
                 mappedContents = .tag(historyFilter.customTag)
             } else if let search = self.chatPresentationInterfaceState.search, self.alwaysShowSearchResultsAsList {
                 if !search.query.isEmpty {
-                    mappedContents = .search(query: search.query, includeSavedPeers: self.alwaysShowSearchResultsAsList && self.includeSavedPeersInSearchResults)
+                    mappedContents = .search(query: search.query, includeSavedPeers: self.alwaysShowSearchResultsAsList && self.includeSavedPeersInSearchResults && self.chatPresentationInterfaceState.search?.mediaTags == nil)
                 } else {
                     mappedContents = .empty
                 }
@@ -3222,7 +3281,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                     contents: mappedContents,
                     insets: childContentInsets,
                     inputHeight: layout.inputHeight ?? 0.0,
-                    showEmptyResults: self.showListEmptyResults,
+                    showEmptyResults: self.showListEmptyResults || self.chatPresentationInterfaceState.search?.mediaTags != nil,
                     initialScrollingState: self.inlineSearchResultsScrollingState?.state,
                     messageSelected: { [weak self] message in
                         guard let self else {
@@ -3467,6 +3526,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                                     return
                                 }
                                 
+                                guard controller.searchState?.query == currentSearchState.query, controller.searchState?.location == currentSearchState.location else { return }
                                 controller.searchResult.set(.single((results, updatedState, currentSearchState.location)))
                                 
                                 var navigateIndex: MessageIndex?
@@ -3497,7 +3557,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                                 controller.updateItemNodesSearchTextHighlightStates()
                             })
                         }
-                    }
+                    },
+                    usesWegramAppearance: self.controller?.usesWegramNavigation == true
                 )),
                 environment: {},
                 containerSize: layout.size
@@ -3578,6 +3639,9 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             transition.updateAlpha(node: self.backgroundNode, alpha: 1.0)
         }
         
+        if displaysWegramCategories, let categories = self.wegramSearchCategories {
+            self.contentContainerNode.contentNode.view.bringSubviewToFront(categories)
+        }
         transition.updateAlpha(node: self.navigateButtons, alpha: showNavigateButtons ? 1.0 : 0.0)
 
         let listBottomInset = self.historyNode.insets.top
@@ -3701,6 +3765,11 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         return result
     }
     
+    func cancelSearchResultsPagination() {
+        self.loadMoreSearchResultsDisposable?.dispose()
+        self.loadMoreSearchResultsDisposable = nil
+    }
+
     func updateChatPresentationInterfaceState(_ chatPresentationInterfaceState: ChatPresentationInterfaceState, transition: ContainedViewLayoutTransition, interactive: Bool, forceLayout: Bool, completion: @escaping (ContainedViewLayoutTransition) -> Void) {
         self.selectedMessages = chatPresentationInterfaceState.interfaceState.selectionState?.selectedIds
         
@@ -3747,6 +3816,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             
             let updateInputTextState = self.chatPresentationInterfaceState.interfaceState.effectiveInputState != chatPresentationInterfaceState.interfaceState.effectiveInputState
             self.chatPresentationInterfaceState = chatPresentationInterfaceState
+            self.controllerInteraction.wegramVoiceMenusAvailable = chatPresentationInterfaceState.mode == .standard(.default) && chatPresentationInterfaceState.subject == nil
             self.updateNavigationBarPassthroughTouches()
 
             self.updateRichMediaPreuploadNeeds()
@@ -3844,12 +3914,17 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                     if !self.chatPresentationInterfaceState.hasSearchTags {
                         activate = true
                     }
-                    self.searchNavigationNode = ChatSearchNavigationContentNode(context: self.context, theme: self.chatPresentationInterfaceState.theme, strings: self.chatPresentationInterfaceState.strings, chatLocation: self.chatPresentationInterfaceState.chatLocation, interaction: interfaceInteraction, presentationInterfaceState: self.chatPresentationInterfaceState)
+                    self.searchNavigationNode = ChatSearchNavigationContentNode(context: self.context, theme: self.chatPresentationInterfaceState.theme, strings: self.chatPresentationInterfaceState.strings, chatLocation: self.chatPresentationInterfaceState.chatLocation, interaction: interfaceInteraction, presentationInterfaceState: self.chatPresentationInterfaceState, usesWegramAppearance: self.controller?.usesWegramNavigation == true)
                 }
                 if let navigationBar = self.navigationBar {
                     navigationBar.setContentNode(self.searchNavigationNode, animated: transitionIsAnimated)
                 } else {
                     self.controller?.customNavigationBarContentNode = self.searchNavigationNode
+                }
+                self.searchNavigationNode?.openSearchOptions = { [weak self] in
+                    guard let self, self.controller?.usesWegramNavigation == true else { return }
+                    let panel = (self.inputPanelNode as? ChatTagSearchInputPanelNode) ?? (self.secondaryInputPanelNode as? ChatTagSearchInputPanelNode)
+                    panel?.presentWegramSearchOptions()
                 }
                 self.searchNavigationNode?.update(presentationInterfaceState: self.chatPresentationInterfaceState)
                 
@@ -4004,6 +4079,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         if let _ = self.chatPresentationInterfaceState.inputTextPanelState.mediaRecordingState {
             return
         }
+        self.dismissWegramAttachments()
         
         switch self.chatPresentationInterfaceState.inputMode {
         case .none:
@@ -4061,6 +4137,36 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         self.setNeedsLayout()
     }
     
+    func showWegramAttachments(items: [WegramAttachmentInputNode.Item]) {
+        (self.wegramCustomInputNode as? WegramVoiceInputNode)?.cancelResources()
+        let node = WegramAttachmentInputNode(items: items)
+        node.interfaceInteraction = self.interfaceInteraction
+        self.wegramCustomInputNode = node
+        self.interfaceInteraction?.updateInputModeAndDismissedButtonKeyboardMessageId { state in (.none, state.interfaceState.messageActionsState.closedButtonKeyboardMessageId) }
+        self.requestLayout(.animated(duration: 0.25, curve: .easeInOut))
+    }
+
+    func showWegramVoiceInput(context: AccountContext, language: String, presentationData: PresentationData, present: @escaping (ViewController) -> Void, acceptText: @escaping (String) -> Bool) {
+        (self.wegramCustomInputNode as? WegramVoiceInputNode)?.cancelResources()
+        let node = WegramVoiceInputNode(context: context, language: language, presentationData: presentationData, present: present, acceptText: acceptText)
+        node.interfaceInteraction = self.interfaceInteraction
+        node.isCurrent = { [weak self, weak node] in
+            guard let self, let node else { return false }
+            return self.wegramCustomInputNode === node && self.inputPanelNode === self.textInputPanelNode
+        }
+        self.wegramCustomInputNode = node
+        self.interfaceInteraction?.updateInputModeAndDismissedButtonKeyboardMessageId { state in (.none, state.interfaceState.messageActionsState.closedButtonKeyboardMessageId) }
+        self.requestLayout(.animated(duration: 0.25, curve: .easeInOut))
+    }
+
+    @discardableResult func dismissWegramAttachments() -> Bool {
+        guard self.wegramCustomInputNode != nil else { return false }
+        (self.wegramCustomInputNode as? WegramVoiceInputNode)?.cancelResources()
+        self.wegramCustomInputNode = nil
+        self.requestLayout(.animated(duration: 0.25, curve: .easeInOut))
+        return true
+    }
+
     private func makeMediaInputNode() -> ChatInputNode? {
         guard let inputMediaNodeData = self.inputMediaNodeData else {
             return nil

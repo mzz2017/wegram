@@ -761,97 +761,10 @@ func openResolvedUrlImpl(
                 controller?.dismiss()
             })
             dismissInput()
-        case let .theme(slug):
-            let signal = getTheme(account: context.account, slug: slug)
-            |> mapToSignal { themeInfo -> Signal<(Data?, TelegramThemeSettings?, TelegramTheme), GetThemeError> in
-                return Signal<(Data?, TelegramThemeSettings?, TelegramTheme), GetThemeError> { subscriber in
-                    let disposables = DisposableSet()
-                    if let settings = themeInfo.settings?.first {
-                        subscriber.putNext((nil, settings, themeInfo))
-                        subscriber.putCompletion()
-                    } else if let resource = themeInfo.file?.resource {
-                        disposables.add(context.engine.resources.fetch(reference: .standalone(resource: resource), userLocation: .other, userContentType: .other).start())
-                        
-                        let maybeFetched = context.sharedContext.accountManager.resources.data(resource: EngineMediaResource(resource))
-                        |> mapToSignal { maybeData -> Signal<Data?, NoError> in
-                            if maybeData.isComplete {
-                                let loadedData = try? Data(contentsOf: URL(fileURLWithPath: maybeData.path), options: [])
-                                return .single(loadedData)
-                            } else {
-                                return context.engine.resources.data(resource: EngineMediaResource(resource))
-                                |> map { next -> Data? in
-                                    if next.availableSize > 0, let data = try? Data(contentsOf: URL(fileURLWithPath: next.path), options: []) {
-                                        context.sharedContext.accountManager.resources.storeResourceData(id: EngineMediaResource.Id(resource.id), data: data)
-                                        return data
-                                    } else {
-                                        return nil
-                                    }
-                                }
-                            }
-                        }
-                   
-                        disposables.add(maybeFetched.start(next: { data in
-                            if let data = data {
-                                subscriber.putNext((data, nil, themeInfo))
-                                subscriber.putCompletion()
-                            }
-                        }))
-                    } else {
-                        subscriber.putError(.unsupported)
-                    }
-                    
-                    return disposables
-                }
-            }
-            
-            var cancelImpl: (() -> Void)?
-            let progressSignal = Signal<Never, NoError> { subscriber in
-                let controller = OverlayStatusController(theme: presentationData.theme,  type: .loading(cancelled: {
-                    cancelImpl?()
-                }))
-                present(controller, nil)
-                return ActionDisposable { [weak controller] in
-                    Queue.mainQueue().async() {
-                        controller?.dismiss()
-                    }
-                }
-            }
-            |> runOn(Queue.mainQueue())
-            |> delay(0.35, queue: Queue.mainQueue())
-            
-            let disposable = MetaDisposable()
-            let progressDisposable = progressSignal.start()
-            cancelImpl = {
-                disposable.set(nil)
-            }
-            disposable.set((signal
-            |> afterDisposed {
-                Queue.mainQueue().async {
-                    progressDisposable.dispose()
-                }
-            }
-            |> deliverOnMainQueue).start(next: { dataAndTheme in
-                if let data = dataAndTheme.0 {
-                    if let theme = makePresentationTheme(data: data) {
-                        let previewController = ThemePreviewController(context: context, previewTheme: theme, source: .theme(dataAndTheme.2))
-                        navigationController?.pushViewController(previewController)
-                    }
-                } else if let settings = dataAndTheme.1 {
-                    if let theme = makePresentationTheme(mediaBox: context.sharedContext.accountManager.mediaBox, themeReference: .builtin(PresentationBuiltinThemeReference(baseTheme: settings.baseTheme)), accentColor: UIColor(argb: settings.accentColor), backgroundColors: [], bubbleColors: settings.messageColors, wallpaper: settings.wallpaper) {
-                        let previewController = ThemePreviewController(context: context, previewTheme: theme, source: .theme(dataAndTheme.2))
-                        navigationController?.pushViewController(previewController)
-                    }
-                }
-            }, error: { error in
-                let errorText: String
-                switch error {
-                    case .generic, .slugInvalid:
-                        errorText = presentationData.strings.Theme_ErrorNotFound
-                    case .unsupported:
-                        errorText = presentationData.strings.Theme_Unsupported
-                }
-                present(textAlertController(context: context, updatedPresentationData: updatedPresentationData, title: nil, text: errorText, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil)
-            }))
+        case .theme:
+            // WeGram does not let users theme the app, so a theme link is answered as unsupported
+            // instead of being previewed and installed.
+            present(textAlertController(context: context, updatedPresentationData: updatedPresentationData, title: nil, text: presentationData.strings.Theme_Unsupported, actions: [TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: {})]), nil)
             dismissInput()
         case let .contacts(section):
             if case .new = section {
@@ -1005,16 +918,8 @@ func openResolvedUrlImpl(
             case let .legacy(legacySection):
                 switch legacySection {
                 case .theme:
-                    if let navigationController {
-                        let controller = themeSettingsController(context: context)
-                        controller.navigationPresentation = .modal
-                        
-                        var controllers = navigationController.viewControllers
-                        controllers = controllers.filter { !($0 is ThemeSettingsController) }
-                        controllers.append(controller)
-                        
-                        navigationController.setViewControllers(controllers, animated: true)
-                    }
+                    // WeGram does not expose Telegram's theme settings.
+                    break
                 case .devices:
                     if let navigationController {
                         let activeSessions = deferred { () -> Signal<(ActiveSessionsContext, Int, WebSessionsContext), NoError> in

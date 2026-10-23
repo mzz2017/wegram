@@ -16,6 +16,68 @@ import WalletContext
 import WalletSendScreen
 
 extension PeerInfoScreenNode {
+
+    /// Shares this contact's card to chats (Telegram's ••• Share Contact; also WeGram's 把他推荐给朋友).
+    func openShareContact(peer: TelegramUser, phone: String) {
+        let strongSelf = self
+        let contact = TelegramMediaContact(firstName: peer.firstName ?? "", lastName: peer.lastName ?? "", phoneNumber: phone, peerId: peer.id, vCardData: nil)
+        let shareController = strongSelf.context.sharedContext.makeShareController(context: strongSelf.context, params: ShareControllerParams(subject: .media(.standalone(media: contact), nil), updatedPresentationData: strongSelf.controller?.updatedPresentationData, completed: { [weak self] peerIds in
+            if let strongSelf = self {
+                let _ = (strongSelf.context.engine.data.get(
+                    EngineDataList(
+                        peerIds.map(TelegramEngine.EngineData.Item.Peer.Peer.init)
+                    )
+                )
+                |> deliverOnMainQueue).startStandalone(next: { [weak self] peerList in
+                    guard let strongSelf = self else {
+                        return
+                    }
+
+                    let peers = peerList.compactMap { $0 }
+
+                    let presentationData = strongSelf.context.sharedContext.currentPresentationData.with { $0 }
+
+                    let text: String
+                    var savedMessages = false
+                    if peerIds.count == 1, let peerId = peerIds.first, peerId == strongSelf.context.account.peerId {
+                        text = presentationData.strings.UserInfo_ContactForwardTooltip_SavedMessages_One
+                        savedMessages = true
+                    } else {
+                        if peers.count == 1, let peer = peers.first {
+                            let peerName = peer.id == strongSelf.context.account.peerId ? presentationData.strings.DialogList_SavedMessages : peer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
+                            text = presentationData.strings.UserInfo_ContactForwardTooltip_Chat_One(peerName).string
+                        } else if peers.count == 2, let firstPeer = peers.first, let secondPeer = peers.last {
+                            let firstPeerName = firstPeer.id == strongSelf.context.account.peerId ? presentationData.strings.DialogList_SavedMessages : firstPeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
+                            let secondPeerName = secondPeer.id == strongSelf.context.account.peerId ? presentationData.strings.DialogList_SavedMessages : secondPeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
+                            text = presentationData.strings.UserInfo_ContactForwardTooltip_TwoChats_One(firstPeerName, secondPeerName).string
+                        } else if let peer = peers.first {
+                            let peerName = peer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
+                            text = presentationData.strings.UserInfo_ContactForwardTooltip_ManyChats_One(peerName, "\(peers.count - 1)").string
+                        } else {
+                            text = ""
+                        }
+                    }
+
+                    strongSelf.controller?.present(UndoOverlayController(presentationData: presentationData, content: .forward(savedMessages: savedMessages, text: text), elevatedLayout: false, animateInAsReplacement: true, action: { action in
+                        if savedMessages, let self, action == .info {
+                            let _ = (self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: self.context.account.peerId))
+                            |> deliverOnMainQueue).start(next: { [weak self] peer in
+                                guard let self, let peer else {
+                                    return
+                                }
+                                guard let navigationController = self.controller?.navigationController as? NavigationController else {
+                                    return
+                                }
+                                self.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: self.context, chatLocation: .peer(peer), forceOpenChat: true))
+                            })
+                        }
+                        return false
+                    }), in: .current)
+                })
+            }
+        }))
+        strongSelf.controller?.present(shareController, in: .window(.root))
+    }
     func performButtonAction(key: PeerInfoHeaderButtonKey, buttonNode: PeerInfoHeaderButtonNode?, gesture: ContextGesture?) {
         guard let controller = self.controller else {
             return
@@ -395,6 +457,10 @@ extension PeerInfoScreenNode {
                     return .single(items)
                 }
                 
+                if let controller = strongSelf.controller, let item = controller.wegramPinnedMessageMenuItem?(controller) {
+                    items.append(item)
+                }
+
                 let allHeaderButtons = Set(peerInfoHeaderButtons(peer: peer, cachedData: data.cachedData, isOpenedFromChat: strongSelf.isOpenedFromChat, isExpanded: false, videoCallsEnabled: strongSelf.videoCallsEnabled, isSecretChat: strongSelf.peerId.namespace == Namespaces.Peer.SecretChat, isContact: strongSelf.data?.isContact ?? false, threadInfo: data.threadData?.info))
                 let headerButtons = Set(peerInfoHeaderButtons(peer: peer, cachedData: data.cachedData, isOpenedFromChat: strongSelf.isOpenedFromChat, isExpanded: true, videoCallsEnabled: strongSelf.videoCallsEnabled, isSecretChat: strongSelf.peerId.namespace == Namespaces.Peer.SecretChat, isContact: strongSelf.data?.isContact ?? false, threadInfo: strongSelf.data?.threadData?.info))
                 
@@ -479,15 +545,8 @@ extension PeerInfoScreenNode {
                 }
                 
                 if case let .user(user) = peer {
-                    if user.botInfo == nil && strongSelf.data?.encryptionKeyFingerprint == nil && !user.isDeleted {
-                        items.append(.action(ContextMenuActionItem(text: presentationData.strings.UserInfo_ChangeWallpaper, icon: { theme in
-                            generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/ApplyTheme"), color: theme.contextMenu.primaryColor)
-                        }, action: { _, f in
-                            f(.dismissWithoutContent)
-                            
-                            self?.openChatForThemeChange()
-                        })))
-                    }
+                    // WeGram has no per-chat themes, so there is no "Change Wallpaper" item (it opened the
+                    // chat theme picker).
                                         
                     if let _ = user.botInfo {
                         if user.addressName != nil {
@@ -572,63 +631,7 @@ extension PeerInfoScreenNode {
                             f(.dismissWithoutContent)
                             
                             if let strongSelf = self {
-                                let contact = TelegramMediaContact(firstName: peer.firstName ?? "", lastName: peer.lastName ?? "", phoneNumber: phone, peerId: peer.id, vCardData: nil)
-                                let shareController = strongSelf.context.sharedContext.makeShareController(context: strongSelf.context, params: ShareControllerParams(subject: .media(.standalone(media: contact), nil), updatedPresentationData: strongSelf.controller?.updatedPresentationData, completed: { [weak self] peerIds in
-                                    if let strongSelf = self {
-                                        let _ = (strongSelf.context.engine.data.get(
-                                            EngineDataList(
-                                                peerIds.map(TelegramEngine.EngineData.Item.Peer.Peer.init)
-                                            )
-                                        )
-                                        |> deliverOnMainQueue).startStandalone(next: { [weak self] peerList in
-                                            guard let strongSelf = self else {
-                                                return
-                                            }
-
-                                            let peers = peerList.compactMap { $0 }
-
-                                            let presentationData = strongSelf.context.sharedContext.currentPresentationData.with { $0 }
-
-                                            let text: String
-                                            var savedMessages = false
-                                            if peerIds.count == 1, let peerId = peerIds.first, peerId == strongSelf.context.account.peerId {
-                                                text = presentationData.strings.UserInfo_ContactForwardTooltip_SavedMessages_One
-                                                savedMessages = true
-                                            } else {
-                                                if peers.count == 1, let peer = peers.first {
-                                                    let peerName = peer.id == strongSelf.context.account.peerId ? presentationData.strings.DialogList_SavedMessages : peer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
-                                                    text = presentationData.strings.UserInfo_ContactForwardTooltip_Chat_One(peerName).string
-                                                } else if peers.count == 2, let firstPeer = peers.first, let secondPeer = peers.last {
-                                                    let firstPeerName = firstPeer.id == strongSelf.context.account.peerId ? presentationData.strings.DialogList_SavedMessages : firstPeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
-                                                    let secondPeerName = secondPeer.id == strongSelf.context.account.peerId ? presentationData.strings.DialogList_SavedMessages : secondPeer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
-                                                    text = presentationData.strings.UserInfo_ContactForwardTooltip_TwoChats_One(firstPeerName, secondPeerName).string
-                                                } else if let peer = peers.first {
-                                                    let peerName = peer.displayTitle(strings: presentationData.strings, displayOrder: presentationData.nameDisplayOrder)
-                                                    text = presentationData.strings.UserInfo_ContactForwardTooltip_ManyChats_One(peerName, "\(peers.count - 1)").string
-                                                } else {
-                                                    text = ""
-                                                }
-                                            }
-
-                                            strongSelf.controller?.present(UndoOverlayController(presentationData: presentationData, content: .forward(savedMessages: savedMessages, text: text), elevatedLayout: false, animateInAsReplacement: true, action: { action in
-                                                if savedMessages, let self, action == .info {
-                                                    let _ = (self.context.engine.data.get(TelegramEngine.EngineData.Item.Peer.Peer(id: self.context.account.peerId))
-                                                    |> deliverOnMainQueue).start(next: { [weak self] peer in
-                                                        guard let self, let peer else {
-                                                            return
-                                                        }
-                                                        guard let navigationController = self.controller?.navigationController as? NavigationController else {
-                                                            return
-                                                        }
-                                                        self.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(navigationController: navigationController, context: self.context, chatLocation: .peer(peer), forceOpenChat: true))
-                                                    })
-                                                }
-                                                return false
-                                            }), in: .current)
-                                        })
-                                    }
-                                }))
-                                strongSelf.controller?.present(shareController, in: .window(.root))
+                                strongSelf.openShareContact(peer: peer, phone: phone)
                             }
                         })))
                     }

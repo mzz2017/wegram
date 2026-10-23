@@ -390,16 +390,7 @@ public class ChatMessageInstantVideoItemNode: ChatMessageItemView, ASGestureReco
             }
             
             var layoutInsets = layoutConstants.instantVideo.insets
-            if dateHeaderAtBottom.hasDate && dateHeaderAtBottom.hasTopic {
-                layoutInsets.top += layoutConstants.timestampDateAndTopicHeaderHeight
-            } else {
-                if dateHeaderAtBottom.hasDate {
-                    layoutInsets.top += layoutConstants.timestampHeaderHeight
-                }
-                if dateHeaderAtBottom.hasTopic {
-                    layoutInsets.top += layoutConstants.timestampHeaderHeight
-                }
-            }
+            layoutInsets.top += chatMessageDateHeaderSpacing(headers: item.headers, hasDate: dateHeaderAtBottom.hasDate, hasTopic: dateHeaderAtBottom.hasTopic, constants: layoutConstants)
             
             var deliveryFailedInset: CGFloat = 0.0
             if isFailed {
@@ -1194,6 +1185,7 @@ public class ChatMessageInstantVideoItemNode: ChatMessageItemView, ASGestureReco
         guard let item = self.item else {
             return
         }
+        self.selectionNode?.updateAppearance(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, usesWegramAppearance: item.usesWegramSelectionAppearance)
         
         if case let .replyThread(replyThreadMessage) = item.chatLocation, replyThreadMessage.effectiveTopId == item.message.id {
             return
@@ -1215,7 +1207,7 @@ public class ChatMessageInstantVideoItemNode: ChatMessageItemView, ASGestureReco
                 selectionNode.updateSelected(selected, animated: animated)
                 self.subnodeTransform = CATransform3DMakeTranslation(offset, 0.0, 0.0);
             } else {
-                let selectionNode = ChatMessageSelectionNode(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, toggle: { [weak self] value in
+                let selectionNode = ChatMessageSelectionNode(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, usesWegramAppearance: item.usesWegramSelectionAppearance, toggle: { [weak self] value in
                     if let strongSelf = self, let item = strongSelf.item {
                         item.controllerInteraction.toggleMessagesSelection([item.message.id], value)
                     }

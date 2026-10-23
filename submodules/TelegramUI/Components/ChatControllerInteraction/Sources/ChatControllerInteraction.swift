@@ -341,6 +341,7 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
     public var canPlayMedia: Bool = false
     public var hiddenMedia: [EngineMessage.Id: [EngineRawMedia]] = [:]
     public var expandedTranslationMessageStableIds: Set<UInt32> = Set()
+    public let wegramExpandedMediaGroups = Atomic<Set<UInt32>>(value: [])
     public var selectionState: ChatInterfaceSelectionState?
     public var highlightedState: ChatInterfaceHighlightedState?
     public var contextHighlightedState: ChatInterfaceHighlightedState?
@@ -363,6 +364,7 @@ public final class ChatControllerInteraction: ChatControllerInteractionProtocol 
     public var recommendedChannelsOpenUp: Bool = false
     public var enableFullTranslucency: Bool = true
     public var chatIsRotated: Bool = true
+    public var wegramVoiceMenusAvailable: Bool = false
     public var canReadHistory: Bool = false
     public var summarizedMessageIds: Set<EngineMessage.Id> = Set()
     public var focusedTextInputIsMedia: Bool = false

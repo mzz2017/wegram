@@ -13,6 +13,13 @@ import SwiftSignalKit
 public enum ChatMessageForwardInfoType: Equatable {
     case bubble(incoming: Bool)
     case standalone
+
+    public func appearanceType(bubbleCorners: PresentationChatBubbleCorners) -> ChatMessageForwardInfoType {
+        if case .bubble = self, bubbleCorners.usesWegramShape && bubbleCorners.usesWegramNeutralFill {
+            return .bubble(incoming: true)
+        }
+        return self
+    }
 }
 
 private final class InfoButtonNode: HighlightableButtonNode {
@@ -287,6 +294,7 @@ public class ChatMessageForwardInfoNode: ASDisplayNode {
         let viaBotNodeLayout = TextNode.asyncLayout(maybeNode?.viaBotNode)
         
         return { context, presentationData, strings, type, peer, authorName, inlineBotName, psaType, storyData, constrainedSize in
+            let appearanceType = type.appearanceType(bubbleCorners: presentationData.chatBubbleCorners)
             let fontSize = floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)
             let prefixFont = Font.regular(fontSize)
             let peerFont = Font.medium(fontSize)
@@ -313,7 +321,7 @@ public class ChatMessageForwardInfoNode: ASDisplayNode {
             let titleString: PresentationStrings.FormattedString
             var authorString: String?
             
-            switch type {
+            switch appearanceType {
             case let .bubble(incoming):
                 if let psaType = psaType {
                     titleColor = incoming ? presentationData.theme.theme.chat.message.incoming.polls.barPositive : presentationData.theme.theme.chat.message.outgoing.polls.barPositive
@@ -416,14 +424,14 @@ public class ChatMessageForwardInfoNode: ASDisplayNode {
                 }
                 
                 if peer.isFake {
-                    switch type {
+                    switch appearanceType {
                     case let .bubble(incoming):
                         currentCredibilityIconImage = PresentationResourcesChatList.fakeIcon(presentationData.theme.theme, strings: presentationData.strings, type: incoming ? .regular : .outgoing)
                     case .standalone:
                         currentCredibilityIconImage = PresentationResourcesChatList.fakeIcon(presentationData.theme.theme, strings: presentationData.strings, type: .service)
                     }
                 } else if peer.isScam {
-                    switch type {
+                    switch appearanceType {
                     case let .bubble(incoming):
                         currentCredibilityIconImage = PresentationResourcesChatList.scamIcon(presentationData.theme.theme, strings: presentationData.strings, type: incoming ? .regular : .outgoing)
                     case .standalone:
@@ -606,7 +614,7 @@ public class ChatMessageForwardInfoNode: ASDisplayNode {
                     }
                     
                     let imageType: ChatExpiredStoryIndicatorType
-                    switch type {
+                    switch appearanceType {
                     case .standalone:
                         imageType = .free
                     case let .bubble(incoming):
@@ -657,7 +665,7 @@ public class ChatMessageForwardInfoNode: ASDisplayNode {
                     let infoButtonSize = CGSize(width: 32.0, height: 32.0)
                     let infoButtonFrame = CGRect(origin: CGPoint(x: width - infoButtonSize.width - 2.0, y: 1.0), size: infoButtonSize)
                     infoNode.frame = infoButtonFrame
-                    infoNode.update(size: infoButtonFrame.size, theme: presentationData.theme, type: type)
+                    infoNode.update(size: infoButtonFrame.size, theme: presentationData.theme, type: appearanceType)
                 } else if let infoNode = node.infoNode {
                     node.infoNode = nil
                     infoNode.removeFromSupernode()

@@ -16,6 +16,8 @@ import WallpaperBackgroundNode
 import ChatControllerInteraction
 import AvatarVideoNode
 import ChatMessageItem
+import ChatMessageItemCommon
+import ChatHistoryEntry
 import AvatarNode
 import ComponentFlow
 import EmojiStatusComponent
@@ -56,6 +58,7 @@ public final class ChatMessageDateHeader: ListViewItemHeader {
     }
     
     private let timestamp: Int32
+    private let timeGroupTimestamp: Int32?
     private let roundedTimestamp: Int32
     private let scheduled: Bool
     public let displayHeader: HeaderData?
@@ -68,8 +71,9 @@ public final class ChatMessageDateHeader: ListViewItemHeader {
     public let context: AccountContext
     public let action: ((Int32, Bool) -> Void)?
     
-    public init(timestamp: Int32, separableThreadId: Int64?, scheduled: Bool, displayHeader: HeaderData?, presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction?, context: AccountContext, action: ((Int32, Bool) -> Void)? = nil) {
+    public init(timestamp: Int32, separableThreadId: Int64?, scheduled: Bool, displayHeader: HeaderData?, presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction?, context: AccountContext, timeGroupTimestamp: Int32? = nil, action: ((Int32, Bool) -> Void)? = nil) {
         self.timestamp = timestamp
+        self.timeGroupTimestamp = timeGroupTimestamp
         self.scheduled = scheduled
         self.displayHeader = displayHeader
         self.presentationData = presentationData
@@ -80,9 +84,9 @@ public final class ChatMessageDateHeader: ListViewItemHeader {
         if let _ = self.displayHeader {
             self.idValue = ChatMessageDateHeader.Id(roundedTimestamp: 0, separableThreadId: separableThreadId)
             self.id = ListViewItemNode.HeaderId(space: 3, id: self.idValue)
-            self.stackingId = ListViewItemNode.HeaderId(space: 2, id: ChatMessageDateHeader.Id(roundedTimestamp: Int64(self.roundedTimestamp), separableThreadId: nil))
+            self.stackingId = ListViewItemNode.HeaderId(space: 2, id: ChatMessageDateHeader.Id(roundedTimestamp: Int64(self.timeGroupTimestamp ?? self.roundedTimestamp), separableThreadId: nil))
         } else {
-            self.idValue = ChatMessageDateHeader.Id(roundedTimestamp: Int64(self.roundedTimestamp), separableThreadId: nil)
+            self.idValue = ChatMessageDateHeader.Id(roundedTimestamp: Int64(self.timeGroupTimestamp ?? self.roundedTimestamp), separableThreadId: nil)
             self.id = ListViewItemNode.HeaderId(space: 2, id: self.idValue)
             self.stackingId = nil
         }
@@ -95,7 +99,11 @@ public final class ChatMessageDateHeader: ListViewItemHeader {
     public let stickDirection: ListViewItemHeaderStickDirection
     public let stickOverInsets: Bool = true
     
-    public let height: CGFloat = 34.0
+    public var height: CGFloat {
+        guard self.timeGroupTimestamp != nil, self.displayHeader == nil else { return 34.0 }
+        let font = Font.regular(floor(self.presentationData.fontSize.baseDisplaySize * 14.0 / 17.0))
+        return WegramMessageDateLayout.headerHeight(labelHeight: WegramMessageDateTextLayout.labelHeight(font: font))
+    }
 
     public func combinesWith(other: ListViewItemHeader) -> Bool {
         if let other = other as? ChatMessageDateHeader, other.id == self.id {
@@ -106,14 +114,15 @@ public final class ChatMessageDateHeader: ListViewItemHeader {
     }
     
     public func node(synchronousLoad: Bool) -> ListViewItemHeaderNode {
-        return ChatMessageDateHeaderNodeImpl(localTimestamp: self.roundedTimestamp, scheduled: self.scheduled, displayHeader: self.displayHeader, presentationData: self.presentationData, controllerInteraction: self.controllerInteraction, context: self.context, action: self.action)
+        return ChatMessageDateHeaderNodeImpl(localTimestamp: self.roundedTimestamp, scheduled: self.scheduled, displayHeader: self.displayHeader, presentationData: self.presentationData, controllerInteraction: self.controllerInteraction, context: self.context, messageTimestamp: self.timeGroupTimestamp, action: self.action)
     }
     
     public func updateNode(_ node: ListViewItemHeaderNode, previous: ListViewItemHeader?, next: ListViewItemHeader?) {
-        guard let node = node as? ChatMessageDateHeaderNodeImpl, let next = next as? ChatMessageDateHeader else {
+        guard let node = node as? ChatMessageDateHeaderNodeImpl else {
             return
         }
-        node.updatePresentationData(next.presentationData, context: next.context)
+        node.updateMessageTimestamp(self.timeGroupTimestamp)
+        node.updatePresentationData(self.presentationData, context: self.context)
     }
 }
 
@@ -245,21 +254,30 @@ private final class ChatMessageDateContentNode: ASDisplayNode {
     
     private var backgroundContent: WallpaperBubbleBackgroundNode?
     private var text: String
+    var messageTimestamp: Int32?
+    private let wegramDateNode: WegramMessageDateNode?
+    var wegramAction: (() -> Void)? {
+        get { self.wegramDateNode?.action }
+        set { self.wegramDateNode?.action = newValue }
+    }
     
-    init(presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction?, localTimestamp: Int32, scheduled: Bool) {
+    init(presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction?, localTimestamp: Int32, scheduled: Bool, messageTimestamp: Int32?) {
+        self.messageTimestamp = messageTimestamp
         self.presentationData = presentationData
         self.controllerInteraction = controllerInteraction
         
-        self.labelNode = TextNode()
+        let wegramDateNode = messageTimestamp != nil ? WegramMessageDateNode() : nil
+        self.wegramDateNode = wegramDateNode
+        self.labelNode = wegramDateNode?.labelNode ?? TextNode()
         self.labelNode.isUserInteractionEnabled = false
         self.labelNode.displaysAsynchronously = !presentationData.isPreview
         
-        if controllerInteraction?.presentationContext.backgroundNode?.hasExtraBubbleBackground() == true, let backgroundContent = controllerInteraction?.presentationContext.backgroundNode?.makeBubbleBackground(for: .free) {
+        if messageTimestamp == nil, controllerInteraction?.presentationContext.backgroundNode?.hasExtraBubbleBackground() == true, let backgroundContent = controllerInteraction?.presentationContext.backgroundNode?.makeBubbleBackground(for: .free) {
             backgroundContent.clipsToBounds = true
             self.backgroundContent = backgroundContent
         }
                 
-        self.backgroundNode = NavigationBackgroundNode(color: .clear)
+        self.backgroundNode = wegramDateNode?.backgroundNode ?? NavigationBackgroundNode(color: .clear)
         self.backgroundNode.isUserInteractionEnabled = false
         
         self.stickBackgroundNode = ASImageNode()
@@ -297,10 +315,17 @@ private final class ChatMessageDateContentNode: ASDisplayNode {
                 text = presentationData.strings.ScheduledMessages_ScheduledDate(text).string
             }
         }
+        if let messageTimestamp { text = WegramMessageTime.label(timestamp: messageTimestamp) }
         self.text = text
         
         super.init()
         
+        if let wegramDateNode = self.wegramDateNode {
+            self.addSubnode(wegramDateNode)
+            wegramDateNode.update(text: self.text, font: Font.regular(floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)), isDark: presentationData.theme.theme.overallDarkAppearance, synchronous: presentationData.isPreview)
+            return
+        }
+
         let graphics = PresentationResourcesChat.principalGraphics(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper, bubbleCorners: presentationData.chatBubbleCorners)
 
         let fullTranslucency: Bool = true
@@ -329,7 +354,15 @@ private final class ChatMessageDateContentNode: ASDisplayNode {
     func updatePresentationData(_ presentationData: ChatPresentationData, context: AccountContext) {
         let previousPresentationData = self.presentationData
         self.presentationData = presentationData
+        if let messageTimestamp = self.messageTimestamp {
+            self.text = WegramMessageTime.label(timestamp: messageTimestamp)
+        }
         
+        if let wegramDateNode = self.wegramDateNode {
+            wegramDateNode.update(text: self.text, font: Font.regular(floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)), isDark: presentationData.theme.theme.overallDarkAppearance, synchronous: presentationData.isPreview)
+            return
+        }
+
         let graphics = PresentationResourcesChat.principalGraphics(theme: presentationData.theme.theme, wallpaper: presentationData.theme.wallpaper, bubbleCorners: presentationData.chatBubbleCorners)
         
         let fullTranslucency: Bool = true
@@ -351,10 +384,17 @@ private final class ChatMessageDateContentNode: ASDisplayNode {
     }
     
     func updateBackgroundColor(color: UIColor, enableBlur: Bool) {
-        self.backgroundNode.updateColor(color: color, enableBlur: enableBlur, transition: .immediate)
+        if self.messageTimestamp == nil {
+            self.backgroundNode.updateColor(color: color, enableBlur: enableBlur, transition: .immediate)
+        }
     }
     
     func update(size: CGSize, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition) {
+        if let wegramDateNode = self.wegramDateNode {
+            transition.updateFrame(node: wegramDateNode, frame: CGRect(origin: .zero, size: size))
+            wegramDateNode.updateLayout(size: size, leftInset: leftInset, rightInset: rightInset, transition: transition)
+            return
+        }
         let chatDateSize: CGFloat = 22.0
         let chatDateInset: CGFloat = 6.0
         
@@ -615,6 +655,7 @@ private final class ChatMessagePeerContentNode: ASDisplayNode {
 
 public final class ChatMessageDateHeaderNodeImpl: ListViewItemHeaderNode, ChatMessageDateHeaderNode {
     private var dateContentNode: ChatMessageDateContentNode?
+    private var timeChangeObservers: [NSObjectProtocol] = []
     private var peerContentNode: ChatMessagePeerContentNode?
     
     private var sectionSeparator: ChatMessageDateSectionSeparatorNode?
@@ -633,7 +674,7 @@ public final class ChatMessageDateHeaderNodeImpl: ListViewItemHeaderNode, ChatMe
     private var params: (size: CGSize, leftInset: CGFloat, rightInset: CGFloat)?
     private var absolutePosition: (CGRect, CGSize)?
     
-    public init(localTimestamp: Int32, scheduled: Bool, displayHeader: ChatMessageDateHeader.HeaderData?, presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction?, context: AccountContext, action: ((Int32, Bool) -> Void)? = nil) {
+    public init(localTimestamp: Int32, scheduled: Bool, displayHeader: ChatMessageDateHeader.HeaderData?, presentationData: ChatPresentationData, controllerInteraction: ChatControllerInteraction?, context: AccountContext, messageTimestamp: Int32? = nil, action: ((Int32, Bool) -> Void)? = nil) {
         self.context = context
         self.presentationData = presentationData
         self.controllerInteraction = controllerInteraction
@@ -663,10 +704,22 @@ public final class ChatMessageDateHeaderNodeImpl: ListViewItemHeaderNode, ChatMe
             }
         } else {
             if self.dateContentNode == nil {
-                let dateContentNode = ChatMessageDateContentNode(presentationData: self.presentationData, controllerInteraction: self.controllerInteraction, localTimestamp: self.localTimestamp, scheduled: self.scheduled)
+                let dateContentNode = ChatMessageDateContentNode(presentationData: self.presentationData, controllerInteraction: self.controllerInteraction, localTimestamp: self.localTimestamp, scheduled: self.scheduled, messageTimestamp: messageTimestamp)
                 self.dateContentNode = dateContentNode
+                if messageTimestamp != nil, self.action != nil {
+                    dateContentNode.wegramAction = { [weak self] in
+                        guard let self else { return }
+                        self.action?(self.localTimestamp, self.stickDistanceFactor < 0.5)
+                    }
+                }
                 self.addSubnode(dateContentNode)
             }
+        }
+    }
+
+    deinit {
+        for observer in self.timeChangeObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -674,12 +727,25 @@ public final class ChatMessageDateHeaderNodeImpl: ListViewItemHeaderNode, ChatMe
         super.didLoad()
         
         self.view.addGestureRecognizer(ListViewTapGestureRecognizer(target: self, action: #selector(self.tapGesture(_:))))
+        if self.dateContentNode?.messageTimestamp != nil {
+            for name in [UIApplication.significantTimeChangeNotification, UIApplication.didBecomeActiveNotification] {
+                self.timeChangeObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in
+                    guard let self else { return }
+                    self.updatePresentationData(self.presentationData, context: self.context)
+                }))
+            }
+        }
     }
     
     public func updateItem(hasDate: Bool, hasPeer: Bool) {
     }
     
+    public func updateMessageTimestamp(_ timestamp: Int32?) {
+        self.dateContentNode?.messageTimestamp = timestamp
+    }
+
     public func updatePresentationData(_ presentationData: ChatPresentationData, context: AccountContext) {
+        self.presentationData = presentationData
         if let dateContentNode = self.dateContentNode {
             dateContentNode.updatePresentationData(presentationData, context: context)
         }
@@ -687,6 +753,9 @@ public final class ChatMessageDateHeaderNodeImpl: ListViewItemHeaderNode, ChatMe
             peerContentNode.updatePresentationData(presentationData, context: context)
         }
 
+        if let params = self.params {
+            self.updateLayout(size: params.size, leftInset: params.leftInset, rightInset: params.rightInset, transition: .immediate)
+        }
         self.setNeedsLayout()
     }
     
@@ -721,10 +790,15 @@ public final class ChatMessageDateHeaderNodeImpl: ListViewItemHeaderNode, ChatMe
             } else {
                 contentOffsetY += 7.0
             }
-            let contentFrame = CGRect(origin: CGPoint(x: 0.0, y: contentOffsetY), size: CGSize(width: size.width, height: 20.0))
+            let contentHeight: CGFloat
+            if dateContentNode.messageTimestamp != nil {
+                let font = Font.regular(floor(self.presentationData.fontSize.baseDisplaySize * 14.0 / 17.0))
+                contentHeight = WegramMessageDateLayout.cardHeight(labelHeight: WegramMessageDateTextLayout.labelHeight(font: font))
+            } else { contentHeight = 20.0 }
+            let contentFrame = CGRect(origin: CGPoint(x: 0.0, y: contentOffsetY), size: CGSize(width: size.width, height: contentHeight))
             transition.updateFrame(node: dateContentNode, frame: contentFrame)
             dateContentNode.update(size: contentFrame.size, leftInset: leftInset, rightInset: rightInset, transition: transition)
-            contentOffsetY += 20.0
+            contentOffsetY += contentHeight
         }
         if let peerContentNode = self.peerContentNode {
             if isFirst {
@@ -883,6 +957,7 @@ public final class ChatMessageAvatarHeader: ListViewItemHeader {
     public struct Id: Hashable {
         public var peerId: PeerId
         public var timestampId: Int32
+        public var messageId: MessageId? = nil
     }
 
     public let id: ListViewItemNode.HeaderId
@@ -896,9 +971,17 @@ public final class ChatMessageAvatarHeader: ListViewItemHeader {
     public let context: AccountContext
     public let controllerInteraction: ChatControllerInteraction?
     public let storyStats: PeerStoryStats?
+    public let usesWegramLayout: Bool
+    public let isOutgoing: Bool
+    // The date pill's spacing above the message. Rows fold it into their content, not their layout
+    // insets, so neither list backend trims it and the avatar would otherwise sit beside the pill.
+    public let wegramTopInset: CGFloat
 
-    public init(timestamp: Int32, peerId: PeerId, peer: Peer?, messageReference: MessageReference?, message: Message, presentationData: ChatPresentationData, context: AccountContext, controllerInteraction: ChatControllerInteraction?, storyStats: PeerStoryStats?) {
+    public init(timestamp: Int32, peerId: PeerId, peer: Peer?, messageReference: MessageReference?, message: Message, presentationData: ChatPresentationData, context: AccountContext, controllerInteraction: ChatControllerInteraction?, storyStats: PeerStoryStats?, usesWegramLayout: Bool = false, isOutgoing: Bool = false, wegramTopInset: CGFloat = 0.0) {
         self.peerId = peerId
+        self.wegramTopInset = usesWegramLayout ? wegramTopInset : 0.0
+        self.usesWegramLayout = usesWegramLayout
+        self.isOutgoing = isOutgoing
         self.peer = peer
         self.messageReference = messageReference
         if message.adAttribute != nil {
@@ -916,18 +999,19 @@ public final class ChatMessageAvatarHeader: ListViewItemHeader {
         self.presentationData = presentationData
         self.context = context
         self.controllerInteraction = controllerInteraction
-        self.id = ListViewItemNode.HeaderId(space: 1, id: Id(peerId: peerId, timestampId: dateHeaderTimestampId(timestamp: timestamp)))
+        self.id = ListViewItemNode.HeaderId(space: 1, id: Id(peerId: peerId, timestampId: dateHeaderTimestampId(timestamp: timestamp), messageId: usesWegramLayout ? message.id : nil))
         self.storyStats = storyStats
         
         let isRotated = controllerInteraction?.chatIsRotated ?? true
         
-        self.stickDirection = isRotated ? .top : .bottom
+        self.stickDirection = usesWegramLayout ? (isRotated ? .bottom : .top) : (isRotated ? .top : .bottom)
     }
     
     public let stickDirection: ListViewItemHeaderStickDirection
     public let stickOverInsets: Bool = false
 
-    public let height: CGFloat = avatarHeaderSize()
+    public var height: CGFloat { self.usesWegramLayout ? WegramMessageLayout.avatarDiameter : avatarHeaderSize() }
+    public var isSticky: Bool { !self.usesWegramLayout }
 
     public func combinesWith(other: ListViewItemHeader) -> Bool {
         if let other = other as? ChatMessageAvatarHeader, other.id == self.id {
@@ -941,7 +1025,7 @@ public final class ChatMessageAvatarHeader: ListViewItemHeader {
     }
 
     public func node(synchronousLoad: Bool) -> ListViewItemHeaderNode {
-        return ChatMessageAvatarHeaderNodeImpl(peerId: self.peerId, peer: self.peer, messageReference: self.messageReference, adMessageId: self.adMessageId, presentationData: self.presentationData, context: self.context, controllerInteraction: self.controllerInteraction, storyStats: self.storyStats, synchronousLoad: synchronousLoad)
+        return ChatMessageAvatarHeaderNodeImpl(peerId: self.peerId, peer: self.peer, messageReference: self.messageReference, adMessageId: self.adMessageId, presentationData: self.presentationData, context: self.context, controllerInteraction: self.controllerInteraction, storyStats: self.storyStats, synchronousLoad: synchronousLoad, usesWegramLayout: self.usesWegramLayout, isOutgoing: self.isOutgoing, wegramTopInset: self.wegramTopInset)
     }
 
     public func updateNode(_ node: ListViewItemHeaderNode, previous: ListViewItemHeader?, next: ListViewItemHeader?) {
@@ -953,6 +1037,7 @@ public final class ChatMessageAvatarHeader: ListViewItemHeader {
             node.updatePeer(peer: peer)
         }
         node.updateStoryStats(storyStats: self.storyStats, theme: self.presentationData.theme.theme, force: false)
+        node.updateWegramTopInset(self.wegramTopInset)
     }
 }
 
@@ -965,6 +1050,11 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
     private var presentationData: ChatPresentationData
     private let controllerInteraction: ChatControllerInteraction?
     private var storyStats: PeerStoryStats?
+    private let usesWegramLayout: Bool
+    private let isOutgoing: Bool
+    private var wegramTopInset: CGFloat
+    private var layoutParams: (size: CGSize, leftInset: CGFloat, rightInset: CGFloat)?
+    private var avatarDiameter: CGFloat { self.usesWegramLayout ? WegramMessageLayout.avatarDiameter : avatarHeaderSize() }
     
     private let peerId: PeerId
     private let messageReference: MessageReference?
@@ -995,7 +1085,8 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
         }
     }
     
-    public init(peerId: PeerId, peer: Peer?, messageReference: MessageReference?, adMessageId: EngineMessage.Id?, presentationData: ChatPresentationData, context: AccountContext, controllerInteraction: ChatControllerInteraction?, storyStats: PeerStoryStats?, synchronousLoad: Bool) {
+    public init(peerId: PeerId, peer: Peer?, messageReference: MessageReference?, adMessageId: EngineMessage.Id?, presentationData: ChatPresentationData, context: AccountContext, controllerInteraction: ChatControllerInteraction?, storyStats: PeerStoryStats?, synchronousLoad: Bool, usesWegramLayout: Bool = false, isOutgoing: Bool = false, wegramTopInset: CGFloat = 0.0) {
+        self.wegramTopInset = wegramTopInset
         self.peerId = peerId
         self.peer = peer
         self.messageReference = messageReference
@@ -1004,10 +1095,14 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
         self.context = context
         self.controllerInteraction = controllerInteraction
         self.storyStats = storyStats
+        self.usesWegramLayout = usesWegramLayout
+        self.isOutgoing = isOutgoing
 
         self.containerNode = ContextControllerSourceNode()
 
-        self.avatarNode = AvatarNode(font: avatarFont)
+        self.avatarNode = AvatarNode(font: usesWegramLayout ? avatarPlaceholderFont(size: 18) : avatarFont)
+        self.avatarNode.cornerRadius = usesWegramLayout ? WegramMessageLayout.avatarCornerRadius : 0
+        self.avatarNode.clipsToBounds = usesWegramLayout
         self.avatarNode.contentNode.displaysAsynchronously = !presentationData.isPreview
 
         let isRotated = controllerInteraction?.chatIsRotated ?? true
@@ -1057,9 +1152,9 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
         if let previousPeer = self.peer, previousPeer.nameColor != peer.nameColor || previousPeer.smallProfileImage != peer.smallProfileImage || previousPeer.displayLetters != peer.displayLetters {
             self.peer = peer
             if peer.smallProfileImage != nil {
-                self.avatarNode.setPeerV2(context: self.context, theme: self.presentationData.theme.theme, peer: EnginePeer(peer), authorOfMessage: self.messageReference, overrideImage: nil, emptyColor: .black, synchronousLoad: false, displayDimensions: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
+                self.avatarNode.setPeerV2(context: self.context, theme: self.presentationData.theme.theme, peer: EnginePeer(peer), authorOfMessage: self.messageReference, overrideImage: nil, emptyColor: .black, clipStyle: self.usesWegramLayout ? .none : .round, synchronousLoad: false, displayDimensions: CGSize(width: self.avatarDiameter, height: self.avatarDiameter))
             } else {
-                self.avatarNode.setPeer(context: self.context, theme: self.presentationData.theme.theme, peer: EnginePeer(peer), authorOfMessage: self.messageReference, overrideImage: nil, emptyColor: .black, synchronousLoad: false, displayDimensions: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
+                self.avatarNode.setPeer(context: self.context, theme: self.presentationData.theme.theme, peer: EnginePeer(peer), authorOfMessage: self.messageReference, overrideImage: nil, emptyColor: .black, clipStyle: self.usesWegramLayout ? .none : .round, synchronousLoad: false, displayDimensions: CGSize(width: self.avatarDiameter, height: self.avatarDiameter))
             }
         }
     }
@@ -1076,9 +1171,9 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
             overrideImage = .deletedIcon
         }
         if peer.smallProfileImage != nil {
-            self.avatarNode.setPeerV2(context: context, theme: theme, peer: EnginePeer(peer), authorOfMessage: authorOfMessage, overrideImage: overrideImage, emptyColor: emptyColor, synchronousLoad: synchronousLoad, displayDimensions: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
+            self.avatarNode.setPeerV2(context: context, theme: theme, peer: EnginePeer(peer), authorOfMessage: authorOfMessage, overrideImage: overrideImage, emptyColor: emptyColor, clipStyle: self.usesWegramLayout ? .none : .round, synchronousLoad: synchronousLoad, displayDimensions: CGSize(width: self.avatarDiameter, height: self.avatarDiameter))
         } else {
-            self.avatarNode.setPeer(context: context, theme: theme, peer: EnginePeer(peer), authorOfMessage: authorOfMessage, overrideImage: overrideImage, emptyColor: emptyColor, synchronousLoad: synchronousLoad, displayDimensions: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
+            self.avatarNode.setPeer(context: context, theme: theme, peer: EnginePeer(peer), authorOfMessage: authorOfMessage, overrideImage: overrideImage, emptyColor: emptyColor, clipStyle: self.usesWegramLayout ? .none : .round, synchronousLoad: synchronousLoad, displayDimensions: CGSize(width: self.avatarDiameter, height: self.avatarDiameter))
         }
         
         if peer.isPremium && context.sharedContext.energyUsageSettings.autoplayVideo {
@@ -1227,9 +1322,19 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
         }
     }
 
+    func updateWegramTopInset(_ inset: CGFloat) {
+        guard inset != self.wegramTopInset else { return }
+        self.wegramTopInset = inset
+        if let params = self.layoutParams {
+            self.updateLayout(size: params.size, leftInset: params.leftInset, rightInset: params.rightInset, transition: .immediate)
+        }
+    }
+
     override public func updateLayout(size: CGSize, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition) {
-        transition.updateFrame(node: self.containerNode, frame: CGRect(origin: CGPoint(x: leftInset + 7.0, y: -3.0), size: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize())))
-        let avatarFrame = CGRect(origin: CGPoint(), size: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
+        self.layoutParams = (size, leftInset, rightInset)
+        let frame = self.usesWegramLayout ? WegramMessageLayout.avatarFrame(width: size.width, leftInset: leftInset, rightInset: rightInset, outgoing: self.isOutgoing).offsetBy(dx: 0.0, dy: self.wegramTopInset) : CGRect(origin: CGPoint(x: leftInset + 7.0, y: -3.0), size: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
+        transition.updateFrame(node: self.containerNode, frame: frame)
+        let avatarFrame = CGRect(origin: CGPoint(), size: frame.size)
         self.avatarNode.position = avatarFrame.center
         self.avatarNode.bounds = CGRect(origin: CGPoint(), size: avatarFrame.size)
         self.avatarNode.updateSize(size: avatarFrame.size)
@@ -1258,7 +1363,8 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
 
     public func updateSelectionState(animated: Bool) {
         let currentSelectionOffset = self.currentSelectionOffset
-        let offset: CGFloat = self.controllerInteraction?.selectionState != nil ? 42.0 : 0.0
+        let isSelected = self.controllerInteraction?.selectionState != nil
+        let offset: CGFloat = self.usesWegramLayout ? WegramMessageLayout.avatarSelectionOffset(outgoing: self.isOutgoing, isSelected: isSelected) : (isSelected ? 42.0 : 0.0)
         self.currentSelectionOffset = offset
 
         let previousSubnodeTransform = CATransform3DMakeTranslation(currentSelectionOffset, 0.0, 0.0)
@@ -1273,7 +1379,7 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
         var avatarTransform: CATransform3D = CATransform3DIdentity
         if isHidden {
             let scale: CGFloat = isHidden ? 0.001 : 1.0
-            avatarTransform = CATransform3DTranslate(avatarTransform, -avatarHeaderSize() * 0.5, avatarHeaderSize() * 0.5, 0.0)
+            avatarTransform = CATransform3DTranslate(avatarTransform, -self.avatarDiameter * 0.5, self.avatarDiameter * 0.5, 0.0)
             avatarTransform = CATransform3DScale(avatarTransform, scale, scale, 1.0)
         }
         transition.updateTransform(node: self.avatarNode, transform: avatarTransform)
@@ -1317,7 +1423,7 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
         self.avatarVideoNode?.updateVisibility(isVisible)
       
         if let videoNode = self.avatarVideoNode {
-            videoNode.updateLayout(size: self.avatarNode.bounds.size, cornerRadius: self.avatarNode.bounds.size.width / 2.0, transition: .immediate)
+            videoNode.updateLayout(size: self.avatarNode.bounds.size, cornerRadius: self.usesWegramLayout ? WegramMessageLayout.avatarCornerRadius : self.avatarNode.bounds.size.width / 2.0, transition: .immediate)
             videoNode.frame = self.avatarNode.bounds
         }
     }

@@ -311,6 +311,7 @@ private final class NavigationButtonItemNode: ImmediateTextNode {
                     self.updatePointerInteraction()
                 }
             }
+            self.accessibilityCustomActions = self.isEnabled ? self.node?.view.accessibilityCustomActions : nil
         }
     }
     
@@ -367,14 +368,27 @@ private final class NavigationButtonItemNode: ImmediateTextNode {
         get {
             if let item = self.item, let accessibilityLabel = item.accessibilityLabel {
                 return accessibilityLabel
+            } else if let text = self.attributedText?.string, !text.isEmpty {
+                return text
             } else {
-                return self.attributedText?.string
+                return super.accessibilityLabel
             }
         } set(value) {
-            
+            super.accessibilityLabel = value
         }
     }
     
+    override public var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get { self.isEnabled ? self.node?.view.accessibilityCustomActions : nil }
+        set { super.accessibilityCustomActions = newValue }
+    }
+
+    override public func accessibilityActivate() -> Bool {
+        guard self.isEnabled, !self.isHidden, self.alpha > 0, self.supernode != nil else { return false }
+        self.pressed()
+        return true
+    }
+
     override public var accessibilityHint: String? {
         get {
             if let item = self.item, let accessibilityHint = item.accessibilityHint {
@@ -522,6 +536,9 @@ private final class NavigationButtonItemNode: ImmediateTextNode {
     public var isEnabled: Bool = true {
         didSet {
             if self.isEnabled != oldValue {
+                if self.isEnabled { self.accessibilityTraits.remove(.notEnabled) }
+                else { self.accessibilityTraits.insert(.notEnabled) }
+                self.accessibilityCustomActions = self.isEnabled ? self.node?.view.accessibilityCustomActions : nil
                 self.attributedText = NSAttributedString(string: self.text, attributes: self.attributesForCurrentState())
                 if let constrainedSize = self.constrainedSize {
                     let _ = self.updateLayout(constrainedSize)
@@ -541,6 +558,9 @@ public final class NavigationButtonNodeImpl: ContextControllerSourceNode, Naviga
     
     private let isGlass: Bool
     private var isBack: Bool = false
+    // Read by VoiceOver when a back button draws only its arrow (glass and WeGram styles).
+    public var backAccessibilityLabel: String?
+    var minimumBackButtonWidth: CGFloat = 0
     
     private var items: [UIBarButtonItem] = []
     private var nodes: [NavigationButtonItemNode] = []
@@ -653,6 +673,8 @@ public final class NavigationButtonNodeImpl: ContextControllerSourceNode, Naviga
         node.item = nil
         node.image = nil
         node.text = text
+        // The node's view answers VoiceOver from the stored label, not from the computed getter.
+        node.accessibilityLabel = text.isEmpty ? (isBack ? self.backAccessibilityLabel : nil) : text
         node.bold = false
         node.isEnabled = true
         node.node = nil
@@ -769,6 +791,10 @@ public final class NavigationButtonNodeImpl: ContextControllerSourceNode, Naviga
                 }
             }
 
+            if self.isBack && self.minimumBackButtonWidth > 0 {
+                nodeSize.width = max(nodeSize.width, self.minimumBackButtonWidth)
+                nodeSize.height = max(nodeSize.height, 44)
+            }
             nodeSize.width = ceil(nodeSize.width)
             nodeSize.height = ceil(nodeSize.height)
             totalHeight = max(totalHeight, nodeSize.height)

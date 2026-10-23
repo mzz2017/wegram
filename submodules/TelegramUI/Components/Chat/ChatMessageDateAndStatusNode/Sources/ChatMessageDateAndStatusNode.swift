@@ -269,6 +269,7 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
         var canViewReactionList: Bool
         var animationCache: AnimationCache
         var animationRenderer: MultiAnimationRenderer
+        var displaysTimestampAndReadStatus: Bool { !self.presentationData.chatBubbleCorners.usesWegramShape }
         
         public init(
             context: AccountContext,
@@ -492,7 +493,7 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                     starsImage = graphics.incomingDateAndStatusTonIcon
                 }
             case let .BubbleOutgoing(status):
-                dateColor = arguments.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor
+                dateColor = arguments.presentationData.chatBubbleCorners.usesWegramNeutralFill ? arguments.presentationData.theme.theme.chat.message.incoming.secondaryTextColor : arguments.presentationData.theme.theme.chat.message.outgoing.secondaryTextColor
                 outgoingStatus = status
                 leftInset = 5.0
                 loadedCheckFullImage = PresentationResourcesChat.chatOutgoingFullCheck(arguments.presentationData.theme.theme, size: checkSize)
@@ -603,19 +604,22 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                 }
             }
             
-            var updatedDateText = arguments.dateText
+            var updatedDateText = arguments.displaysTimestampAndReadStatus ? arguments.dateText : ""
             if arguments.edited {
                 if let useEditedTimestamp = arguments.context.getAppConfigValue("message_primary_edited_date") as? Bool, useEditedTimestamp {
                 } else {
-                    updatedDateText = "\(arguments.presentationData.strings.Conversation_MessageEditedLabel) \(updatedDateText)"
+                    updatedDateText = [arguments.presentationData.strings.Conversation_MessageEditedLabel, updatedDateText].filter { !$0.isEmpty }.joined(separator: " ")
                 }
             }
             if let impressionCount = arguments.impressionCount {
-                updatedDateText = compactNumericCountString(impressionCount, decimalSeparator: arguments.presentationData.dateTimeFormat.decimalSeparator) + " " + updatedDateText
+                updatedDateText = [compactNumericCountString(impressionCount, decimalSeparator: arguments.presentationData.dateTimeFormat.decimalSeparator), updatedDateText].filter { !$0.isEmpty }.joined(separator: " ")
             }
             
             let dateFont = Font.regular(floor(arguments.presentationData.fontSize.baseDisplaySize * 11.0 / 17.0))
-            let (date, dateApply) = dateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: updatedDateText, font: dateFont, textColor: dateColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .middle, constrainedSize: arguments.constrainedSize, alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+            // Keep the font baseline for icons when the timestamp is hidden.
+            let dateLayoutText = updatedDateText.isEmpty && !arguments.displaysTimestampAndReadStatus ? " " : updatedDateText
+            let (date, dateApply) = dateLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: dateLayoutText, font: dateFont, textColor: dateColor), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .middle, constrainedSize: arguments.constrainedSize, alignment: .natural, cutout: nil, insets: UIEdgeInsets()))
+            let dateSize = CGSize(width: updatedDateText.isEmpty ? 0.0 : date.size.width, height: date.size.height)
             
             let checkOffset = floor(arguments.presentationData.fontSize.baseDisplaySize * 6.0 / 17.0)
             
@@ -704,14 +708,18 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                         clockMinNode?.displayWithoutProcessing = true
                         clockMinNode?.frame = CGRect(origin: CGPoint(), size: clockMinImage?.size ?? CGSize())
                     }
-                    clockPosition = CGPoint(x: leftInset + date.size.width + 8.5, y: 7.5 + offset)
+                    clockPosition = CGPoint(x: leftInset + dateSize.width + 8.5, y: 7.5 + offset)
                 case let .Sent(read):
                     let hideStatus: Bool
-                    switch arguments.type {
+                    if !arguments.displaysTimestampAndReadStatus {
+                        hideStatus = true
+                    } else {
+                        switch arguments.type {
                         case .BubbleOutgoing, .FreeOutgoing, .ImageOutgoing:
                             hideStatus = false
                         default:
-                        hideStatus = arguments.impressionCount != nil
+                            hideStatus = arguments.impressionCount != nil
+                        }
                     }
                     
                     if hideStatus {
@@ -744,9 +752,9 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                         let checkSize = loadedCheckFullImage!.size
                         
                         if read {
-                            checkReadFrame = CGRect(origin: CGPoint(x: leftInset + impressionWidth + date.size.width + 5.0 + statusWidth - checkSize.width, y: 3.0 + offset), size: checkSize)
+                            checkReadFrame = CGRect(origin: CGPoint(x: leftInset + impressionWidth + dateSize.width + 5.0 + statusWidth - checkSize.width, y: 3.0 + offset), size: checkSize)
                         }
-                        checkSentFrame = CGRect(origin: CGPoint(x: leftInset + impressionWidth + date.size.width + 5.0 + statusWidth - checkSize.width - checkOffset, y: 3.0 + offset), size: checkSize)
+                        checkSentFrame = CGRect(origin: CGPoint(x: leftInset + impressionWidth + dateSize.width + 5.0 + statusWidth - checkSize.width - checkOffset, y: 3.0 + offset), size: checkSize)
                     }
                 case .Failed:
                     statusWidth = 0.0
@@ -835,7 +843,12 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
             
             leftInset += reactionInset
             
-            let layoutSize = CGSize(width: leftInset + impressionWidth + date.size.width + statusWidth + backgroundInsets.left + backgroundInsets.right, height: date.size.height + backgroundInsets.top + backgroundInsets.bottom)
+            let layoutSize: CGSize
+            if arguments.displaysTimestampAndReadStatus {
+                layoutSize = CGSize(width: leftInset + impressionWidth + dateSize.width + statusWidth + backgroundInsets.left + backgroundInsets.right, height: dateSize.height + backgroundInsets.top + backgroundInsets.bottom)
+            } else {
+                layoutSize = MessageStatusLayout.size(dateSize: dateSize, leadingInset: leftInset - reactionInset, indicatorsWidth: impressionWidth + statusWidth + reactionInset, backgroundInsets: CGSize(width: backgroundInsets.left + backgroundInsets.right, height: backgroundInsets.top + backgroundInsets.bottom))
+            }
             
             let resultingWidth: CGFloat
             /// Deferred to the continue closure, which is the first point that knows the width the
@@ -1166,7 +1179,7 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                         let _ = dateApply()
                         
                         if let currentImpressionIcon = currentImpressionIcon {
-                            let impressionIconFrame = CGRect(origin: CGPoint(x: leftOffset + leftInset + backgroundInsets.left, y: backgroundInsets.top + 1.0 + offset + verticalInset + floor((date.size.height - impressionSize.height) / 2.0)), size: impressionSize)
+                            let impressionIconFrame = CGRect(origin: CGPoint(x: leftOffset + leftInset + backgroundInsets.left, y: backgroundInsets.top + 1.0 + offset + verticalInset + floor((dateSize.height - impressionSize.height) / 2.0)), size: impressionSize)
                             currentImpressionIcon.displaysAsynchronously = false
                             if currentImpressionIcon.image !== impressionImage {
                                 currentImpressionIcon.image = impressionImage
@@ -1183,7 +1196,7 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                             strongSelf.impressionIcon = nil
                         }
                         
-                        animation.animator.updateFrame(layer: strongSelf.dateNode.layer, frame: CGRect(origin: CGPoint(x: leftOffset + leftInset + backgroundInsets.left + impressionWidth, y: backgroundInsets.top + 1.0 + offset + verticalInset), size: date.size), completion: nil)
+                        animation.animator.updateFrame(layer: strongSelf.dateNode.layer, frame: CGRect(origin: CGPoint(x: leftOffset + leftInset + backgroundInsets.left + impressionWidth, y: backgroundInsets.top + 1.0 + offset + verticalInset), size: dateSize), completion: nil)
                         
                         if let clockFrameNode = clockFrameNode {
                             let clockPosition = CGPoint(x: leftOffset + backgroundInsets.left + clockPosition.x + reactionInset, y: backgroundInsets.top + clockPosition.y + verticalInset)
@@ -1391,7 +1404,7 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                                     currentRepliesIcon.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.15)
                                 }
                             }
-                            let repliesIconFrame = CGRect(origin: CGPoint(x: reactionOffset - 2.0, y: backgroundInsets.top + offset + verticalInset + floor((date.size.height - repliesIconSize.height) / 2.0)), size: repliesIconSize)
+                            let repliesIconFrame = CGRect(origin: CGPoint(x: reactionOffset - 2.0, y: backgroundInsets.top + offset + verticalInset + floor((dateSize.height - repliesIconSize.height) / 2.0)), size: repliesIconSize)
                             animation.animator.updateFrame(layer: currentRepliesIcon.layer, frame: repliesIconFrame, completion: nil)
                             reactionOffset += 9.0
                         } else if let repliesIcon = strongSelf.repliesIcon {
@@ -1444,7 +1457,7 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
                                     currentStarsIcon.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.15)
                                 }
                             }
-                            let starsIconFrame = CGRect(origin: CGPoint(x: reactionOffset - 2.0, y: backgroundInsets.top + offset + verticalInset + floor((date.size.height - starsIconSize.height) / 2.0)), size: starsIconSize)
+                            let starsIconFrame = CGRect(origin: CGPoint(x: reactionOffset - 2.0, y: backgroundInsets.top + offset + verticalInset + floor((dateSize.height - starsIconSize.height) / 2.0)), size: starsIconSize)
                             animation.animator.updateFrame(layer: currentStarsIcon.layer, frame: starsIconFrame, completion: nil)
                             reactionOffset += 9.0
                         } else if let starsIcon = strongSelf.starsIcon {

@@ -457,6 +457,7 @@ public final class ChatChannelSubscriberInputPanelNode: ChatInputPanelNode {
             leftPanelItems.append(GlassControlGroupComponent.Item(
                 id: "suggestPost",
                 content: .icon("Chat/Input/Accessory Panels/SuggestPost"),
+                accessibilityLabel: interfaceState.strings.VoiceOver_SuggestPost,
                 action: { [weak self] in
                     self?.suggestedPostPressed()
                 }
@@ -466,6 +467,7 @@ public final class ChatChannelSubscriberInputPanelNode: ChatInputPanelNode {
             leftPanelItems.append(GlassControlGroupComponent.Item(
                 id: "gift",
                 content: .icon("Chat/Input/Accessory Panels/Gift"),
+                accessibilityLabel: interfaceState.strings.Attachment_Gift,
                 action: { [weak self] in
                     self?.giftPressed()
                 }
@@ -475,6 +477,7 @@ public final class ChatChannelSubscriberInputPanelNode: ChatInputPanelNode {
             leftPanelItems.append(GlassControlGroupComponent.Item(
                 id: "help",
                 content: .icon("Chat/Input/Accessory Panels/Help"),
+                accessibilityLabel: interfaceState.strings.VoiceOver_Chat_GroupInfo,
                 action: { [weak self] in
                     self?.helpPressed()
                 }
@@ -503,6 +506,7 @@ public final class ChatChannelSubscriberInputPanelNode: ChatInputPanelNode {
             rightPanelItems.append(GlassControlGroupComponent.Item(
                 id: "search",
                 content: .icon("Chat List/SearchIcon"),
+                accessibilityLabel: interfaceState.strings.Common_Search,
                 action: { [weak self] in
                     guard let self else {
                         return

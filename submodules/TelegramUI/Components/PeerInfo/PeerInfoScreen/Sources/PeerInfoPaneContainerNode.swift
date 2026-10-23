@@ -651,8 +651,9 @@ final class PeerInfoPaneContainerNode: ASDisplayNode, ASGestureRecognizerDelegat
     private let updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?
     
     private let initialPaneKey: PeerInfoPaneKey?
+    private let usesWegramContactStoriesFallback: Bool
     
-    init(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?, peerId: EnginePeer.Id, chatLocation: ChatLocation, sharedMediaFromForumTopic: (EnginePeer.Id, Int64)?, chatLocationContextHolder: Atomic<ChatLocationContextHolder?>, isMediaOnly: Bool, initialPaneKey: PeerInfoPaneKey?, initialStoryFolderId: Int64?, initialGiftCollectionId: Int64?, switchToMediaTarget: PeerInfoSwitchToMediaTarget?) {
+    init(context: AccountContext, updatedPresentationData: (initial: PresentationData, signal: Signal<PresentationData, NoError>)?, peerId: EnginePeer.Id, chatLocation: ChatLocation, sharedMediaFromForumTopic: (EnginePeer.Id, Int64)?, chatLocationContextHolder: Atomic<ChatLocationContextHolder?>, isMediaOnly: Bool, initialPaneKey: PeerInfoPaneKey?, initialStoryFolderId: Int64?, initialGiftCollectionId: Int64?, switchToMediaTarget: PeerInfoSwitchToMediaTarget?, usesWegramContactStoriesFallback: Bool = false) {
         self.context = context
         self.updatedPresentationData = updatedPresentationData
         self.peerId = peerId
@@ -661,6 +662,7 @@ final class PeerInfoPaneContainerNode: ASDisplayNode, ASGestureRecognizerDelegat
         self.sharedMediaFromForumTopic = sharedMediaFromForumTopic
         self.isMediaOnly = isMediaOnly
         self.initialPaneKey = initialPaneKey
+        self.usesWegramContactStoriesFallback = usesWegramContactStoriesFallback
         self.initialStoryFolderId = initialStoryFolderId
         self.initialGiftCollectionId = initialGiftCollectionId
         self.switchToMediaTarget = switchToMediaTarget
@@ -947,7 +949,11 @@ final class PeerInfoPaneContainerNode: ASDisplayNode, ASGestureRecognizerDelegat
                 self.pendingSwitchToPaneKey = nil
             }
         } else if self.currentPaneKey == nil {
-            self.pendingSwitchToPaneKey = self.initialPaneKey ?? availablePanes.first
+            if self.usesWegramContactStoriesFallback && self.initialPaneKey == .stories {
+                self.pendingSwitchToPaneKey = availablePanes.contains(.stories) ? .stories : availablePanes.first
+            } else {
+                self.pendingSwitchToPaneKey = self.initialPaneKey ?? availablePanes.first
+            }
         }
         
         let currentIndex: Int?

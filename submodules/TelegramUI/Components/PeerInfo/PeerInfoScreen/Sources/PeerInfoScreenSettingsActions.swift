@@ -19,18 +19,18 @@ import WalletContext
 import UndoUI
 
 extension PeerInfoScreenNode {
-    func openSettings(section: PeerInfoSettingsSection) {
+    func openSettings(section: PeerInfoSettingsSection, preserveNavigationStack: Bool = false) {
         let push: (ViewController) -> Void = { [weak self] c in
             guard let strongSelf = self, let navigationController = strongSelf.controller?.navigationController as? NavigationController else {
                 return
             }
             
-            if strongSelf.isMyProfile {
+            if strongSelf.isMyProfile || preserveNavigationStack {
                 navigationController.pushViewController(c)
             } else {
                 var updatedControllers = navigationController.viewControllers
                 for controller in navigationController.viewControllers.reversed() {
-                    if controller !== strongSelf && !(controller is TabBarController) {
+                    if controller !== strongSelf.controller && !(controller is TabBarController) {
                         updatedControllers.removeLast()
                     } else {
                         break
@@ -51,6 +51,8 @@ extension PeerInfoScreenNode {
             }
         }
         switch section {
+        case .about:
+            push(WegramAboutController(context: self.context))
         case .avatar:
             self.controller?.openAvatarForEditing()
         case .edit:
@@ -136,6 +138,8 @@ extension PeerInfoScreenNode {
                     }
                 })
             }
+        case .twoStepVerification:
+            push(twoStepVerificationUnlockSettingsController(context: self.context, mode: .access(intro: false, data: nil)))
         case .passwordSetup:
             DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 0.6, execute: { [weak self] in
                 guard let self else {
@@ -182,7 +186,10 @@ extension PeerInfoScreenNode {
             let supportPeer = Promise<EnginePeer.Id?>()
             supportPeer.set(context.engine.peers.supportPeerId())
             
-            self.controller?.present(textAlertController(context: self.context, updatedPresentationData: self.controller?.updatedPresentationData, title: nil, text: self.presentationData.strings.Settings_FAQ_Intro, actions: [
+            // WeGram opens this from its own Settings page pushed above this controller, whose view is then out of the
+            // window and drops `.window(.root)` presentations; present from the top of the same stack instead.
+            let presenter = (self.controller?.navigationController as? NavigationController)?.topViewController as? ViewController ?? self.controller
+            presenter?.present(textAlertController(context: self.context, updatedPresentationData: self.controller?.updatedPresentationData, title: nil, text: self.presentationData.strings.Settings_FAQ_Intro, actions: [
                 TextAlertAction(type: .genericAction, title: presentationData.strings.Settings_FAQ_Button, action: { [weak self] in
                     self?.openFaq()
                 }), TextAlertAction(type: .defaultAction, title: presentationData.strings.Common_OK, action: { [weak self] in

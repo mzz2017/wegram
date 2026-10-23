@@ -91,6 +91,7 @@ public final class ChatInlineSearchResultsListComponent: Component {
     public let insets: UIEdgeInsets
     public let inputHeight: CGFloat
     public let showEmptyResults: Bool
+    public let usesWegramAppearance: Bool
     public let initialScrollingState: ScrollingState?
     public let messageSelected: (EngineMessage) -> Void
     public let peerSelected: (EnginePeer) -> Void
@@ -115,7 +116,8 @@ public final class ChatInlineSearchResultsListComponent: Component {
         getSearchResult: @escaping () -> Signal<SearchMessagesResult?, NoError>?,
         getSavedPeers: @escaping (String) -> Signal<[(EnginePeer, EngineMessage.Index?)], NoError>?,
         getChats: @escaping (String) -> Signal<EngineChatList?, NoError>?,
-        loadMoreSearchResults: @escaping () -> Void
+        loadMoreSearchResults: @escaping () -> Void,
+        usesWegramAppearance: Bool = false
     ) {
         self.context = context
         self.presentation = presentation
@@ -124,6 +126,7 @@ public final class ChatInlineSearchResultsListComponent: Component {
         self.insets = insets
         self.inputHeight = inputHeight
         self.showEmptyResults = showEmptyResults
+        self.usesWegramAppearance = usesWegramAppearance
         self.initialScrollingState = initialScrollingState
         self.messageSelected = messageSelected
         self.peerSelected = peerSelected
@@ -153,6 +156,7 @@ public final class ChatInlineSearchResultsListComponent: Component {
         if lhs.inputHeight != rhs.inputHeight {
             return false
         }
+        if lhs.usesWegramAppearance != rhs.usesWegramAppearance { return false }
         if lhs.showEmptyResults != rhs.showEmptyResults {
             return false
         }
@@ -823,7 +827,8 @@ public final class ChatInlineSearchResultsListComponent: Component {
                 }
             }
             
-            if let contentsState = self.contentsState, self.contentsState != self.appliedContentsState {
+            let presentationUpdated = previousComponent?.presentation != component.presentation || previousComponent?.usesWegramAppearance != component.usesWegramAppearance
+            if let contentsState = self.contentsState, self.contentsState != self.appliedContentsState || presentationUpdated {
                 let previousContentsState = self.appliedContentsState
                 self.appliedContentsState = self.contentsState
                 
@@ -952,11 +957,11 @@ public final class ChatInlineSearchResultsListComponent: Component {
                 }
                 
                 var searchTextHighightState: String?
-                if case let .search(query, _) = component.contents, !query.isEmpty {
+                if case let .search(query, _) = component.contents, (!query.isEmpty || component.usesWegramAppearance) {
                     searchTextHighightState = query.lowercased()
                 }
                 
-                var allUpdated = false
+                var allUpdated = presentationUpdated
                 if chatListNodeInteraction.searchTextHighightState != searchTextHighightState {
                     chatListNodeInteraction.searchTextHighightState = searchTextHighightState
                     allUpdated = true
@@ -1100,7 +1105,8 @@ public final class ChatInlineSearchResultsListComponent: Component {
                             header: displayMessagesHeader ? ChatListSearchItemHeader(type: .messages(location: nil), theme: listPresentationData.theme, strings: listPresentationData.strings) : nil,
                             enabledContextActions: nil,
                             hiddenOffset: false,
-                            interaction: chatListNodeInteraction
+                            interaction: chatListNodeInteraction,
+                            isWegramSearchResult: component.usesWegramAppearance
                         )
                     case let .chat(item):
                         return ChatListItem(
@@ -1214,20 +1220,20 @@ public final class ChatInlineSearchResultsListComponent: Component {
             }
             
             let fadeTransition = ComponentTransition.easeInOut(duration: 0.25)
-            if component.showEmptyResults, let appliedContentsState = self.appliedContentsState, appliedContentsState.entries.isEmpty, case let .search(query, _) = component.contents, !query.isEmpty {
+            if component.showEmptyResults, let appliedContentsState = self.appliedContentsState, appliedContentsState.entries.isEmpty, case let .search(query, _) = component.contents, component.usesWegramAppearance || !query.isEmpty {
                 let sideInset: CGFloat = 44.0
-                let emptyAnimationHeight = 148.0
+                let emptyAnimationHeight: CGFloat = component.usesWegramAppearance ? 0.0 : 148.0
                 let topInset: CGFloat = component.insets.top
                 let bottomInset: CGFloat = max(component.insets.bottom, component.inputHeight)
                 let visibleHeight = availableSize.height
-                let emptyAnimationSpacing: CGFloat = 8.0
+                let emptyAnimationSpacing: CGFloat = component.usesWegramAppearance ? 0.0 : 8.0
                 let emptyTextSpacing: CGFloat = 8.0
                 
                 let emptyResultsTitleSize = self.emptyResultsTitle.update(
                     transition: .immediate,
                     component: AnyComponent(
                         MultilineTextComponent(
-                            text: .plain(NSAttributedString(string: component.presentation.strings.HashtagSearch_NoResults, font: Font.semibold(17.0), textColor: component.presentation.theme.list.itemSecondaryTextColor)),
+                            text: .plain(NSAttributedString(string: component.usesWegramAppearance ? component.presentation.strings.Conversation_SearchNoResults : component.presentation.strings.HashtagSearch_NoResults, font: component.usesWegramAppearance ? Font.regular(15.0) : Font.semibold(17.0), textColor: component.presentation.theme.list.itemSecondaryTextColor)),
                             horizontalAlignment: .center
                         )
                     ),
@@ -1236,7 +1242,9 @@ public final class ChatInlineSearchResultsListComponent: Component {
                 )
                 
                 let placeholderText: String
-                if query.hasPrefix("$") {
+                if component.usesWegramAppearance {
+                    placeholderText = ""
+                } else if query.hasPrefix("$") {
                     placeholderText = component.presentation.strings.HashtagSearch_NoResultsQueryCashtagDescription(query).string
                 } else {
                     placeholderText = component.presentation.strings.HashtagSearch_NoResultsQueryDescription(query).string
@@ -1254,16 +1262,22 @@ public final class ChatInlineSearchResultsListComponent: Component {
                     environment: {},
                     containerSize: CGSize(width: availableSize.width - sideInset * 2.0, height: availableSize.height)
                 )
-                let emptyResultsAnimationSize = self.emptyResultsAnimation.update(
-                    transition: .immediate,
-                    component: AnyComponent(LottieComponent(
-                        content: LottieComponent.AppBundleContent(name: "ChatListNoResults"),
-                        lottieSettings: component.context.lottieRenderingSettings
-                    )),
-                    environment: {},
-                    containerSize: CGSize(width: emptyAnimationHeight, height: emptyAnimationHeight)
-                )
-      
+                let emptyResultsAnimationSize: CGSize
+                if component.usesWegramAppearance {
+                    emptyResultsAnimationSize = .zero
+                    self.emptyResultsAnimation.view?.isHidden = true
+                } else {
+                    emptyResultsAnimationSize = self.emptyResultsAnimation.update(
+                        transition: .immediate,
+                        component: AnyComponent(LottieComponent(
+                            content: LottieComponent.AppBundleContent(name: "ChatListNoResults"),
+                            lottieSettings: component.context.lottieRenderingSettings
+                        )),
+                        environment: {},
+                        containerSize: CGSize(width: emptyAnimationHeight, height: emptyAnimationHeight)
+                    )
+                }
+
                 let emptyTotalHeight = emptyAnimationHeight + emptyAnimationSpacing + emptyResultsTitleSize.height + emptyResultsTextSize.height + emptyTextSpacing
                 let emptyAnimationY = topInset + floorToScreenPixels((visibleHeight - topInset - bottomInset - emptyTotalHeight) / 2.0)
                 
@@ -1284,6 +1298,11 @@ public final class ChatInlineSearchResultsListComponent: Component {
                     transition.setPosition(view: view, position: emptyResultsAnimationFrame.center)
                 }
                 if let view = self.emptyResultsTitle.view {
+                    if component.usesWegramAppearance {
+                        view.isAccessibilityElement = true
+                        view.accessibilityLabel = component.presentation.strings.Conversation_SearchNoResults
+                        view.accessibilityIdentifier = "Wegram.Search.Empty"
+                    }
                     if view.superview == nil {
                         view.alpha = 0.0
                         fadeTransition.setAlpha(view: view, alpha: 1.0)

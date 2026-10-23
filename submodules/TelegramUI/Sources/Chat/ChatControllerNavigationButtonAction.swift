@@ -265,7 +265,7 @@ extension ChatControllerImpl {
                         }
                     }
                     
-                    let actionSheet = ActionSheetController(presentationData: strongSelf.presentationData)
+                    let actionSheet = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: strongSelf.presentationData.theme, fontSize: strongSelf.presentationData.listsFontSize))
                     var items: [ActionSheetItem] = []
                     
                     if case .scheduledMessages = strongSelf.presentationInterfaceState.subject {
@@ -276,17 +276,15 @@ extension ChatControllerImpl {
                                 return
                             }
                             
-                            let alertController = textAlertController(
-                                context: strongSelf.context,
+                            let alertController = wegramConfirmationController(
+                                updatedPresentationData: (initial: strongSelf.presentationData, signal: strongSelf.context.sharedContext.presentationData),
                                 title: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationTitle,
                                 text: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationText,
-                                actions: [
-                                    TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {
-                                    }),
-                                    TextAlertAction(type: .destructiveAction, title: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationAction, action: {
-                                        beginClear(.scheduledMessages)
-                                    })
-                                ]
+                                cancelTitle: strongSelf.presentationData.strings.Common_Cancel,
+                                actionTitle: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationAction,
+                                action: {
+                                    beginClear(.scheduledMessages)
+                                }
                             )
                             strongSelf.present(alertController, in: .window(.root))
                         }))
@@ -312,17 +310,15 @@ extension ChatControllerImpl {
                                         return
                                     }
                                     
-                                    let alertController = textAlertController(
-                                        context: strongSelf.context,
+                                    let alertController = wegramConfirmationController(
+                                        updatedPresentationData: (initial: strongSelf.presentationData, signal: strongSelf.context.sharedContext.presentationData),
                                         title: strongSelf.presentationData.strings.ChatList_DeleteForEveryoneConfirmationTitle,
                                         text: confirmationText,
-                                        actions: [
-                                            TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {
-                                            }),
-                                            TextAlertAction(type: .destructiveAction, title: strongSelf.presentationData.strings.ChatList_DeleteForEveryoneConfirmationAction, action: {
-                                                beginClear(.forEveryone)
-                                            })
-                                        ]
+                                        cancelTitle: strongSelf.presentationData.strings.Common_Cancel,
+                                        actionTitle: strongSelf.presentationData.strings.ChatList_DeleteForEveryoneConfirmationAction,
+                                        action: {
+                                            beginClear(.forEveryone)
+                                        }
                                     )
                                     strongSelf.present(alertController, in: .window(.root))
                                 }))
@@ -338,17 +334,15 @@ extension ChatControllerImpl {
                                 items.append(ActionSheetButtonItem(title: text, color: .destructive, action: { [weak self, weak actionSheet] in
                                     actionSheet?.dismissAnimated()
                                     if mainPeer.id == context.account.peerId, let strongSelf = self {
-                                        let alertController = textAlertController(
-                                            context: strongSelf.context,
+                                        let alertController = wegramConfirmationController(
+                                            updatedPresentationData: (initial: strongSelf.presentationData, signal: strongSelf.context.sharedContext.presentationData),
                                             title: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationTitle,
                                             text: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationText,
-                                            actions: [
-                                                TextAlertAction(type: .genericAction, title: strongSelf.presentationData.strings.Common_Cancel, action: {
-                                                }),
-                                                TextAlertAction(type: .destructiveAction, title: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationAction, action: {
-                                                    beginClear(.forLocalPeer)
-                                                })
-                                            ]
+                                            cancelTitle: strongSelf.presentationData.strings.Common_Cancel,
+                                            actionTitle: strongSelf.presentationData.strings.ChatList_DeleteSavedMessagesConfirmationAction,
+                                            action: {
+                                                beginClear(.forLocalPeer)
+                                            }
                                         )
                                         strongSelf.present(alertController, in: .window(.root))
                                     } else {
@@ -437,6 +431,7 @@ extension ChatControllerImpl {
                         if peer.restrictionText(platform: "ios", contentSettings: self.context.currentContentSettings.with { $0 }) == nil && !self.presentationInterfaceState.isNotAccessible {
                             if peer.id == self.context.account.peerId {
                                 if let peer = self.presentationInterfaceState.renderedPeer?.chatMainPeer, let infoController = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: self.updatedPresentationData, peer: EnginePeer(peer), mode: .generic, avatarInitiallyExpanded: false, fromChat: true, requestsContext: nil) {
+                                    self.configureWegramPinnedMessages(in: infoController)
                                     self.effectiveNavigationController?.pushViewController(infoController)
                                 }
                             } else {
@@ -457,6 +452,7 @@ extension ChatControllerImpl {
                                     mode = .generic
                                 }
                                 if let infoController = self.context.sharedContext.makePeerInfoController(context: self.context, updatedPresentationData: self.updatedPresentationData, peer: EnginePeer(peer), mode: mode, avatarInitiallyExpanded: expandAvatar, fromChat: true, requestsContext: self.contentData?.inviteRequestsContext) {
+                                    self.configureWegramPinnedMessages(in: infoController)
                                     self.effectiveNavigationController?.pushViewController(infoController)
                                 }
                             }
@@ -535,7 +531,7 @@ extension ChatControllerImpl {
                             return
                         }
                         let presentationData = strongSelf.presentationData
-                        let controller = ActionSheetController(presentationData: presentationData)
+                        let controller = ActionSheetController(theme: ActionSheetControllerTheme(wegramTheme: presentationData.theme, fontSize: presentationData.listsFontSize))
                         let dismissAction: () -> Void = { [weak controller] in
                             controller?.dismissAnimated()
                         }

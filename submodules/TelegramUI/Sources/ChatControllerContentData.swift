@@ -2056,7 +2056,7 @@ extension ChatControllerImpl {
                             }
                         }
                         if globalRemainingUnreadChatCount > 0 {
-                            strongSelf.initialNavigationBadge = "\(globalRemainingUnreadChatCount)"
+                            strongSelf.initialNavigationBadge = wegramUnreadCountString(Int(globalRemainingUnreadChatCount))
                         }
                     }
                 }

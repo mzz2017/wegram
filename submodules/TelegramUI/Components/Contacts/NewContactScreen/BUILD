@@ -40,8 +40,6 @@ swift_library(
         "//submodules/TelegramUI/Components/PlainButtonComponent",
         "//submodules/TelegramUI/Components/ListComposePollOptionComponent",
         "//submodules/TelegramUI/Components/ListItemComponentAdaptor",
-        "//submodules/TelegramUI/Components/EdgeEffect",
-        "//submodules/TelegramUI/Components/GlassBarButtonComponent",
         "//submodules/PhoneNumberFormat",
         "//submodules/QrCodeUI",
         "//submodules/AvatarNode",

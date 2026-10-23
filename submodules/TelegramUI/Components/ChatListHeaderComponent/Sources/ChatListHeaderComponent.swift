@@ -81,6 +81,11 @@ public final class ChatListHeaderComponent: Component {
         public let leftButton: AnyComponentWithIdentity<NavigationButtonComponentEnvironment>?
         public let rightButtons: [AnyComponentWithIdentity<NavigationButtonComponentEnvironment>]
         public let backPressed: (() -> Void)?
+        /// WeGram: the unread count WeChat draws beside a sub-page's `<` (IMG_2441), nil for none.
+        public let backBadge: String?
+        /// WeGram: a long press on the title. The Folded Chats bar has no right button, so the archive's
+        /// "more" menu lives here.
+        public let titleLongPressed: ((UIView) -> Void)?
         
         public init(
             title: String,
@@ -89,7 +94,9 @@ public final class ChatListHeaderComponent: Component {
             chatListTitle: NetworkStatusTitle?,
             leftButton: AnyComponentWithIdentity<NavigationButtonComponentEnvironment>?,
             rightButtons: [AnyComponentWithIdentity<NavigationButtonComponentEnvironment>],
-            backPressed: (() -> Void)?
+            backPressed: (() -> Void)?,
+            backBadge: String? = nil,
+            titleLongPressed: ((UIView) -> Void)? = nil
         ) {
             self.title = title
             self.navigationBackTitle = navigationBackTitle
@@ -98,6 +105,8 @@ public final class ChatListHeaderComponent: Component {
             self.leftButton = leftButton
             self.rightButtons = rightButtons
             self.backPressed = backPressed
+            self.backBadge = backBadge
+            self.titleLongPressed = titleLongPressed
         }
         
         public static func ==(lhs: Content, rhs: Content) -> Bool {
@@ -122,6 +131,12 @@ public final class ChatListHeaderComponent: Component {
             if (lhs.backPressed == nil) != (rhs.backPressed == nil) {
                 return false
             }
+            if lhs.backBadge != rhs.backBadge {
+                return false
+            }
+            if (lhs.titleLongPressed == nil) != (rhs.titleLongPressed == nil) {
+                return false
+            }
             return true
         }
     }
@@ -140,6 +155,7 @@ public final class ChatListHeaderComponent: Component {
     public let context: AccountContext
     public let theme: PresentationTheme
     public let strings: PresentationStrings
+    public let usesWegramAppearance: Bool
     
     public let openStatusSetup: (UIView) -> Void
     public let toggleIsLocked: () -> Void
@@ -159,9 +175,11 @@ public final class ChatListHeaderComponent: Component {
         context: AccountContext,
         theme: PresentationTheme,
         strings: PresentationStrings,
+        usesWegramAppearance: Bool = false,
         openStatusSetup: @escaping (UIView) -> Void,
         toggleIsLocked: @escaping () -> Void
     ) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.leftInset = leftInset
         self.rightInset = rightInset
         self.primaryContent = primaryContent
@@ -181,6 +199,7 @@ public final class ChatListHeaderComponent: Component {
     }
     
     public static func ==(lhs: ChatListHeaderComponent, rhs: ChatListHeaderComponent) -> Bool {
+        if lhs.usesWegramAppearance != rhs.usesWegramAppearance { return false }
         if lhs.leftInset != rhs.leftInset {
             return false
         }
@@ -230,8 +249,10 @@ public final class ChatListHeaderComponent: Component {
         private let onPressed: () -> Void
         
         let arrowView: UIImageView
+        private var badgeNode: NavigationBarBadgeNode?
         
         private var currentColor: UIColor?
+        private var currentUsesWegramAppearance = false
         
         init(onPressed: @escaping () -> Void) {
             self.onPressed = onPressed
@@ -263,9 +284,22 @@ public final class ChatListHeaderComponent: Component {
             self.onPressed()
         }
         
-        func update(theme: PresentationTheme, strings: PresentationStrings, availableSize: CGSize, transition: ComponentTransition) -> CGSize {
+        func update(theme: PresentationTheme, strings: PresentationStrings, usesWegramAppearance: Bool, badge: String?, availableSize: CGSize, transition: ComponentTransition) -> CGSize {
             self.accessibilityLabel = strings.Common_Back
             self.accessibilityTraits = [.button]
+            
+            if usesWegramAppearance {
+                return self.updateWegram(theme: theme, badge: badge, availableSize: availableSize)
+            }
+            if let badgeNode = self.badgeNode {
+                self.badgeNode = nil
+                badgeNode.view.removeFromSuperview()
+            }
+            self.accessibilityValue = nil
+            if self.currentUsesWegramAppearance {
+                self.currentUsesWegramAppearance = false
+                self.currentColor = nil
+            }
             
             if self.currentColor != theme.chat.inputPanel.panelControlColor {
                 self.currentColor = theme.chat.inputPanel.panelControlColor
@@ -294,6 +328,49 @@ public final class ChatListHeaderComponent: Component {
             transition.setBounds(view: self.arrowView, bounds: CGRect(origin: CGPoint(), size: arrowFrame.size))
             
             return size
+        }
+        
+        /// The chat bar's back control (`NavigationBarImpl`'s WeGram branch): the 10x18 chevron 16pt from the
+        /// bar's edge, then the unread pill 6pt after it. The button sits 4pt in (`ChatListNavigationBar`).
+        private func updateWegram(theme: PresentationTheme, badge: String?, availableSize: CGSize) -> CGSize {
+            let colors = WegramNavigationColors(isDark: theme.overallDarkAppearance)
+            if !self.currentUsesWegramAppearance || self.currentColor != colors.control {
+                self.currentUsesWegramAppearance = true
+                self.currentColor = colors.control
+                self.arrowView.image = wegramNavigationBackArrowImage(color: colors.control)
+                self.arrowView.tintColor = nil
+                self.badgeNode?.updateTheme(fillColor: colors.badge, strokeColor: .clear, textColor: colors.control)
+            }
+            let arrowFrame = CGRect(x: 12, y: floor((availableSize.height - 18) * 0.5), width: 10, height: 18)
+            self.arrowView.center = arrowFrame.center
+            self.arrowView.bounds = CGRect(origin: CGPoint(), size: arrowFrame.size)
+            
+            var width: CGFloat = 44
+            if let badge, !badge.isEmpty {
+                let badgeNode: NavigationBarBadgeNode
+                if let current = self.badgeNode {
+                    badgeNode = current
+                } else {
+                    badgeNode = NavigationBarBadgeNode(fillColor: colors.badge, strokeColor: .clear, textColor: colors.control)
+                    badgeNode.usesWegramAppearance = true
+                    badgeNode.isUserInteractionEnabled = false
+                    self.badgeNode = badgeNode
+                    self.addSubview(badgeNode.view)
+                }
+                badgeNode.text = badge
+                let badgeSize = badgeNode.measure(CGSize(width: 200, height: 100))
+                let badgeFrame = CGRect(x: arrowFrame.maxX + 6, y: arrowFrame.midY - badgeSize.height * 0.5, width: badgeSize.width, height: badgeSize.height)
+                badgeNode.frame = badgeFrame
+                width = max(width, badgeFrame.maxX + 8)
+                self.accessibilityValue = badge
+            } else {
+                if let badgeNode = self.badgeNode {
+                    self.badgeNode = nil
+                    badgeNode.view.removeFromSuperview()
+                }
+                self.accessibilityValue = nil
+            }
+            return CGSize(width: width, height: availableSize.height)
         }
     }
     
@@ -460,7 +537,7 @@ public final class ChatListHeaderComponent: Component {
             self.chatListTitleView?.openEmojiStatusSetup()
         }
         
-        func update(context: AccountContext, theme: PresentationTheme, strings: PresentationStrings, content: Content, displayBackButton: Bool, leftInset: CGFloat, rightInset: CGFloat, sideContentWidth: CGFloat, sideContentFraction: CGFloat, size: CGSize, transition: ComponentTransition) {
+        func update(context: AccountContext, theme: PresentationTheme, strings: PresentationStrings, content: Content, usesWegramAppearance: Bool, displayBackButton: Bool, leftInset: CGFloat, rightInset: CGFloat, sideContentWidth: CGFloat, sideContentFraction: CGFloat, size: CGSize, transition: ComponentTransition) {
             let alphaTransition: ComponentTransition = transition.animation.isImmediate ? .immediate : .easeInOut(duration: 0.3)
 
             transition.setPosition(view: self.titleOffsetContainer, position: CGPoint(x: size.width * 0.5, y: size.height * 0.5))
@@ -469,7 +546,7 @@ public final class ChatListHeaderComponent: Component {
             transition.setPosition(view: self.titleScaleContainer, position: CGPoint(x: size.width * 0.5, y: size.height * 0.5))
             transition.setBounds(view: self.titleScaleContainer, bounds: CGRect(origin: self.titleScaleContainer.bounds.origin, size: size))
             
-            let titleText = NSAttributedString(string: content.title, font: Font.semibold(17.0), textColor: theme.rootController.navigationBar.primaryTextColor)
+            let titleText = NSAttributedString(string: content.title, font: usesWegramAppearance ? wegramNavigationTitleFont : Font.semibold(17), textColor: usesWegramAppearance ? WegramNavigationColors(isDark: theme.overallDarkAppearance).control : theme.rootController.navigationBar.primaryTextColor)
             let titleTextUpdated = self.titleTextView.attributedText != titleText
             self.titleTextView.attributedText = titleText
             
@@ -492,7 +569,7 @@ public final class ChatListHeaderComponent: Component {
                     self.backButtonView = backButtonView
                     self.leftButtonsContainer.addSubview(backButtonView)
                 }
-                let backButtonSize = backButtonView.update(theme: theme, strings: strings, availableSize: CGSize(width: 100.0, height: size.height), transition: backButtonTransition)
+                let backButtonSize = backButtonView.update(theme: theme, strings: strings, usesWegramAppearance: usesWegramAppearance, badge: content.backBadge, availableSize: CGSize(width: 100.0, height: size.height), transition: backButtonTransition)
                 backButtonTransition.setFrame(view: backButtonView, frame: CGRect(origin: CGPoint(x: nextLeftButtonX, y: floor((size.height - backButtonSize.height) / 2.0)), size: backButtonSize))
                 if nextLeftButtonX != 0.0 {
                     nextLeftButtonX += buttonSpacing
@@ -526,7 +603,7 @@ public final class ChatListHeaderComponent: Component {
                     transition: buttonTransition,
                     component: leftButton.component,
                     environment: {
-                        NavigationButtonComponentEnvironment(theme: theme)
+                        NavigationButtonComponentEnvironment(theme: theme, usesWegramAppearance: usesWegramAppearance)
                     },
                     containerSize: CGSize(width: 100.0, height: size.height)
                 )
@@ -583,7 +660,7 @@ public final class ChatListHeaderComponent: Component {
                     transition: buttonTransition,
                     component: rightButton.component,
                     environment: {
-                        NavigationButtonComponentEnvironment(theme: theme)
+                        NavigationButtonComponentEnvironment(theme: theme, usesWegramAppearance: usesWegramAppearance)
                     },
                     containerSize: CGSize(width: 100.0, height: size.height)
                 )
@@ -664,9 +741,16 @@ public final class ChatListHeaderComponent: Component {
             // Measured from the bar's edges, so each side includes its own inset (they differ where the
             // system reserves one side, e.g. iPhone Duo's vertical status bar). With the standard 16pt
             // inset these equal the former `nextLeftButtonX + 4.0` / `nextRightButtonX + 20.0`.
-            let centerContentLeftInset: CGFloat = leftInset + nextLeftButtonX - 12.0
-            let centerContentRightInset: CGFloat = rightInset + nextRightButtonX + 4.0
-            
+            var centerContentLeftInset: CGFloat = leftInset + nextLeftButtonX - 12.0
+            var centerContentRightInset: CGFloat = rightInset + nextRightButtonX + 4.0
+            if usesWegramAppearance {
+                // WeChat centres a bar's title on the screen whatever stands beside it: Folded Chats' title
+                // is centred at x 602/1206 next to a `<` and badge with nothing on the right (IMG_2441).
+                let symmetricInset = max(centerContentLeftInset, centerContentRightInset)
+                centerContentLeftInset = symmetricInset
+                centerContentRightInset = symmetricInset
+            }
+
             var centerContentWidth: CGFloat = 0.0
             var centerContentOffsetX: CGFloat = 0.0
             var centerContentOrigin: CGFloat = 0.0
@@ -684,9 +768,12 @@ public final class ChatListHeaderComponent: Component {
                 }
                 
                 let chatListTitleContentSize = size
+                chatListTitleView.usesWegramAppearance = usesWegramAppearance
                 chatListTitleView.theme = theme
                 chatListTitleView.strings = strings
-                chatListTitleView.setTitle(chatListTitle, animated: false)
+                var displayedTitle = chatListTitle
+                if usesWegramAppearance { displayedTitle.isPasscodeSet = false }
+                chatListTitleView.setTitle(displayedTitle, animated: false)
                 let titleContentRect = chatListTitleView.updateLayoutInternal(size: chatListTitleContentSize, transition: transition.containedViewLayoutTransition)
                 centerContentWidth = floor((chatListTitleContentSize.width * 0.5 - titleContentRect.minX) * 2.0)
                 
@@ -732,9 +819,12 @@ public final class ChatListHeaderComponent: Component {
         }
     }
     
-    public final class View: UIView {
+    public final class View: UIView, UIGestureRecognizerDelegate {
         private var component: ChatListHeaderComponent?
         private weak var state: EmptyComponentState?
+        
+        /// On the header itself: the title is drawn either by the content view or, above it, by the story list.
+        private var titleLongPressRecognizer: UILongPressGestureRecognizer?
         
         private var primaryContentView: ContentView?
         private var secondaryContentView: ContentView?
@@ -767,6 +857,44 @@ public final class ChatListHeaderComponent: Component {
         
         required public init?(coder: NSCoder) {
             fatalError("init(coder:) has not been implemented")
+        }
+        
+        private func updateTitleLongPress() {
+            let isEnabled = self.secondaryContentView == nil && self.component?.primaryContent?.titleLongPressed != nil
+            if isEnabled, self.titleLongPressRecognizer == nil {
+                let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(self.titleLongPressGesture(_:)))
+                recognizer.delegate = self
+                self.titleLongPressRecognizer = recognizer
+                self.addGestureRecognizer(recognizer)
+            }
+            self.titleLongPressRecognizer?.isEnabled = isEnabled
+        }
+        
+        /// The band between the side buttons on the 44pt row, where the title is.
+        private func titleBand() -> CGRect? {
+            guard let contentView = self.primaryContentView else {
+                return nil
+            }
+            let band = CGRect(x: contentView.centerContentLeftInset, y: 0.0, width: contentView.bounds.width - contentView.centerContentLeftInset - contentView.centerContentRightInset, height: contentView.bounds.height)
+            return contentView.convert(band, to: self)
+        }
+        
+        override public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer === self.titleLongPressRecognizer {
+                guard let band = self.titleBand() else {
+                    return false
+                }
+                return band.contains(gestureRecognizer.location(in: self))
+            }
+            return super.gestureRecognizerShouldBegin(gestureRecognizer)
+        }
+        
+        @objc private func titleLongPressGesture(_ recognizer: UILongPressGestureRecognizer) {
+            guard case .began = recognizer.state, let contentView = self.primaryContentView else {
+                return
+            }
+            // The whole row: the menu then hangs from the bar, whichever view draws the title.
+            self.component?.primaryContent?.titleLongPressed?(contentView)
         }
         
         public var backArrowView: UIView? {
@@ -902,11 +1030,12 @@ public final class ChatListHeaderComponent: Component {
                         chatListTitle: nil,
                         leftButton: primaryContent.leftButton,
                         rightButtons: primaryContent.rightButtons,
-                        backPressed: primaryContent.backPressed
+                        backPressed: primaryContent.backPressed,
+                        backBadge: primaryContent.backBadge
                     )
                 }
                 
-                primaryContentView.update(context: component.context, theme: component.theme, strings: component.strings, content: primaryContent, displayBackButton: primaryContent.backPressed != nil, leftInset: symmetricInset, rightInset: symmetricInset, sideContentWidth: sideContentWidth, sideContentFraction: (1.0 - component.storiesFraction), size: centeredContentFrame.size, transition: primaryContentTransition)
+                primaryContentView.update(context: component.context, theme: component.theme, strings: component.strings, content: primaryContent, usesWegramAppearance: component.usesWegramAppearance, displayBackButton: primaryContent.backPressed != nil, leftInset: symmetricInset, rightInset: symmetricInset, sideContentWidth: sideContentWidth, sideContentFraction: (1.0 - component.storiesFraction), size: centeredContentFrame.size, transition: primaryContentTransition)
                 primaryContentTransition.setFrame(view: primaryContentView, frame: centeredContentFrame)
                 
                 primaryContentView.updateContentOffsetFraction(contentOffsetFraction: 1.0 - self.storyOffsetFraction, transition: primaryContentTransition)
@@ -1045,7 +1174,7 @@ public final class ChatListHeaderComponent: Component {
                     self.leftButtonsContainer.addSubview(secondaryContentView.leftButtonsContainer)
                     self.rightButtonsContainer.addSubview(secondaryContentView.rightButtonsContainer)
                 }
-                secondaryContentView.update(context: component.context, theme: component.theme, strings: component.strings, content: secondaryContent, displayBackButton: true, leftInset: symmetricInset, rightInset: symmetricInset, sideContentWidth: 0.0, sideContentFraction: 0.0, size: centeredContentFrame.size, transition: secondaryContentTransition)
+                secondaryContentView.update(context: component.context, theme: component.theme, strings: component.strings, content: secondaryContent, usesWegramAppearance: component.usesWegramAppearance, displayBackButton: true, leftInset: symmetricInset, rightInset: symmetricInset, sideContentWidth: 0.0, sideContentFraction: 0.0, size: centeredContentFrame.size, transition: secondaryContentTransition)
                 secondaryContentTransition.setFrame(view: secondaryContentView, frame: centeredContentFrame)
                 
                 secondaryContentView.updateContentOffsetFraction(contentOffsetFraction: 1.0 - self.storyOffsetFraction, transition: secondaryContentTransition)
@@ -1166,7 +1295,7 @@ public final class ChatListHeaderComponent: Component {
                 }
                 let leftButtonsContainerFrame = CGRect(origin: CGPoint(x: component.leftInset, y: 0.0), size: CGSize(width: max(44.0, leftButtonsEffectiveWidth), height: 44.0))
                 leftButtonsBackgroundContainerTransition.setFrame(view: leftButtonsBackgroundContainer, frame: leftButtonsContainerFrame)
-                leftButtonsBackgroundContainer.update(size: leftButtonsContainerFrame.size, cornerRadius: leftButtonsContainerFrame.height * 0.5, isDark: component.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: leftButtonsBackgroundContainerTransition)
+                leftButtonsBackgroundContainer.update(size: leftButtonsContainerFrame.size, cornerRadius: leftButtonsContainerFrame.height * 0.5, isDark: component.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, isVisible: !component.usesWegramAppearance, transition: leftButtonsBackgroundContainerTransition)
                 leftButtonsBackgroundContainer.morphsIntoContextMenu = leftButtonCount == 1
                 leftButtonsBackgroundContainerTransition.setFrame(view: self.leftButtonsContainer, frame: CGRect(origin: CGPoint(), size: leftButtonsContainerFrame.size)) 
             } else {
@@ -1196,7 +1325,7 @@ public final class ChatListHeaderComponent: Component {
                     rightButtonsBackgroundContainer.update(size: rightButtonsContainerFrame.size, cornerRadius: rightButtonsContainerFrame.height * 0.5, isDark: component.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, isVisible: false, transition: .immediate)
                 }
                 rightButtonsBackgroundContainerTransition.setFrame(view: rightButtonsBackgroundContainer, frame: rightButtonsContainerFrame)
-                rightButtonsBackgroundContainer.update(size: rightButtonsContainerFrame.size, cornerRadius: rightButtonsContainerFrame.height * 0.5, isDark: component.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, transition: transition)
+                rightButtonsBackgroundContainer.update(size: rightButtonsContainerFrame.size, cornerRadius: rightButtonsContainerFrame.height * 0.5, isDark: component.theme.overallDarkAppearance, tintColor: .init(kind: .panel), isInteractive: true, isVisible: !component.usesWegramAppearance, transition: transition)
                 rightButtonsBackgroundContainer.morphsIntoContextMenu = rightButtonCount == 1
                 rightButtonsBackgroundContainerTransition.setFrame(view: self.rightButtonsContainer, frame: CGRect(origin: CGPoint(), size: rightButtonsContainerFrame.size))
             } else {
@@ -1209,6 +1338,8 @@ public final class ChatListHeaderComponent: Component {
                     })
                 }
             }
+            
+            self.updateTitleLongPress()
             
             return availableSize
         }

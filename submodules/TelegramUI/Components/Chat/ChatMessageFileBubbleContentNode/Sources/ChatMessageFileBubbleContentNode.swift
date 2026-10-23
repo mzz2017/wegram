@@ -112,6 +112,14 @@ public class ChatMessageFileBubbleContentNode: ChatMessageBubbleContentNode {
                 selectedFile = file
             }
             
+            let usesWegramVoice = item.controllerInteraction.wegramVoiceMenusAvailable && item.presentationData.chatBubbleCorners.usesWegramShape && selectedFile?.isVoice == true && selectedFile?.isInstantVideo != true && item.message.groupingKey == nil && item.message.minAutoremoveOrClearTimeout != viewOnceTimeout && item.associatedData.subject == nil && !item.presentationData.isPreview && !item.controllerInteraction.isSidePanelOpen && !item.associatedData.isRecentActions
+            let usesWegramFile = item.presentationData.chatBubbleCorners.usesWegramNeutralFill && selectedFile.map(WegramFileMessageLayout.supports) == true && item.attributes.updatingMedia == nil && item.message.media.contains(where: { $0 is TelegramMediaFile })
+            var layoutConstants = layoutConstants
+            if usesWegramFile {
+                layoutConstants.file.bubbleInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+            } else if usesWegramVoice {
+                layoutConstants.file.bubbleInsets = UIEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+            }
             var incoming = item.message.effectivelyIncoming(item.context.account.peerId)
             if let subject = item.associatedData.subject, case let .messageOptions(_, _, info) = subject, case .forward = info {
                 incoming = false
@@ -164,7 +172,9 @@ public class ChatMessageFileBubbleContentNode: ChatMessageBubbleContentNode {
                 isAttachedContentBlock: false,
                 layoutConstants: layoutConstants,
                 constrainedSize: CGSize(width: constrainedSize.width - layoutConstants.file.bubbleInsets.left - layoutConstants.file.bubbleInsets.right, height: constrainedSize.height),
-                controllerInteraction: item.controllerInteraction
+                controllerInteraction: item.controllerInteraction,
+                usesWegramVoiceAppearance: usesWegramVoice,
+                usesWegramFileAppearance: usesWegramFile
             ))
             
             let contentProperties = ChatMessageBubbleContentProperties(hidesSimpleAuthorHeader: false, headerSpacing: 0.0, hidesBackground: .never, forceFullCorners: false, forceAlignment: .none)
@@ -177,7 +187,7 @@ public class ChatMessageFileBubbleContentNode: ChatMessageBubbleContentNode {
                     
                     var bottomInset = layoutConstants.file.bubbleInsets.bottom
                     
-                    if case let .linear(_, bottom) = position {
+                    if !usesWegramVoice && !usesWegramFile, case let .linear(_, bottom) = position {
                         if case .Neighbour(_, _, .condensed) = bottom {
                             if selectedFile?.isMusic ?? false {
                                 bottomInset -= 14.0

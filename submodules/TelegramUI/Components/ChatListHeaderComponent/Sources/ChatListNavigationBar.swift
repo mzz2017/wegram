@@ -20,6 +20,10 @@ private func storiesHeightValue() -> CGFloat {
     return 96.0
 }
 
+// Measured against the WeChat dark chat-list reference (402pt wide, 3x): its title and search
+// field sit 7px lower than ours while the first row starts at the same y.
+private let wegramHeaderContentOffset: CGFloat = 7.0 / 3.0
+
 public final class ChatListNavigationBar: Component {
     public final class AnimationHint {
         let disableStoriesAnimations: Bool
@@ -74,6 +78,10 @@ public final class ChatListNavigationBar: Component {
     public let accessoryPanelContainerHeight: CGFloat
     public let hasEdgeEffect: Bool
     public let edgeEffectColor: UIColor?
+    public let usesWegramAppearance: Bool
+    /// A pushed WeGram list (Folded Chats, IMG_2441): the bar ends 7px below its 44pt row with a hairline, as on
+    /// every WeChat sub-page (IMG_2442/2446 light, 230 on 238; IMG_2437 dark, 44 on 18).
+    public let wegramSubpage: Bool
     public let hasOwnGlassContainer: Bool
     public let activateSearch: (NavigationBarSearchContentNode) -> Void
     public let openStatusSetup: (UIView) -> Void
@@ -102,6 +110,8 @@ public final class ChatListNavigationBar: Component {
         hasEdgeEffect: Bool = true,
         edgeEffectColor: UIColor? = nil,
         hasOwnGlassContainer: Bool = true,
+        usesWegramAppearance: Bool = false,
+        wegramSubpage: Bool = false,
         activateSearch: @escaping (NavigationBarSearchContentNode) -> Void,
         openStatusSetup: @escaping (UIView) -> Void,
         allowAutomaticOrder: @escaping () -> Void
@@ -127,7 +137,9 @@ public final class ChatListNavigationBar: Component {
         self.accessoryPanelContainerHeight = accessoryPanelContainerHeight
         self.hasEdgeEffect = hasEdgeEffect
         self.edgeEffectColor = edgeEffectColor
-        self.hasOwnGlassContainer = hasOwnGlassContainer
+        self.usesWegramAppearance = usesWegramAppearance
+        self.wegramSubpage = usesWegramAppearance && wegramSubpage
+        self.hasOwnGlassContainer = hasOwnGlassContainer && !usesWegramAppearance
         self.activateSearch = activateSearch
         self.openStatusSetup = openStatusSetup
         self.allowAutomaticOrder = allowAutomaticOrder
@@ -197,6 +209,8 @@ public final class ChatListNavigationBar: Component {
         if lhs.edgeEffectColor != rhs.edgeEffectColor {
             return false
         }
+        if lhs.usesWegramAppearance != rhs.usesWegramAppearance { return false }
+        if lhs.wegramSubpage != rhs.wegramSubpage { return false }
         if lhs.hasOwnGlassContainer != rhs.hasOwnGlassContainer {
             return false
         }
@@ -244,6 +258,8 @@ public final class ChatListNavigationBar: Component {
         
         public private(set) var storiesUnlocked: Bool = false
         
+        private let flatBackgroundView = UIView()
+        private let flatSeparatorView = UIView()
         private let bottomContentsContainer: UIView
         
         private var tabsNode: ASDisplayNode?
@@ -273,6 +289,10 @@ public final class ChatListNavigationBar: Component {
             
             super.init(frame: frame)
             
+            self.flatBackgroundView.isUserInteractionEnabled = false
+            self.addSubview(self.flatBackgroundView)
+            self.flatSeparatorView.isUserInteractionEnabled = false
+            self.flatBackgroundView.addSubview(self.flatSeparatorView)
             self.addSubview(self.edgeEffectView)
             self.addSubview(self.bottomContentsContainer)
         }
@@ -352,6 +372,12 @@ public final class ChatListNavigationBar: Component {
             
             let visibleSize = CGSize(width: currentLayout.size.width, height: max(0.0, currentLayout.size.height - clippedScrollOffset))
             
+            self.flatBackgroundView.isHidden = !component.usesWegramAppearance
+            self.flatBackgroundView.backgroundColor = UIColor(rgb: component.theme.overallDarkAppearance ? 0x111111 : 0xeeeeee)
+            transition.setFrame(view: self.flatBackgroundView, frame: CGRect(origin: .zero, size: visibleSize))
+            self.flatSeparatorView.isHidden = !component.wegramSubpage
+            self.flatSeparatorView.backgroundColor = UIColor(rgb: component.theme.overallDarkAppearance ? 0x2c2c2c : 0xe6e6e6)
+            transition.setFrame(view: self.flatSeparatorView, frame: CGRect(x: 0.0, y: visibleSize.height - UIScreenPixel, width: visibleSize.width, height: UIScreenPixel))
             let previousHeight = self.currentHeight
 
             self.currentHeight = visibleSize.height
@@ -359,7 +385,7 @@ public final class ChatListNavigationBar: Component {
             var embeddedSearchBarExpansionHeight: CGFloat = 0.0
             var searchFrameValue: CGRect?
             if let search = component.search {
-                if let searchContentNode = self.searchContentNode, searchContentNode.hasOwnGlassContainer != component.hasOwnGlassContainer {
+                if let searchContentNode = self.searchContentNode, searchContentNode.hasOwnGlassContainer != component.hasOwnGlassContainer || searchContentNode.usesWegramAppearance != component.usesWegramAppearance {
                     searchContentNode.view.removeFromSuperview()
                     self.searchContentNode = nil
                 }
@@ -386,6 +412,7 @@ public final class ChatListNavigationBar: Component {
                         displayGlassBackgroundWhenInactive: search.displayGlassBackgroundWhenInactive,
                         alignPlaceholderToLeftWhenInactive: search.alignPlaceholderToLeftWhenInactive,
                         hasOwnGlassContainer: component.hasOwnGlassContainer,
+                        usesWegramAppearance: component.usesWegramAppearance,
                         activate: { [weak self] in
                             guard let self, let component = self.component, let searchContentNode = self.searchContentNode else {
                                 return
@@ -399,9 +426,9 @@ public final class ChatListNavigationBar: Component {
                 }
                 
                 let searchSize = CGSize(width: currentLayout.size.width, height: navigationBarSearchContentHeight)
-                var searchFrame = CGRect(origin: CGPoint(x: 0.0, y: visibleSize.height - searchSize.height - self.bottomContentsContainer.bounds.height - 2.0), size: searchSize)
+                var searchFrame = CGRect(origin: CGPoint(x: 0.0, y: visibleSize.height - searchSize.height - self.bottomContentsContainer.bounds.height - 2.0 + (component.usesWegramAppearance ? wegramHeaderContentOffset : 0.0)), size: searchSize)
                 if let activeSearch = component.activeSearch, !activeSearch.isExternal {
-                    searchFrame.origin.y = component.statusBarHeight + 8.0
+                    searchFrame.origin.y = component.statusBarHeight + (component.usesWegramAppearance ? 0 : 8)
                 }
                 if component.tabsNode != nil {
                     searchFrame.origin.y -= 40.0
@@ -418,7 +445,7 @@ public final class ChatListNavigationBar: Component {
                 let searchOffsetFraction = clippedSearchOffset / searchOffsetDistance
                 searchContentNode.expansionProgress = 1.0 - searchOffsetFraction
                 embeddedSearchBarExpansionHeight = 60.0 - floorToScreenPixels((1.0 - searchOffsetFraction) * searchSize.height)
-                if searchOffsetFraction > 0.0 {
+                if searchOffsetFraction > 0.0 && !component.usesWegramAppearance {
                     searchFrame.origin.y -= (60.0 - 44.0) * 0.5 * searchOffsetFraction
                 }
                 
@@ -486,8 +513,8 @@ public final class ChatListNavigationBar: Component {
             self.storiesUnlocked = storiesUnlocked
             
             let headerComponent = ChatListHeaderComponent(
-                leftInset: component.leftInset + 16.0,
-                rightInset: component.rightInset + 16.0,
+                leftInset: component.leftInset + (component.usesWegramAppearance ? 4 : 16),
+                rightInset: component.rightInset + (component.usesWegramAppearance ? 4 : 16),
                 primaryContent: component.primaryContent,
                 secondaryContent: component.secondaryContent,
                 secondaryTransition: component.secondaryTransition,
@@ -500,6 +527,7 @@ public final class ChatListNavigationBar: Component {
                 context: component.context,
                 theme: component.theme,
                 strings: component.strings,
+                usesWegramAppearance: component.usesWegramAppearance,
                 openStatusSetup: { [weak self] sourceView in
                     guard let self, let component = self.component else {
                         return
@@ -539,7 +567,7 @@ public final class ChatListNavigationBar: Component {
             } else {
                 // Also without a status bar (iPhone landscape), matching the regular navigation bar's
                 // 10pt button inset there.
-                headerContentY = component.statusBarHeight + 10.0
+                headerContentY = component.statusBarHeight + (component.usesWegramAppearance ? wegramHeaderContentOffset : 10)
             }
             let headerContentFrame = CGRect(origin: CGPoint(x: 0.0, y: headerContentY), size: headerContentSize)
             if let headerContentView = self.headerContent.view {
@@ -717,6 +745,7 @@ public final class ChatListNavigationBar: Component {
                     hasEdgeEffect: component.hasEdgeEffect,
                     edgeEffectColor: component.edgeEffectColor,
                     hasOwnGlassContainer: component.hasOwnGlassContainer,
+                    usesWegramAppearance: component.usesWegramAppearance,
                     activateSearch: component.activateSearch,
                     openStatusSetup: component.openStatusSetup,
                     allowAutomaticOrder: component.allowAutomaticOrder
@@ -737,6 +766,7 @@ public final class ChatListNavigationBar: Component {
                         context: headerComponent.context,
                         theme: headerComponent.theme,
                         strings: headerComponent.strings,
+                        usesWegramAppearance: headerComponent.usesWegramAppearance,
                         openStatusSetup: headerComponent.openStatusSetup,
                         toggleIsLocked: headerComponent.toggleIsLocked
                     )
@@ -795,17 +825,22 @@ public final class ChatListNavigationBar: Component {
             self.state = state
             
             var contentHeight = component.statusBarHeight
-            contentHeight += 3.0
+            contentHeight += component.usesWegramAppearance ? 0 : 3
             if let activeSearch = component.activeSearch {
                 if !activeSearch.isExternal {
-                    contentHeight += navigationBarSearchContentHeight
+                    contentHeight += component.usesWegramAppearance ? 52 : navigationBarSearchContentHeight
                 }
             } else {
                 contentHeight += 44.0
-                contentHeight += 9.0
+                contentHeight += component.usesWegramAppearance ? 0 : 9
+                if component.wegramSubpage {
+                    // The 7px inset above the row (`wegramHeaderContentOffset`) and the hairline: 140px from the
+                    // status bar to the list in IMG_2441.
+                    contentHeight += wegramHeaderContentOffset + UIScreenPixel
+                }
                 
                 if component.search != nil {
-                    contentHeight += navigationBarSearchContentHeight + 2.0
+                    contentHeight += component.usesWegramAppearance ? ChatListNavigationBar.searchScrollHeight : navigationBarSearchContentHeight + 2
                 }
             }
             
@@ -855,7 +890,7 @@ public final class ChatListNavigationBar: Component {
                     })
                 }
             }
-            headersContentHeight += 3.0
+            headersContentHeight += component.usesWegramAppearance ? 0 : 3
             transition.setBounds(view: self.bottomContentsContainer, bounds: CGRect(origin: CGPoint(), size: CGSize(width: availableSize.width, height: headersContentHeight)))
             
             if let activeSearch = component.activeSearch, !activeSearch.isExternal {
@@ -885,7 +920,7 @@ public final class ChatListNavigationBar: Component {
             
             self.updateEdgeEffectColor(transition: transition)
             
-            self.edgeEffectView.isHidden = !component.hasEdgeEffect
+            self.edgeEffectView.isHidden = !component.hasEdgeEffect || component.usesWegramAppearance
             
             return size
         }

@@ -42,6 +42,7 @@ swift_library(
         "//submodules/TelegramUniversalVideoContent",
         "//submodules/GalleryUI",
         "//submodules/SaveToCameraRoll",
+        "//submodules/OverlayStatusController",
         "//submodules/SegmentedControlNode",
         "//submodules/AnimatedCountLabelNode",
         "//submodules/HexColor",
@@ -55,3 +56,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramQrCardView.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

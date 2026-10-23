@@ -79,6 +79,7 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
     public var callListController: CallListController?
     public var chatListController: ChatListController?
     public var accountSettingsController: PeerInfoScreen?
+    private var discoverController: WegramDiscoverController?
     
     private var permissionsDisposable: Disposable?
     private var presentationDataDisposable: Disposable?
@@ -209,12 +210,12 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
         contactsController.switchToChatsController = {  [weak self] in
             self?.openChatsController(activateSearch: false)
         }
-        controllers.append(contactsController)
-        
-        if showCallsTab {
-            controllers.append(callListController)
-        }
-        controllers.append(chatListController)
+        let discoverController = WegramDiscoverController(context: self.context, openSearch: { [weak self] filter in
+            self?.openChatsController(activateSearch: true, filter: filter)
+        }, storyPostingAvailable: (chatListController as? ChatListControllerImpl)?.wegramStoryPostingAvailable ?? .single(false), postStory: { [weak chatListController] sourceController, sourceView in
+            (chatListController as? ChatListControllerImpl)?.activateStoryCamera(sourceController: sourceController, sourceView: sourceView)
+        })
+        controllers.append(contentsOf: [chatListController, contactsController, discoverController])
         
         var restoreSettignsController: (ViewController & SettingsController)?
         if let sharedContext = self.context.sharedContext as? SharedAccountContextImpl {
@@ -235,8 +236,9 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
         accountSettingsController.parentController = self
         controllers.append(accountSettingsController)
                 
-        tabBarController.setControllers(controllers, selectedIndex: restoreSettignsController != nil ? (controllers.count - 1) : (controllers.count - 2))
+        tabBarController.setControllers(controllers, selectedIndex: restoreSettignsController != nil ? (controllers.count - 1) : 0)
         
+        self.discoverController = discoverController
         self.contactsController = contactsController
         self.callListController = callListController
         self.chatListController = chatListController
@@ -249,13 +251,11 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
         guard let rootTabController = self.rootTabController as? TabBarControllerImpl else {
             return
         }
-        var controllers: [ViewController] = []
-        controllers.append(self.contactsController!)
-        if showCallsTab {
-            controllers.append(self.callListController!)
+        guard let chatListController = self.chatListController, let contactsController = self.contactsController,
+            let discoverController = self.discoverController, let accountSettingsController = self.accountSettingsController else {
+            return
         }
-        controllers.append(self.chatListController!)
-        controllers.append(self.accountSettingsController!)
+        let controllers: [ViewController] = [chatListController, contactsController, discoverController, accountSettingsController]
         
         rootTabController.setControllers(controllers, selectedIndex: nil)
     }
@@ -843,7 +843,9 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
     }
     
     public func startNewCall() {
-        self.callListController?.tabBarActivateSearch()
+        let controller = CallListController(context: self.context, mode: .navigation)
+        self.pushViewController(controller)
+        controller.tabBarActivateSearch()
     }
 }
 

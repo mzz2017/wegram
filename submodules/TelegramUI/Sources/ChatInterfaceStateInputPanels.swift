@@ -5,13 +5,27 @@ import TelegramCore
 import AccountContext
 import ChatPresentationInterfaceState
 import ChatInputPanelNode
+import ChatNavigationButton
 import ChatChannelSubscriberInputPanelNode
 import ChatMessageSelectionInputPanelNode
+
 import ChatControllerInteraction
 import ChatTextInputPanelNode
 import RichTextEditorMediaView
 import RichTextEditorUIKit
 import InstantPageUI
+
+private func configureWegramSelectionHistory(_ panel: ChatMessageSelectionInputPanelNode, state: ChatPresentationInterfaceState, interaction: ChatPanelInterfaceInteraction?) {
+    panel.wegramHistoryAction = nil
+    guard let ids = state.interfaceState.selectionState?.selectedIds, let button = wegramSelectionHistoryButton(state) else { return }
+    let target = (location: state.chatLocation, subject: state.subject, selectedIds: ids)
+    panel.wegramHistoryAction = (title: button.buttonItem.accessibilityLabel ?? button.buttonItem.title ?? state.strings.Conversation_ClearAll, perform: { [weak interaction] in
+        guard let controller = interaction?.chatController() as? ChatControllerImpl,
+              controller.isNodeLoaded, controller.view.window != nil,
+              let current = wegramSelectionHistoryButton(controller.presentationInterfaceState, matching: target), current.action == button.action else { return }
+        controller.navigationButtonAction(current.action)
+    })
+}
 
 func chatInputFormulaRenderResult(context: RichTextFormulaRenderContext) -> RichTextFormulaRenderResult? {
     guard let attachment = instantPageMathAttachment(
@@ -76,13 +90,15 @@ func inputPanelForChatPresentationIntefaceState(_ chatPresentationInterfaceState
                 currentPanel.chatControllerInteraction = chatControllerInteraction
                 currentPanel.interfaceInteraction = interfaceInteraction
                 currentPanel.updateTheme(theme: chatPresentationInterfaceState.theme)
+                configureWegramSelectionHistory(currentPanel, state: chatPresentationInterfaceState, interaction: interfaceInteraction)
                 selectionPanel = currentPanel
             } else {
-                let panel = ChatMessageSelectionInputPanelNode(theme: chatPresentationInterfaceState.theme, strings: chatPresentationInterfaceState.strings)
+                let panel = ChatMessageSelectionInputPanelNode(theme: chatPresentationInterfaceState.theme, strings: chatPresentationInterfaceState.strings, usesWegramAppearance: true)
                 panel.context = context
                 panel.selectedMessages = selectionState.selectedIds
                 panel.chatControllerInteraction = chatControllerInteraction
                 panel.interfaceInteraction = interfaceInteraction
+                configureWegramSelectionHistory(panel, state: chatPresentationInterfaceState, interaction: interfaceInteraction)
                 selectionPanel = panel
             }
         }
@@ -131,13 +147,15 @@ func inputPanelForChatPresentationIntefaceState(_ chatPresentationInterfaceState
                 currentPanel.chatControllerInteraction = chatControllerInteraction
                 currentPanel.interfaceInteraction = interfaceInteraction
                 currentPanel.updateTheme(theme: chatPresentationInterfaceState.theme)
+                configureWegramSelectionHistory(currentPanel, state: chatPresentationInterfaceState, interaction: interfaceInteraction)
                 return (currentPanel, nil)
             } else {
-                let panel = ChatMessageSelectionInputPanelNode(theme: chatPresentationInterfaceState.theme, strings: chatPresentationInterfaceState.strings)
+                let panel = ChatMessageSelectionInputPanelNode(theme: chatPresentationInterfaceState.theme, strings: chatPresentationInterfaceState.strings, usesWegramAppearance: true)
                 panel.context = context
                 panel.selectedMessages = selectionState.selectedIds
                 panel.chatControllerInteraction = chatControllerInteraction
                 panel.interfaceInteraction = interfaceInteraction
+                configureWegramSelectionHistory(panel, state: chatPresentationInterfaceState, interaction: interfaceInteraction)
                 return (panel, nil)
             }
         }
@@ -481,7 +499,7 @@ func inputPanelForChatPresentationIntefaceState(_ chatPresentationInterfaceState
                 textInputPanelNode.context = context
                 return (textInputPanelNode, nil)
             } else {
-                let panel = ChatTextInputPanelNode(context: context, presentationInterfaceState: chatPresentationInterfaceState, presentationContext: nil, presentController: { [weak interfaceInteraction] controller in
+                let panel = ChatTextInputPanelNode(context: context, presentationInterfaceState: chatPresentationInterfaceState, presentationContext: nil, usesWegramAppearance: true, presentController: { [weak interfaceInteraction] controller in
                     interfaceInteraction?.presentController(controller, nil)
                 })
                 panel.mediaItemViewFactory = { items, existing in

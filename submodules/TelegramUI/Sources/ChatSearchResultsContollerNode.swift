@@ -76,9 +76,13 @@ private enum ChatListSearchEntry: Comparable, Identifiable {
         return false
     }
     
-    public func item(context: AccountContext, interaction: ChatListNodeInteraction, location: ChatListControllerLocation) -> ListViewItem {
+    public func item(context: AccountContext, interaction: ChatListNodeInteraction, location: ChatListControllerLocation, pickMessage: ((EngineMessage) -> Void)?) -> ListViewItem {
         switch self {
             case let .message(message, peer, readState, presentationData):
+                if let pickMessage {
+                    let value = EngineMessage(message)
+                    return WegramSavedAttachmentItem(context: context, message: value, data: presentationData, query: interaction.searchTextHighightState ?? "", action: { pickMessage(value) })
+                }
                 var displayAsMessage = true
                 if case .savedMessagesChats = location {
                     displayAsMessage = false
@@ -139,12 +143,12 @@ public struct ChatListSearchContainerTransition {
     }
 }
 
-private func chatListSearchContainerPreparedTransition(from fromEntries: [ChatListSearchEntry], to toEntries: [ChatListSearchEntry], context: AccountContext, interaction: ChatListNodeInteraction, location: ChatListControllerLocation) -> ChatListSearchContainerTransition {
+private func chatListSearchContainerPreparedTransition(from fromEntries: [ChatListSearchEntry], to toEntries: [ChatListSearchEntry], context: AccountContext, interaction: ChatListNodeInteraction, location: ChatListControllerLocation, pickMessage: ((EngineMessage) -> Void)?) -> ChatListSearchContainerTransition {
     let (deleteIndices, indicesAndItems, updateIndices) = mergeListsStableWithUpdates(leftList: fromEntries, rightList: toEntries)
     
     let deletions = deleteIndices.map { ListViewDeleteItem(index: $0, directionHint: nil) }
-    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, interaction: interaction, location: location), directionHint: nil) }
-    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, interaction: interaction, location: location), directionHint: nil) }
+    let insertions = indicesAndItems.map { ListViewInsertItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, interaction: interaction, location: location, pickMessage: pickMessage), directionHint: nil) }
+    let updates = updateIndices.map { ListViewUpdateItem(index: $0.0, previousIndex: $0.2, item: $0.1.item(context: context, interaction: interaction, location: location, pickMessage: pickMessage), directionHint: nil) }
     
     return ChatListSearchContainerTransition(deletions: deletions, insertions: insertions, updates: updates)
 }
@@ -157,7 +161,7 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
     private let location: SearchMessagesLocation
     private let searchQuery: String
     private var searchResult: SearchMessagesResult
-    private var searchState: SearchMessagesState
+    private var searchState: SearchMessagesState?
     private let mappedLocation: ChatListControllerLocation
     
     private var interaction: ChatListNodeInteraction?
@@ -169,23 +173,26 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
     
     var resultsUpdated: ((SearchMessagesResult, SearchMessagesState) -> Void)?
     var resultSelected: ((Int) -> Void)?
+    private let pickMessage: ((EngineMessage) -> Void)?
     
     private let presentationDataPromise: Promise<ChatListPresentationData>
     private let disposable = MetaDisposable()
     
+    private var dateObservers: [NSObjectProtocol] = []
     private var isLoadingMore = false
     private let loadMoreDisposable = MetaDisposable()
     
     private let previousEntries = Atomic<[ChatListSearchEntry]?>(value: nil)
     
-    init(context: AccountContext, location: SearchMessagesLocation, searchQuery: String, searchResult: SearchMessagesResult, searchState: SearchMessagesState, presentInGlobalOverlay: @escaping (ViewController) -> Void) {
+    init(context: AccountContext, location: SearchMessagesLocation, searchQuery: String, searchResult: SearchMessagesResult, searchState: SearchMessagesState?, pickMessage: ((EngineMessage) -> Void)? = nil, presentInGlobalOverlay: @escaping (ViewController) -> Void) {
         self.context = context
+        self.pickMessage = pickMessage
         self.location = location
         self.searchQuery = searchQuery
         self.searchResult = searchResult
         self.searchState = searchState
         
-        if case let .peer(peerId, _, _, _, _, _, _) = location, peerId == context.account.peerId {
+        if pickMessage == nil, case let .peer(peerId, _, _, _, _, _, _) = location, peerId == context.account.peerId {
             self.mappedLocation = .savedMessagesChats(peerId: peerId)
         } else {
             self.mappedLocation = .chatList(groupId: .root)
@@ -206,9 +213,17 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
         
         super.init()
         
-        self.backgroundColor = self.presentationData.theme.chatList.backgroundColor
+        self.backgroundColor = pickMessage != nil ? UIColor(rgb: self.presentationData.theme.overallDarkAppearance ? 0x202020 : 0xededed) : self.presentationData.theme.chatList.backgroundColor
         self.isOpaque = false
         self.addSubnode(self.listNode)
+        if pickMessage != nil {
+            for name in [UIApplication.significantTimeChangeNotification, UIApplication.didBecomeActiveNotification, Notification.Name.NSCalendarDayChanged, Notification.Name.NSSystemTimeZoneDidChange] {
+                self.dateObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main, using: { [weak self] _ in
+                    guard let self else { return }
+                    self.updatePresentationData(self.presentationData)
+                }))
+            }
+        }
         
         let signal = self.presentationDataPromise.get()
         |> map { presentationData -> [ChatListSearchEntry] in
@@ -235,6 +250,11 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
         }, additionalCategorySelected: { _ in
         }, messageSelected: { [weak self] peer, _, message, _ in
             if let strongSelf = self {
+                if let pickMessage = strongSelf.pickMessage {
+                    pickMessage(message)
+                    strongSelf.listNode.clearHighlightAnimated(true)
+                    return
+                }
                 if let index = strongSelf.searchResult.messages.firstIndex(where: { $0.index == message.index }) {
                     if message.id.peerId.namespace == Namespaces.Peer.SecretChat {
                         strongSelf.resultSelected?(index)
@@ -261,7 +281,7 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
         }, toggleThreadsSelection: { _, _ in
         }, hidePsa: { _ in
         }, activateChatPreview: { [weak self] item, _, node, gesture, _ in
-            guard let strongSelf = self else {
+            guard let strongSelf = self, strongSelf.pickMessage == nil else {
                 gesture?.cancel()
                 return
             }
@@ -309,7 +329,7 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
                 let previousEntries = strongSelf.previousEntries.swap(entries)
                 
                 let firstTime = previousEntries == nil
-                let transition = chatListSearchContainerPreparedTransition(from: previousEntries ?? [], to: entries, context: context, interaction: interaction, location: strongSelf.mappedLocation)
+                let transition = chatListSearchContainerPreparedTransition(from: previousEntries ?? [], to: entries, context: context, interaction: interaction, location: strongSelf.mappedLocation, pickMessage: strongSelf.pickMessage)
                 strongSelf.enqueueTransition(transition, firstTime: firstTime)
             }
         }))
@@ -332,6 +352,7 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
     }
     
     deinit {
+        for observer in self.dateObservers { NotificationCenter.default.removeObserver(observer) }
         self.disposable.dispose()
         self.loadMoreDisposable.dispose()
     }
@@ -339,7 +360,21 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
     private func loadMore() {
         self.isLoadingMore = true
         
-        self.loadMoreDisposable.set((self.context.engine.messages.searchMessages(location: self.location, query: self.searchQuery, state: self.searchState)
+        let signal: Signal<(SearchMessagesResult, SearchMessagesState?), NoError>
+        if self.pickMessage != nil && self.searchQuery.isEmpty {
+            let previous = self.searchResult
+            let tags: EngineMessage.Tags?
+            if case let .peer(_, _, value, _, _, _, _) = self.location { tags = value } else { tags = nil }
+            signal = wegramSavedAttachmentHistory(context: self.context, index: previous.messages.map { $0.index }.min(), tags: tags) |> map { page in
+                var messages = Dictionary(uniqueKeysWithValues: previous.messages.map { ($0.id, $0) })
+                for message in page.messages { messages[message.id] = message }
+                let merged = messages.values.sorted { $0.index > $1.index }
+                return (SearchMessagesResult(messages: merged, readStates: [:], threadInfo: [:], totalCount: Int32(merged.count), completed: page.completed), nil)
+            }
+        } else {
+            signal = self.context.engine.messages.searchMessages(location: self.location, query: self.searchQuery, state: self.searchState) |> map { ($0.0, Optional($0.1)) }
+        }
+        self.loadMoreDisposable.set((signal
         |> deliverOnMainQueue).startStrict(next: { [weak self] (updatedResult, updatedState) in
             guard let strongSelf = self else {
                 return
@@ -351,7 +386,7 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
             strongSelf.isLoadingMore = false
             strongSelf.searchResult = updatedResult
             strongSelf.searchState = updatedState
-            strongSelf.resultsUpdated?(updatedResult, updatedState)
+            if let updatedState { strongSelf.resultsUpdated?(updatedResult, updatedState) }
             
             let context = strongSelf.context
             
@@ -378,7 +413,7 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
                     let previousEntries = strongSelf.previousEntries.swap(entries)
                     
                     let firstTime = previousEntries == nil
-                    let transition = chatListSearchContainerPreparedTransition(from: previousEntries ?? [], to: entries, context: context, interaction: interaction, location: strongSelf.mappedLocation)
+                    let transition = chatListSearchContainerPreparedTransition(from: previousEntries ?? [], to: entries, context: context, interaction: interaction, location: strongSelf.mappedLocation, pickMessage: strongSelf.pickMessage)
                     strongSelf.enqueueTransition(transition, firstTime: firstTime)
                 }
             }))
@@ -387,6 +422,7 @@ class ChatSearchResultsControllerNode: ViewControllerTracingNode, ASScrollViewDe
     
     func updatePresentationData(_ presentationData: PresentationData) {
         self.presentationData = presentationData
+        if self.pickMessage != nil { self.backgroundColor = UIColor(rgb: presentationData.theme.overallDarkAppearance ? 0x202020 : 0xededed) }
         self.presentationDataPromise.set(.single(ChatListPresentationData(theme: self.presentationData.theme, fontSize: self.presentationData.listsFontSize, strings: self.presentationData.strings, dateTimeFormat: self.presentationData.dateTimeFormat, nameSortOrder: self.presentationData.nameSortOrder, nameDisplayOrder: self.presentationData.nameDisplayOrder, disableAnimations: true)))
 
         self.listNode.forEachItemHeaderNode({ itemHeaderNode in
@@ -464,3 +500,21 @@ private final class ContextControllerContentSourceImpl: ContextControllerContent
     }
 }
 
+
+
+// Empty search queries are not sent to messages.search: Saved Messages use the original history loader.
+func wegramSavedAttachmentHistory(context: AccountContext, index: EngineMessage.Index?, tags: EngineMessage.Tags? = nil) -> Signal<SearchMessagesResult, NoError> {
+    let input: ChatHistoryLocationInput
+    if let index {
+        input = ChatHistoryLocationInput(content: .Navigation(index: .message(index), anchorIndex: .message(index), count: 100, highlight: false), id: 0)
+    } else {
+        input = ChatHistoryLocationInput(content: .Navigation(index: .upperBound, anchorIndex: .upperBound, count: 100, highlight: false), id: 0)
+    }
+    return chatHistoryViewForLocation(input, ignoreMessagesInTimestampRange: nil, ignoreMessageIds: Set(), context: context, chatLocation: .peer(id: context.account.peerId), chatLocationContextHolder: Atomic(value: nil), scheduled: false, fixedCombinedReadStates: nil, tag: tags.map { .tag($0) }, appendMessagesFromTheSameGroup: false, additionalData: [])
+    |> mapToSignal { update -> Signal<SearchMessagesResult, NoError> in
+        guard case let .HistoryView(view, _, _, _, _, _, _) = update else { return .complete() }
+        let messages = view.entries.map { $0.message }.filter { $0.id.namespace == Namespaces.Message.Cloud }.sorted { $0.index > $1.index }
+        guard wegramSavedAttachmentHistoryIsReady(isLoading: view.isLoading, isLoadingEarlier: view.isLoadingEarlier, holeEarlier: view.holeEarlier, holeLater: view.holeLater, hasEarlier: view.earlierId != nil, oldest: messages.last?.index, requested: index) else { return .complete() }
+        return .single(SearchMessagesResult(messages: messages, readStates: [:], threadInfo: [:], totalCount: Int32(messages.count), completed: view.earlierId == nil && !view.holeEarlier))
+    } |> take(1)
+}

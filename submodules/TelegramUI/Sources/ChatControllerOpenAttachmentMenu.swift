@@ -13,6 +13,7 @@ import UrlHandling
 import AccountContext
 import ShareController
 import ChatPresentationInterfaceState
+import ChatInterfaceState
 import LegacyComponents
 import LegacyUI
 import AttachmentUI
@@ -45,6 +46,7 @@ import WalletSendScreen
 extension ChatControllerImpl {
     enum AttachMenuSubject {
         case `default`
+        case wegramSelection(AttachmentButtonType)
         /// The menu replaces (or, for a text-only message, adds) the media of the message being edited.
         /// `mediaOptions` is nil when the message has no media yet, in which case every kind is offered;
         /// `mediaReference` is the current photo or video, when there is one, which enables editing it in place.
@@ -54,6 +56,7 @@ extension ChatControllerImpl {
     }
 
     func presentAttachmentMenu(subject: AttachMenuSubject) {
+        if case .default = subject, self.chatDisplayNode.dismissWegramAttachments() { return }
         Task { @MainActor [weak self] in
             guard let self else {
                 return
@@ -288,7 +291,7 @@ extension ChatControllerImpl {
             }
 
             switch subject {
-            case .default, .gift:
+            case .default, .gift, .wegramSelection:
                 if WalletConfiguration.with(appConfiguration: self.context.currentAppConfiguration.with { $0 }).isAvailable, !isScheduledMessages, banSendText == nil, let user = self.presentationInterfaceState.renderedPeer?.peer as? TelegramUser, user.id != self.context.account.peerId, !user.isDeleted, !isServicePeer(user), user.botInfo == nil, !user.flags.contains(.isSupport), let fileIndex = availableButtons.firstIndex(of: .file) {
                     availableButtons.insert(.money, at: fileIndex + 1)
                 }
@@ -334,6 +337,8 @@ extension ChatControllerImpl {
                     var initialButton: AttachmentButtonType?
                     switch subject {
                     case .default:
+                        initialButton = .gallery
+                    case .wegramSelection:
                         initialButton = .gallery
                     case .gift:
                         initialButton = .gift
@@ -425,6 +430,13 @@ extension ChatControllerImpl {
                     buttons.insert(.richText, at: firstBotIndex)
                 }
                 
+                if case let .wegramSelection(button) = subject, buttons.contains(button) {
+                    initialButton = button
+                }
+                if case .default = subject, strongSelf.usesWegramNavigation, strongSelf.chatDisplayNode.textInputPanelNode?.usesWegramAttachmentGrid == true {
+                    strongSelf.showWegramAttachmentGrid(buttons: buttons)
+                    return
+                }
                 guard let initialButton = initialButton else {
                     if case let .bot(botId, botPayload, botJustInstalled) = subject {
                         if let button = allButtons.first(where: { button in
@@ -474,7 +486,7 @@ extension ChatControllerImpl {
                 
                 strongSelf.canReadHistory.set(false)
                 
-                let attachmentController = AttachmentController(context: strongSelf.context, updatedPresentationData: strongSelf.updatedPresentationData, style: .glass, chatLocation: strongSelf.chatLocation, isScheduledMessages: isScheduledMessages, isEditingMessage: isEditingMessage, buttons: buttons, initialButton: initialButton, customEmojiAvailable: strongSelf.presentationInterfaceState.customEmojiAvailable)
+                let attachmentController = AttachmentController(context: strongSelf.context, updatedPresentationData: strongSelf.updatedPresentationData, style: .wegram, chatLocation: strongSelf.chatLocation, isScheduledMessages: isScheduledMessages, isEditingMessage: isEditingMessage, buttons: buttons, initialButton: initialButton, customEmojiAvailable: strongSelf.presentationInterfaceState.customEmojiAvailable)
                 attachmentController.attachmentButton = strongSelf.chatDisplayNode.getAttachmentButton()
                 attachmentController.shouldMinimizeOnSwipe = { [weak attachmentController] button in
                     if case .app = button {
@@ -1279,6 +1291,210 @@ extension ChatControllerImpl {
     }
     
     @available(iOS 13.0, *)
+    private func showWegramAttachmentGrid(buttons: [AttachmentButtonType]) {
+        let chinese = self.presentationData.strings.baseLanguageCode.hasPrefix("zh")
+        let strings = self.presentationData.strings
+        var items: [WegramAttachmentInputNode.Item] = []
+        var extraSlot = 8
+        func add(_ title: String, _ symbol: String, artwork: WegramIcon? = nil, slot: Int? = nil, _ action: @escaping (ChatControllerImpl) -> Void) {
+            let assignedSlot = slot ?? extraSlot
+            if slot == nil { extraSlot += 1 }
+            items.append(.init(title: title, symbol: symbol, artwork: artwork, slot: assignedSlot, action: { [weak self] in
+                guard let self else { return }
+                self.chatDisplayNode.dismissWegramAttachments()
+                action(self)
+            }))
+        }
+        func attachment(_ button: AttachmentButtonType) {
+            let title: String
+            let symbol: String
+            let artwork: WegramIcon?
+            switch button {
+            case .gallery: title = chinese ? "照片" : strings.Attachment_Gallery; symbol = "photo.fill"
+            case .file: title = strings.Attachment_File; symbol = "folder.fill"
+            case .money: title = strings.Attachment_Money; symbol = "creditcard"
+            case .location: title = strings.Attachment_Location; symbol = "mappin.and.ellipse"
+            case .contact: title = chinese ? "个人名片" : strings.Attachment_Contact; symbol = "person.crop.square.fill"
+            case .audio: title = chinese ? "音乐" : strings.Attachment_Audio; symbol = "music.note"
+            case .gift: title = strings.Attachment_Gift; symbol = "gift.fill"
+            case .poll: title = strings.Attachment_Poll; symbol = "chart.bar"
+            case .todo: title = strings.Attachment_Todo; symbol = "checklist"
+            case .quickReply: title = strings.Attachment_Reply; symbol = "text.bubble"
+            case .richText: title = strings.Attachment_Article; symbol = "doc.richtext"
+            case let .app(bot): title = bot.shortName; symbol = "app"
+            default: return
+            }
+            switch button {
+            case .gallery: artwork = .attachmentPhoto
+            case .location: artwork = .attachmentLocation
+            case .contact: artwork = .attachmentContact
+            case .file: artwork = .attachmentFile
+            case .audio: artwork = .attachmentMusic
+            default: artwork = nil
+            }
+            let slot: Int?
+            switch button {
+            case .gallery: slot = 0
+            case .location: slot = 2
+            case .contact: slot = 5
+            case .file: slot = 6
+            case .audio: slot = 7
+            default: slot = nil
+            }
+            add(title, symbol, artwork: artwork, slot: slot, { $0.presentAttachmentMenu(subject: .wegramSelection(button)) })
+        }
+        if buttons.contains(.gallery) {
+            attachment(.gallery)
+            add(chinese ? "拍摄" : "Camera", "camera.fill", artwork: .attachmentCamera, slot: 1, { $0.openCamera() })
+        }
+        add(chinese ? "语音输入" : "Voice Input", "mic.fill", artwork: .attachmentVoiceInput, slot: 3, { $0.openWegramVoiceInput() })
+        add(chinese ? "收藏" : "Favorites", "cube.fill", artwork: .attachmentFavorite, slot: 4, { $0.openWegramSavedAttachments() })
+        let primary: [AttachmentButtonType] = [.location, .contact, .file, .audio]
+        for button in primary where buttons.contains(button) { attachment(button) }
+        if self.presentationInterfaceState.callsAvailable, self.presentationInterfaceState.renderedPeer?.peer is TelegramUser, case .peer = self.chatLocation {
+            add(chinese ? "视频通话" : "Video call", "video.fill", artwork: .attachmentVideo, { $0.interfaceInteraction?.beginCall(true) })
+        }
+        for button in buttons where button != .gallery && !primary.contains(button) { attachment(button) }
+        for shortcut in self.chatDisplayNode.textInputPanelNode?.wegramComposerShortcuts ?? [] {
+            add(shortcut.title, shortcut.symbol, { controller in
+                _ = controller.chatDisplayNode.textInputPanelNode?.performWegramComposerShortcut(shortcut.action)
+            })
+        }
+        add(chinese ? "更多" : "More", "ellipsis", { $0.presentAttachmentMenu(subject: .wegramSelection(.gallery)) })
+        self.chatDisplayNode.showWegramAttachments(items: items.sorted { ($0.slot ?? Int.max) < ($1.slot ?? Int.max) })
+    }
+
+    private var canStageWegramAttachmentContent: Bool {
+        guard let peer = self.presentationInterfaceState.renderedPeer?.peer, canSendMessagesToPeer(EnginePeer(peer)) else { return false }
+        if let channel = peer as? TelegramChannel, channel.flags.contains(.isForum) {
+            let canManage = channel.flags.contains(.isCreator) || channel.hasPermission(.manageTopics)
+            if let thread = self.presentationInterfaceState.threadData {
+                guard !thread.isClosed || thread.isOwnedByMe || canManage else { return false }
+            } else if self.presentationInterfaceState.isGeneralThreadClosed == true && self.presentationInterfaceState.interfaceState.replyMessageSubject == nil {
+                guard canManage else { return false }
+            } else if self.presentationInterfaceState.replyMessage?.associatedThreadInfo?.isClosed == true {
+                return false
+            }
+        }
+        return true
+    }
+
+    private func openWegramVoiceInput() {
+        guard self.isNodeLoaded, self.view.window != nil, !self.isBeingDismissed, !self.presentAccountFrozenInfoIfNeeded(delay: true),
+              self.presentationInterfaceState.editMessageState == nil,
+              let panel = self.chatDisplayNode.textInputPanelNode, self.chatDisplayNode.inputPanelNode === panel else { return }
+        if self.presentationInterfaceState.interfaceState.mediaDraftState != nil {
+            self.present(textAlertController(context: self.context, title: nil, text: self.presentationData.strings.baseLanguageCode.hasPrefix("zh") ? "请先发送或删除录音草稿，再使用语音输入。" : "Send or discard the recording draft before using Voice Input.", actions: [TextAlertAction(type: .defaultAction, title: self.presentationData.strings.Common_OK, action: {})]), in: .window(.root))
+            return
+        }
+        let location = self.chatLocation
+        let _ = self.presentVoiceMessageDiscardAlert(action: { [weak self] in
+            guard let self, self.view.window != nil, self.chatLocation == location, self.canStageWegramAttachmentContent, self.presentationInterfaceState.interfaceState.mediaDraftState == nil else { return }
+            self.chatDisplayNode.showWegramVoiceInput(context: self.context, language: self.presentationInterfaceState.interfaceState.inputLanguage ?? Locale.current.identifier, presentationData: self.presentationData, present: { [weak self] controller in self?.present(controller, in: .window(.root)) }, acceptText: { [weak self] text in
+                guard let self, self.view.window != nil, !self.isBeingDismissed, !self.context.isFrozen, self.chatLocation == location,
+                      self.presentationInterfaceState.editMessageState == nil, self.presentationInterfaceState.inputTextPanelState.mediaRecordingState == nil, self.presentationInterfaceState.interfaceState.mediaDraftState == nil, let interaction = self.interfaceInteraction,
+                      let panel = self.chatDisplayNode.textInputPanelNode, self.chatDisplayNode.inputPanelNode === panel,
+                      self.canStageWegramAttachmentContent, !text.isEmpty else { return false }
+                interaction.insertText(NSAttributedString(string: text))
+                self.chatDisplayNode.dismissWegramAttachments()
+                interaction.updateInputModeAndDismissedButtonKeyboardMessageId { state in (.text, state.interfaceState.messageActionsState.closedButtonKeyboardMessageId) }
+                return true
+            })
+        })
+    }
+
+    private func openWegramSavedAttachments() {
+        guard self.isNodeLoaded, self.view.window != nil, !self.isBeingDismissed, self.wegramSavedAttachmentController == nil,
+              self.presentationInterfaceState.editMessageState == nil, !self.presentAccountFrozenInfoIfNeeded(delay: true) else { return }
+        let location = self.chatLocation
+        let _ = self.presentVoiceMessageDiscardAlert(action: { [weak self] in
+            guard let self, self.view.window != nil, self.chatLocation == location, self.wegramSavedAttachmentController == nil, let recipient = self.presentationInterfaceState.renderedPeer?.peer else { return }
+            let controller = WegramSavedAttachmentController(context: self.context, recipient: EnginePeer(recipient), updatedPresentationData: self.updatedPresentationData, selectMessage: { [weak self] picker, message, comment, action in
+                guard let self, picker.canAcceptSelection else { return .single(false) }
+                let id = message.id
+                let generation = picker.selectionGeneration
+                guard wegramSavedAttachmentForwardIds(current: nil, selected: id, accountPeerId: self.context.account.peerId) != nil else { return .single(false) }
+                return combineLatest(
+                    self.context.sharedContext.chatAvailableMessageActions(engine: self.context.engine, accountPeerId: self.context.account.peerId, messageIds: [id], keepUpdated: false) |> take(1),
+                    self.context.engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: id))
+                ) |> deliverOnMainQueue |> map { [weak self, weak picker] actions, fresh in
+                    guard let self, let picker, picker.canAcceptSelection, picker.selectionGeneration == generation,
+                          self.chatLocation == location, actions.options.contains(.forward), !actions.isCopyProtected,
+                          let fresh, !fresh._asMessage().isCopyProtected(), !fresh._asMessage().containsSecretMedia,
+                          self.canSendWegramSavedAttachment(fresh, comment: comment, checkSlowmode: action == .send) else { return false }
+                    if action == .options {
+                        guard let ids = wegramSavedAttachmentForwardIds(current: self.presentationInterfaceState.interfaceState.forwardMessageIds, selected: fresh.id, accountPeerId: self.context.account.peerId) else { return false }
+                        let input = wegramSavedAttachmentDraftInput(current: self.chatDisplayNode.textInputPanelNode?.inputTextState ?? self.presentationInterfaceState.interfaceState.composeInputState, comment: comment)
+                        self.updateChatPresentationInterfaceState(animated: true, interactive: true, { state in
+                            state.updatedInterfaceState { state in
+                                state.withUpdatedForwardMessageIds(ids)
+                                    .withUpdatedForwardOptionsState(state.forwardOptionsState ?? ChatInterfaceForwardOptionsState(hideNames: false, hideCaptions: false, unhideNamesOnCaptionChange: false))
+                                    .withUpdatedComposeInputState(input)
+                            }
+                        })
+                        self.chatDisplayNode.dismissWegramAttachments()
+                        picker.dismiss(completion: { [weak self] in
+                            guard let self, self.chatLocation == location, self.view.window != nil else { return }
+                            self.interfaceInteraction?.updateInputModeAndDismissedButtonKeyboardMessageId { state in (.text, state.interfaceState.messageActionsState.closedButtonKeyboardMessageId) }
+                        })
+                        return true
+                    }
+                    let comments = wegramSavedAttachmentCommentParts(comment)
+                    picker.dismiss(completion: { [weak self] in
+                        guard let self, self.chatLocation == location, self.canSendWegramSavedAttachment(fresh, comment: comment) else { return }
+                        var consumed = false
+                        self.presentPaidMessageAlertIfNeeded(count: Int32(clamping: comments.count + 1), completion: { [weak self] postpone in
+                            guard !consumed else { return }
+                            consumed = true
+                            guard let self, self.chatLocation == location else { return }
+                            // Payment or scheduling may leave the chat open for a while; re-read the source before enqueueing.
+                            let _ = (combineLatest(
+                                self.context.sharedContext.chatAvailableMessageActions(engine: self.context.engine, accountPeerId: self.context.account.peerId, messageIds: [id], keepUpdated: false) |> take(1),
+                                self.context.engine.data.get(TelegramEngine.EngineData.Item.Messages.Message(id: id))
+                            ) |> deliverOnMainQueue).startStandalone(next: { [weak self] actions, fresh in
+                                guard let self, self.chatLocation == location, actions.options.contains(.forward), !actions.isCopyProtected,
+                                      let fresh, !fresh._asMessage().isCopyProtected(), !fresh._asMessage().containsSecretMedia,
+                                      self.canSendWegramSavedAttachment(fresh, comment: comment) else { return }
+                                var messages: [EnqueueMessage] = comments.map { text in
+                                    let entities = generateTextEntities(text.string, enabledTypes: .all)
+                                    let attributes: [MessageAttribute] = entities.isEmpty ? [] : [TextEntitiesMessageAttribute(entities: entities)]
+                                    return .message(text: text.string, attributes: attributes, inlineStickers: [:], mediaReference: nil, threadId: location.threadId, replyToMessageId: self.presentationInterfaceState.interfaceState.replyMessageSubject?.subjectModel, replyToStoryId: nil, localGroupingKey: nil, correlationId: nil, bubbleUpEmojiOrStickersets: [])
+                                }
+                                messages.append(.forward(source: fresh.id, threadId: location.threadId, grouping: .auto, attributes: [], correlationId: nil))
+                                self.chatDisplayNode.dismissWegramAttachments()
+                                self.sendMessages(messages, postpone: postpone)
+                            })
+                        })
+                    })
+                    return true
+                }
+            })
+            self.wegramSavedAttachmentController = controller
+            self.present(controller, in: .window(.root))
+        })
+    }
+
+    private func canSendWegramSavedAttachment(_ message: EngineMessage, comment: String, checkSlowmode: Bool = true) -> Bool {
+        guard self.isNodeLoaded, self.view.window != nil, !self.isBeingDismissed, !self.context.isFrozen,
+              self.presentationInterfaceState.editMessageState == nil,
+              self.presentationInterfaceState.interfaceState.mediaDraftState == nil,
+              self.presentationInterfaceState.inputTextPanelState.mediaRecordingState == nil,
+              let panel = self.chatDisplayNode.textInputPanelNode, self.chatDisplayNode.inputPanelNode === panel,
+              self.canStageWegramAttachmentContent,
+              wegramSavedAttachmentForwardIds(current: nil, selected: message.id, accountPeerId: self.context.account.peerId) != nil,
+              let peer = self.presentationInterfaceState.renderedPeer?.peer else { return false }
+        if checkSlowmode, self.presentationInterfaceState.slowmodeState != nil, self.presentationInterfaceState.subject != .scheduledMessages {
+            if let rect = self.chatDisplayNode.frameForInputActionButton() { self.interfaceInteraction?.displaySlowmodeTooltip(self.chatDisplayNode.view, rect) }
+            return false
+        }
+        let rights = wegramSavedAttachmentRequiredPermissions(media: message.engineMedia, hasComment: !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        for right in rights {
+            if let channel = peer as? TelegramChannel, channel.hasBannedPermission(right) != nil { return false }
+            if let group = peer as? TelegramGroup, group.hasBannedPermission(right) { return false }
+        }
+        return true
+    }
+
     func presentRichTextAttachmentMenu(request: RichTextAttachmentScreen.MediaRequest, completion: @escaping ([RichTextAttachmentScreen.RichTextAttachment]) -> Void) {
         // The gallery tab is inherently photos/videos only; audio + location are the only tabs that surface
         // non-photo/video media, so restricting to just `.gallery` yields a photo/video-only picker (used when
@@ -1527,7 +1743,7 @@ extension ChatControllerImpl {
         let controller = MediaPickerScreenImpl(
             context: self.context,
             updatedPresentationData: self.updatedPresentationData,
-            style: .glass,
+            style: isEditingMessage ? .glass : .wegram,
             warpContentsOnEdges: false,
             peer: (self.presentationInterfaceState.renderedPeer?.peer).flatMap(EnginePeer.init),
             threadTitle: self.contentData?.state.threadInfo?.title,

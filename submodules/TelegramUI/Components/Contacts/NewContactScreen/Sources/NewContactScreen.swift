@@ -19,8 +19,6 @@ import TextFieldComponent
 import ListComposePollOptionComponent
 import ListItemComponentAdaptor
 import PresentationDataUtils
-import EdgeEffect
-import GlassBarButtonComponent
 import Markdown
 import CountrySelectionUI
 import PhoneNumberFormat
@@ -64,7 +62,7 @@ final class NewContactScreenComponent: Component {
     
     final class View: UIView, UIScrollViewDelegate, MFMessageComposeViewControllerDelegate {
         private let scrollView: UIScrollView
-        private let edgeEffectView: EdgeEffectView
+        private let navigationBackground = UIView()
         
         private let nameSection = ComponentView<Empty>()
         private let phoneSection = ComponentView<Empty>()
@@ -74,8 +72,8 @@ final class NewContactScreenComponent: Component {
         private var avatarNode: AvatarNode?
         
         private let title = ComponentView<Empty>()
-        private let cancelButton = ComponentView<Empty>()
-        private let doneButton = ComponentView<Empty>()
+        private let cancelButton = UIButton(type: .custom)
+        private let doneButton = WegramNameSaveButton()
                 
         private var isUpdating: Bool = false
         private var ignoreScrolling: Bool = false
@@ -112,14 +110,21 @@ final class NewContactScreenComponent: Component {
             self.scrollView.contentInsetAdjustmentBehavior = .never
             self.scrollView.alwaysBounceVertical = true
             
-            self.edgeEffectView = EdgeEffectView()
             
             super.init(frame: frame)
             
             self.scrollView.delegate = self
             self.addSubview(self.scrollView)
             
-            self.addSubview(self.edgeEffectView)
+            self.navigationBackground.isUserInteractionEnabled = false
+            self.addSubview(self.navigationBackground)
+            self.cancelButton.titleLabel?.font = Font.regular(17.0)
+            self.cancelButton.addTarget(self, action: #selector(self.cancelPressed), for: .touchUpInside)
+            self.cancelButton.accessibilityIdentifier = "Wegram.NewContact.Cancel"
+            self.doneButton.addTarget(self, action: #selector(self.donePressed), for: .touchUpInside)
+            self.doneButton.accessibilityIdentifier = "Wegram.NewContact.Done"
+            self.addSubview(self.cancelButton)
+            self.addSubview(self.doneButton)
         }
         
         required init?(coder: NSCoder) {
@@ -134,6 +139,18 @@ final class NewContactScreenComponent: Component {
             self.scrollView.setContentOffset(CGPoint(), animated: true)
         }
         
+        @objc private func cancelPressed() {
+            (self.environment?.controller() as? NewContactScreen)?.dismiss()
+        }
+
+        @objc private func donePressed() {
+            guard let controller = self.environment?.controller() as? NewContactScreen, let input = self.validatedInput() else {
+                return
+            }
+            controller.complete(result: input)
+            controller.dismiss()
+        }
+
         func validatedInput() -> NewContactScreenComponent.Result? {
             var peer: EnginePeer?
             var firstName = ""
@@ -295,10 +312,10 @@ final class NewContactScreenComponent: Component {
             self.component = component
             self.state = state
             
-            let topInset: CGFloat = 24.0
+            let topInset: CGFloat = 8.0
             let bottomInset: CGFloat = 8.0
-            let sideInset: CGFloat = 16.0 + environment.safeInsets.left
-            let sectionSpacing: CGFloat = 24.0
+            let sideInset: CGFloat = max(environment.safeInsets.left, environment.safeInsets.right)
+            let sectionSpacing: CGFloat = 8.0
             
             let footerAttributes = MarkdownAttributes(
                 body: MarkdownAttributeSet(font: Font.regular(13.0), textColor: environment.theme.list.freeTextColor),
@@ -326,7 +343,7 @@ final class NewContactScreenComponent: Component {
                     
             let nameSectionItems: [AnyComponentWithIdentity<Empty>] = [
                 AnyComponentWithIdentity(id: "firstName", component: AnyComponent(ListTextFieldItemComponent(
-                    style: .glass,
+                    style: .legacy,
                     theme: theme,
                     initialText: component.initialData.firstName ?? "",
                     resetText: nil,
@@ -347,7 +364,7 @@ final class NewContactScreenComponent: Component {
                     tag: self.firstNameTag
                 ))),
                 AnyComponentWithIdentity(id: "lastName", component: AnyComponent(ListTextFieldItemComponent(
-                    style: .glass,
+                    style: .legacy,
                     theme: theme,
                     initialText: component.initialData.lastName ?? "",
                     resetText: nil,
@@ -372,7 +389,7 @@ final class NewContactScreenComponent: Component {
                 transition: transition,
                 component: AnyComponent(ListSectionComponent(
                     theme: theme,
-                    style: .glass,
+                    style: .plain,
                     header: nil,
                     footer: nil,
                     items: nameSectionItems
@@ -424,7 +441,7 @@ final class NewContactScreenComponent: Component {
                     phoneSectionItems.append(AnyComponentWithIdentity(id: "phone", component: AnyComponent(
                         ListActionItemComponent(
                             theme: theme,
-                            style: .glass,
+                            style: .legacy,
                             title: AnyComponent(VStack([
                                 AnyComponentWithIdentity(id: "title", component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: "mobile", font: Font.regular(14.0), textColor: theme.list.itemPrimaryTextColor))))),
                                 AnyComponentWithIdentity(id: "value", component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: formatPhoneNumber(context: component.context, number: phone), font: Font.regular(17.0), textColor: theme.list.itemAccentColor)))))
@@ -438,7 +455,7 @@ final class NewContactScreenComponent: Component {
                     phoneSectionItems.append(AnyComponentWithIdentity(id: "phone", component: AnyComponent(
                         ListActionItemComponent(
                             theme: theme,
-                            style: .glass,
+                            style: .legacy,
                             title: AnyComponent(VStack([
                                 AnyComponentWithIdentity(id: "title", component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: "mobile", font: Font.regular(14.0), textColor: theme.list.itemPrimaryTextColor))))),
                                 AnyComponentWithIdentity(id: "value", component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: strings.ContactInfo_PhoneNumberHidden, font: Font.regular(17.0), textColor: theme.list.itemAccentColor)))))
@@ -465,7 +482,7 @@ final class NewContactScreenComponent: Component {
                                 guard let self, let environment = self.environment, let controller = environment.controller() else {
                                     return
                                 }
-                                let countryController = AuthorizationSequenceCountrySelectionController(strings: strings, theme: environment.theme, glass: true)
+                                let countryController = AuthorizationSequenceCountrySelectionController(strings: strings, theme: environment.theme, glass: false)
                                 countryController.completeWithCountryCode = { [weak self] code, name in
                                     guard let self else {
                                         return
@@ -599,7 +616,7 @@ final class NewContactScreenComponent: Component {
                 transition: transition,
                 component: AnyComponent(ListSectionComponent(
                     theme: theme,
-                    style: .glass,
+                    style: .plain,
                     header: nil,
                     footer: phoneFooterComponent,
                     items: phoneSectionItems
@@ -625,7 +642,7 @@ final class NewContactScreenComponent: Component {
             var optionsSectionItems: [AnyComponentWithIdentity<Empty>] = [
                 AnyComponentWithIdentity(id: "syncContact", component: AnyComponent(ListActionItemComponent(
                     theme: theme,
-                    style: .glass,
+                    style: .legacy,
                     title: AnyComponent(MultilineTextComponent(
                         text: .plain(NSAttributedString(
                             string: strings.AddContact_SyncToPhone,
@@ -649,7 +666,7 @@ final class NewContactScreenComponent: Component {
                 optionsSectionItems.append(
                     AnyComponentWithIdentity(id: "privacy", component: AnyComponent(ListActionItemComponent(
                         theme: theme,
-                        style: .glass,
+                        style: .legacy,
                         title: AnyComponent(MultilineTextComponent(
                             text: .plain(NSAttributedString(
                                 string: strings.AddContact_SharedContactException,
@@ -678,7 +695,7 @@ final class NewContactScreenComponent: Component {
                 transition: transition,
                 component: AnyComponent(ListSectionComponent(
                     theme: theme,
-                    style: .glass,
+                    style: .plain,
                     header: nil,
                     footer: optionsFooterComponent,
                     items: optionsSectionItems
@@ -738,7 +755,7 @@ final class NewContactScreenComponent: Component {
                     transition: noteSectionTransition,
                     component: AnyComponent(ListSectionComponent(
                         theme: theme,
-                        style: .glass,
+                        style: .plain,
                         header: nil,
                         footer: nil,
                         items: noteSectionItems
@@ -769,7 +786,7 @@ final class NewContactScreenComponent: Component {
                 let qrSectionItems: [AnyComponentWithIdentity<Empty>] = [
                     AnyComponentWithIdentity(id: "qr", component: AnyComponent(ListActionItemComponent(
                         theme: theme,
-                        style: .glass,
+                        style: .legacy,
                         title: AnyComponent(VStack([
                             AnyComponentWithIdentity(id: AnyHashable(0), component: AnyComponent(MultilineTextComponent(
                                 text: .plain(NSAttributedString(
@@ -801,7 +818,7 @@ final class NewContactScreenComponent: Component {
                     transition: transition,
                     component: AnyComponent(ListSectionComponent(
                         theme: theme,
-                        style: .glass,
+                        style: .plain,
                         header: nil,
                         footer: nil,
                         items: qrSectionItems
@@ -858,11 +875,19 @@ final class NewContactScreenComponent: Component {
 
             let isValid = self.validatedInput() != nil
             
-            let edgeEffectHeight: CGFloat = 66.0
-            let edgeEffectFrame = CGRect(origin: CGPoint(x: 0.0, y: 0.0), size: CGSize(width: availableSize.width, height: edgeEffectHeight))
-            transition.setFrame(view: self.edgeEffectView, frame: edgeEffectFrame)
-            self.edgeEffectView.update(content: theme.list.blocksBackgroundColor, alpha: 1.0, rect: edgeEffectFrame, edge: .top, edgeSize: edgeEffectFrame.height, transition: transition)
-            
+            let barOriginY = max(0.0, environment.navigationHeight - 44.0)
+            self.navigationBackground.backgroundColor = theme.list.blocksBackgroundColor
+            transition.setFrame(view: self.navigationBackground, frame: CGRect(x: 0.0, y: 0.0, width: availableSize.width, height: environment.navigationHeight))
+            self.cancelButton.setTitle(strings.Common_Cancel, for: .normal)
+            self.cancelButton.setTitleColor(theme.rootController.navigationBar.primaryTextColor, for: .normal)
+            self.doneButton.setTitle(strings.Common_Done, for: .normal)
+            self.doneButton.isEnabled = isValid
+            let cancelWidth = min(availableSize.width * 0.3, max(64.0, self.cancelButton.sizeThatFits(CGSize(width: availableSize.width, height: 44.0)).width + 16.0))
+            let doneWidth = min(availableSize.width * 0.3, max(64.0, self.doneButton.sizeThatFits(CGSize(width: availableSize.width, height: 44.0)).width + 16.0))
+            transition.setFrame(view: self.cancelButton, frame: CGRect(x: environment.safeInsets.left + 8.0, y: barOriginY, width: cancelWidth, height: 44.0))
+            transition.setFrame(view: self.doneButton, frame: CGRect(x: availableSize.width - environment.safeInsets.right - 16.0 - doneWidth, y: barOriginY, width: doneWidth, height: 44.0))
+            let titleWidth = max(0.0, availableSize.width - 2.0 * max(environment.safeInsets.left + 16.0 + cancelWidth, environment.safeInsets.right + 24.0 + doneWidth))
+
             let titleSize = self.title.update(
                 transition: transition,
                 component: AnyComponent(
@@ -877,81 +902,14 @@ final class NewContactScreenComponent: Component {
                     )
                 ),
                 environment: {},
-                containerSize: CGSize(width: 200.0, height: 40.0)
+                containerSize: CGSize(width: titleWidth, height: 40.0)
             )
-            let titleFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - titleSize.width) / 2.0), y: floorToScreenPixels((environment.navigationHeight - titleSize.height) / 2.0) + 3.0), size: titleSize)
+            let titleFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((availableSize.width - titleSize.width) / 2.0), y: barOriginY + floorToScreenPixels((44.0 - titleSize.height) / 2.0)), size: titleSize)
             if let titleView = self.title.view {
                 if titleView.superview == nil {
                     self.addSubview(titleView)
                 }
                 transition.setFrame(view: titleView, frame: titleFrame)
-            }
-            
-            let barButtonSize = CGSize(width: 44.0, height: 44.0)
-            let cancelButtonSize = self.cancelButton.update(
-                transition: transition,
-                component: AnyComponent(GlassBarButtonComponent(
-                    size: barButtonSize,
-                    backgroundColor: nil,
-                    isDark: environment.theme.overallDarkAppearance,
-                    state: .glass,
-                    component: AnyComponentWithIdentity(id: "close", component: AnyComponent(
-                        BundleIconComponent(
-                            name: "Navigation/Close",
-                            tintColor: environment.theme.chat.inputPanel.panelControlColor
-                        )
-                    )),
-                    action: { [weak self] _ in
-                        guard let self, let controller = self.environment?.controller() as? NewContactScreen else {
-                            return
-                        }
-                        controller.dismiss()
-                    }
-                )),
-                environment: {},
-                containerSize: barButtonSize
-            )
-            let cancelButtonFrame = CGRect(origin: CGPoint(x: environment.safeInsets.left + 16.0, y: 16.0), size: cancelButtonSize)
-            if let cancelButtonView = self.cancelButton.view {
-                if cancelButtonView.superview == nil {
-                    self.addSubview(cancelButtonView)
-                }
-                transition.setFrame(view: cancelButtonView, frame: cancelButtonFrame)
-            }
-            
-            let doneButtonSize = self.doneButton.update(
-                transition: transition,
-                component: AnyComponent(GlassBarButtonComponent(
-                    size: barButtonSize,
-                    backgroundColor: isValid ? environment.theme.list.itemCheckColors.fillColor : environment.theme.list.itemCheckColors.fillColor.desaturated().withMultipliedAlpha(0.5),
-                    isDark: environment.theme.overallDarkAppearance,
-                    state: .tintedGlass,
-                    isEnabled: isValid,
-                    component: AnyComponentWithIdentity(id: "done", component: AnyComponent(
-                        BundleIconComponent(
-                            name: "Navigation/Done",
-                            tintColor: environment.theme.list.itemCheckColors.foregroundColor
-                        )
-                    )),
-                    action: { [weak self] _ in
-                        guard let self, let controller = self.environment?.controller() as? NewContactScreen else {
-                            return
-                        }
-                        if let input = self.validatedInput() {
-                            controller.complete(result: input)
-                        }
-                        controller.dismiss()
-                    }
-                )),
-                environment: {},
-                containerSize: barButtonSize
-            )
-            let doneButtonFrame = CGRect(origin: CGPoint(x: availableSize.width - environment.safeInsets.right - 16.0 - doneButtonSize.width, y: 16.0), size: doneButtonSize)
-            if let doneButtonView = self.doneButton.view {
-                if doneButtonView.superview == nil {
-                    self.addSubview(doneButtonView)
-                }
-                transition.setFrame(view: doneButtonView, frame: doneButtonFrame)
             }
             
             if let updateFocusTag {
@@ -972,6 +930,10 @@ final class NewContactScreenComponent: Component {
 }
 
 public class NewContactScreen: ViewControllerComponentContainer {
+    public override var navigationBarDefaultHeight: CGFloat {
+        return 44.0
+    }
+
     public final class InitialData {
         fileprivate let peer: EnginePeer?
         fileprivate let firstName: String?
@@ -1014,7 +976,7 @@ public class NewContactScreen: ViewControllerComponentContainer {
             initialData: initialData
         ), navigationBarAppearance: .none, theme: .default)
         
-        self._hasGlassStyle = true
+        self._hasGlassStyle = false
         self.navigationPresentation = .modal
         
         self.scrollToTop = { [weak self] in

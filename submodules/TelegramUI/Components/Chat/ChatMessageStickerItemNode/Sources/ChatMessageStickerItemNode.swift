@@ -53,6 +53,9 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
     
     private var suggestedPostInfoNode: ChatMessageSuggestedPostInfoNode?
     
+    private var authorNameNode: TextNode?
+    private var wegramContentRect: CGRect?
+    private var wegramMediaContentRect: CGRect?
     private var viaBotNode: TextNode?
     private let dateAndStatusNode: ChatMessageDateAndStatusNode
     private var threadInfoNode: ChatMessageThreadInfoNode?
@@ -141,7 +144,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
             guard let strongSelf = self else {
                 return false
             }
-            if !strongSelf.imageNode.frame.contains(location) {
+            if !(strongSelf.wegramContentRect ?? strongSelf.imageNode.frame).contains(location) {
                 return false
             }
             if let action = strongSelf.gestureRecognized(gesture: .tap, location: location, recognizer: nil) {
@@ -404,6 +407,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
         
         let makeForwardInfoLayout = ChatMessageForwardInfoNode.asyncLayout(self.forwardInfoNode)
         
+        let authorNameLayout = TextNode.asyncLayout(self.authorNameNode)
         let viaBotLayout = TextNode.asyncLayout(self.viaBotNode)
         //let makeThreadInfoLayout = ChatMessageThreadInfoNode.asyncLayout(self.threadInfoNode)
         let makeReplyInfoLayout = ChatMessageReplyInfoNode.asyncLayout(self.replyInfoNode)
@@ -415,7 +419,13 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
         func continueAsyncLayout(_ weakSelf: Weak<ChatMessageStickerItemNode>, _ item: ChatMessageItem, _ params: ListViewItemLayoutParams, _ mergedTop: ChatMessageMerge, _ mergedBottom: ChatMessageMerge, _ dateHeaderAtBottom: ChatMessageHeaderSpec) -> (ListViewItemNodeLayout, (ListViewItemUpdateAnimation, ListViewItemApply, Bool) -> Void) {
             let accessibilityData = ChatMessageAccessibilityData(item: item, isSelected: nil)
             
-            let layoutConstants = chatMessageItemLayoutConstants(layoutConstants, params: params, presentationData: item.presentationData)
+            let usesWegramLayout = item.usesWegramMessageLayout && !item.controllerInteraction.isSidePanelOpen
+            let contentPresentationData = usesWegramLayout ? item.presentationData.withChatBubbleCorners(.wegram) : item.presentationData
+            var layoutConstants = chatMessageItemLayoutConstants(layoutConstants, params: params, presentationData: item.presentationData)
+            if usesWegramLayout {
+                layoutConstants.bubble.defaultSpacing = WegramMessageLayout.messageSpacing
+                layoutConstants.bubble.mergedSpacing = WegramMessageLayout.messageSpacing
+            }
             let incoming = item.content.effectivelyIncoming(item.context.account.peerId, associatedData: item.associatedData)
             var imageSize: CGSize = CGSize(width: 100.0, height: 100.0)
             if let telegramFile = telegramFile {
@@ -486,12 +496,18 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
             }
             
             if hasAvatar {
-                avatarInset = layoutConstants.avatarInset
+                avatarInset = item.usesWegramMessageLayout && item.controllerInteraction.isSidePanelOpen && incoming ? WegramMessageLayout.avatarInset : layoutConstants.avatarInset
             } else {
                 avatarInset = 0.0
             }
             
             let isFailed = item.content.firstMessage.effectivelyFailed(timestamp: item.context.account.network.getApproximateRemoteTimestamp())
+            let wegramArea = WegramStickerMessageLayout.contentArea(width: params.width, leftInset: params.leftInset, rightInset: params.rightInset, outgoing: !incoming, failed: isFailed, selected: item.controllerInteraction.selectionState != nil)
+            var authorNameApply: (TextNodeLayout, () -> TextNode)?
+            if usesWegramLayout && incoming && hasAvatar, let author = item.effectiveAuthorId.flatMap({ item.message.peers[$0] }) ?? item.message.author {
+                let name = EnginePeer(author).displayTitle(strings: item.presentationData.strings, displayOrder: item.presentationData.nameDisplayOrder)
+                authorNameApply = authorNameLayout(TextNodeLayoutArguments(attributedString: NSAttributedString(string: name, font: Font.regular(floor(item.presentationData.fontSize.baseDisplaySize * 14 / 17)), textColor: UIColor(rgb: 0x888888)), backgroundColor: nil, maximumNumberOfLines: 1, truncationType: .end, constrainedSize: CGSize(width: wegramArea.width, height: .greatestFiniteMagnitude), alignment: .natural))
+            }
             
             var needsShareButton = false
             if case .pinnedMessages = item.associatedData.subject {
@@ -550,17 +566,11 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 needsShareButton = false
             }
             
-            var layoutInsets = UIEdgeInsets(top: mergedTop.merged ? layoutConstants.bubble.mergedSpacing : layoutConstants.bubble.defaultSpacing, left: 0.0, bottom: mergedBottom.merged ? layoutConstants.bubble.mergedSpacing : layoutConstants.bubble.defaultSpacing, right: 0.0)
-            if dateHeaderAtBottom.hasDate && dateHeaderAtBottom.hasTopic {
-                layoutInsets.top += layoutConstants.timestampDateAndTopicHeaderHeight
-            } else {
-                if dateHeaderAtBottom.hasDate {
-                    layoutInsets.top += layoutConstants.timestampHeaderHeight
-                }
-                if dateHeaderAtBottom.hasTopic {
-                    layoutInsets.top += layoutConstants.timestampHeaderHeight
-                }
+            if usesWegramLayout {
+                imageSize = WegramStickerMessageLayout.imageSize(imageSize, availableWidth: max(0, wegramArea.width - (needsShareButton ? 36 : 0)))
             }
+            var layoutInsets = UIEdgeInsets(top: mergedTop.merged ? layoutConstants.bubble.mergedSpacing : layoutConstants.bubble.defaultSpacing, left: 0.0, bottom: mergedBottom.merged ? layoutConstants.bubble.mergedSpacing : layoutConstants.bubble.defaultSpacing, right: 0.0)
+            layoutInsets.top += chatMessageDateHeaderSpacing(headers: item.headers, hasDate: dateHeaderAtBottom.hasDate, hasTopic: dateHeaderAtBottom.hasTopic, constants: layoutConstants)
             
             var deliveryFailedInset: CGFloat = 0.0
             if isFailed {
@@ -627,13 +637,13 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
             
             let statusSuggestedWidthAndContinue = makeDateAndStatusLayout(ChatMessageDateAndStatusNode.Arguments(
                 context: item.context,
-                presentationData: item.presentationData,
+                presentationData: contentPresentationData,
                 edited: edited,
                 impressionCount: viewCount,
                 dateText: dateText,
                 type: statusType,
-                layoutInput: .standalone(reactionSettings: shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) ? ChatMessageDateAndStatusNode.StandaloneReactionSettings() : nil),
-                constrainedSize: CGSize(width: params.width, height: CGFloat.greatestFiniteMagnitude),
+                layoutInput: .standalone(reactionSettings: !usesWegramLayout && shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) ? ChatMessageDateAndStatusNode.StandaloneReactionSettings() : nil),
+                constrainedSize: CGSize(width: usesWegramLayout ? wegramArea.width : params.width, height: CGFloat.greatestFiniteMagnitude),
                 availableReactions: item.associatedData.availableReactions,
                 savedMessageTags: item.associatedData.savedMessageTags,
                 reactions: dateReactionsAndPeers.reactions,
@@ -664,6 +674,8 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 availableWidth -= 24.0
             }
             
+            if usesWegramLayout { availableWidth = max(0, wegramArea.width - 12) }
+
             var ignoreForward = false
             if let forwardInfo = item.message.forwardInfo {
                 if item.message.id.peerId != item.context.account.peerId {
@@ -757,7 +769,8 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                     constrainedSize: CGSize(width: availableWidth, height: CGFloat.greatestFiniteMagnitude),
                     animationCache: item.controllerInteraction.presentationContext.animationCache,
                     animationRenderer: item.controllerInteraction.presentationContext.animationRenderer,
-                    associatedData: item.associatedData
+                    associatedData: item.associatedData,
+                    isWegramStyle: usesWegramLayout
                 ))
             }
             
@@ -800,12 +813,12 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 })
                 forwardSource = resolvedForwardInfo.source
                 forwardAuthorSignature = resolvedForwardInfo.authorSignature
-                let availableForwardWidth = max(60.0, availableWidth + 6.0)
+                let availableForwardWidth = usesWegramLayout ? availableWidth : max(60.0, availableWidth + 6.0)
                 forwardInfoSizeApply = makeForwardInfoLayout(item.context, item.presentationData, item.presentationData.strings, .standalone, forwardSource.flatMap(EnginePeer.init), forwardAuthorSignature, forwardPsaType == nil ? inlineBotNameString : nil, forwardPsaType, nil, CGSize(width: availableForwardWidth, height: CGFloat.greatestFiniteMagnitude))
             }
             
             var needsReplyBackground = false
-            if replyInfoApply != nil {
+            if replyInfoApply != nil && !usesWegramLayout {
                 needsReplyBackground = true
             }
             
@@ -814,7 +827,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 needsForwardBackground = true
             }
             
-            let baseWidth = params.width - params.leftInset - params.rightInset
+            let baseWidth = usesWegramLayout ? wegramArea.width : params.width - params.leftInset - params.rightInset
             
             var maxContentWidth = imageSize.width
             var actionButtonsFinalize: ((CGFloat) -> (CGSize, (_ animation: ListViewItemUpdateAnimation) -> ChatMessageActionButtonsNode))?
@@ -875,11 +888,11 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
             
             var actionButtonsSizeAndApply: (CGSize, (ListViewItemUpdateAnimation) -> ChatMessageActionButtonsNode)?
             if let actionButtonsFinalize = actionButtonsFinalize {
-                actionButtonsSizeAndApply = actionButtonsFinalize(maxContentWidth)
+                actionButtonsSizeAndApply = actionButtonsFinalize(usesWegramLayout ? min(wegramArea.width, maxContentWidth) : maxContentWidth)
             }
             
             let reactions: ReactionsMessageAttribute
-            if shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions) {
+            if (usesWegramLayout && item.message.isRestricted(platform: "ios", contentSettings: item.context.currentContentSettings.with { $0 })) || (!usesWegramLayout && shouldDisplayInlineDateReactions(message: EngineMessage(item.message), isPremium: item.associatedData.isPremium, forceInline: item.associatedData.forceInlineReactions)) {
                 reactions = ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
             } else {
                 reactions = mergedMessageReactions(attributes: item.message.attributes, isTags: item.message.areReactionsTags(accountPeerId: item.context.account.peerId)) ?? ReactionsMessageAttribute(canViewList: false, isTags: false, reactions: [], recentPeers: [], topPeers: [])
@@ -889,7 +902,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
             if !reactions.reactions.isEmpty {
                 let totalInset = params.leftInset + layoutConstants.bubble.edgeInset * 2.0 + avatarInset + layoutConstants.bubble.contentInsets.left * 2.0 + params.rightInset
                 
-                let maxReactionsWidth = params.width - totalInset
+                let maxReactionsWidth = usesWegramLayout ? wegramArea.width : params.width - totalInset
                 let (minWidth, buttonsLayout) = reactionButtonsLayout(ChatMessageReactionButtonsNode.Arguments(
                     context: item.context,
                     presentationData: item.presentationData,
@@ -910,7 +923,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
             
             var reactionButtonsSizeAndApply: (CGSize, (ListViewItemUpdateAnimation) -> ChatMessageReactionButtonsNode)?
             if let reactionButtonsFinalize = reactionButtonsFinalize {
-                reactionButtonsSizeAndApply = reactionButtonsFinalize(maxContentWidth)
+                reactionButtonsSizeAndApply = reactionButtonsFinalize(usesWegramLayout ? min(wegramArea.width, maxContentWidth) : maxContentWidth)
             }
             
             var layoutSize = CGSize(width: params.width, height: contentHeight)
@@ -992,7 +1005,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 replyBackgroundFrame = CGRect(origin: CGPoint(x: replyInfoFrame.minX - 4.0, y: headersOffset + replyInfoFrame.minY - viaBotSize.height - 2.0), size: CGSize(width: max(replyInfoFrame.size.width, viaBotSize.width) + 8.0, height: replyInfoFrame.size.height + viaBotSize.height + 5.0))
             }
             
-            if let replyBackgroundFrameValue = replyBackgroundFrame {
+            if !usesWegramLayout, let replyBackgroundFrameValue = replyBackgroundFrame {
                 if replyBackgroundFrameValue.insetBy(dx: -2.0, dy: -2.0).intersects(baseShareButtonFrame) {
                     let offset: CGFloat = 25.0
                     
@@ -1003,6 +1016,27 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 }
             }
             
+            var wegramLayout: WegramStickerMessageLayout?
+            if usesWegramLayout {
+                var parts: [WegramStickerMessageLayout.Part: CGSize] = [:]
+                parts[.author] = authorNameApply?.0.size
+                parts[.suggestedPost] = suggestedPostInfoNodeLayout?.0
+                if forwardInfoSizeApply == nil { parts[.viaBot] = viaBotApply?.0.size }
+                parts[.forward] = forwardInfoSizeApply?.0
+                if dateAndStatusSize.width > 0 && dateAndStatusSize.height > 0 { parts[.status] = dateAndStatusSize }
+                parts[.reply] = replyInfoApply?.0
+                parts[.buttons] = actionButtonsSizeAndApply?.0
+                parts[.reactions] = reactionButtonsSizeAndApply?.0
+                let layout = WegramStickerMessageLayout(area: wegramArea, outgoing: !incoming, imageSize: imageSize, minimumImageHeight: layoutConstants.image.minDimensions.height, parts: parts)
+                wegramLayout = layout
+                imageFrame = layout.imageFrame
+                updatedImageFrame = layout.imageFrame
+                layoutSize.height = layout.height
+                dateAndStatusFrame = layout[.status] ?? CGRect(origin: layout.contentRect.origin, size: .zero)
+                let visibleImage = layout.imageFrame.insetBy(dx: innerImageInset, dy: innerImageInset)
+                baseShareButtonFrame = CGRect(x: incoming ? visibleImage.maxX + 6 : visibleImage.minX - 36, y: max(0, visibleImage.maxY - baseShareButtonSize.height), width: baseShareButtonSize.width, height: baseShareButtonSize.height)
+            }
+
             func finishAsyncLayout(_ animation: ListViewItemUpdateAnimation, _ synchronousLoads: Bool) {
                 if let strongSelf = weakSelf.value {
                     var transition: ContainedViewLayoutTransition = .immediate
@@ -1014,6 +1048,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                     strongSelf.updateAccessibilityData(accessibilityData)
                     
                     strongSelf.updateAttachedDateHeader(hasDate: dateHeaderAtBottom.hasDate, hasPeer: dateHeaderAtBottom.hasTopic)
+                    strongSelf.updateAttachedAvatarNodeIsHidden(isHidden: item.usesWegramMessageLayout && item.controllerInteraction.isSidePanelOpen && (!incoming || !hasAvatar), transition: animation.transition)
                     
                     transition.updateFrame(node: strongSelf.imageNode, frame: updatedImageFrame)
                     strongSelf.enableSynchronousImageApply = true
@@ -1040,6 +1075,20 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                         animation.animator.updateFrame(layer: strongSelf.placeholderNode.layer, frame: placeholderFrame, completion: nil)
                     }
                     
+                    strongSelf.wegramContentRect = wegramLayout?.contentRect
+                    strongSelf.wegramMediaContentRect = wegramLayout?.mediaContentRect
+                    if let (nameLayout, nameApply) = authorNameApply, let frame = wegramLayout?[.author] {
+                        let node = nameApply()
+                        if strongSelf.authorNameNode !== node {
+                            strongSelf.authorNameNode?.removeFromSupernode()
+                            strongSelf.authorNameNode = node
+                            strongSelf.contextSourceNode.contentNode.addSubnode(node)
+                        }
+                        node.frame = CGRect(origin: frame.origin, size: nameLayout.size)
+                    } else {
+                        strongSelf.authorNameNode?.removeFromSupernode()
+                        strongSelf.authorNameNode = nil
+                    }
                     if let (suggestedPostInfoSize, suggestedPostInfoApply) = suggestedPostInfoNodeLayout {
                         let suggestedPostInfoNode = suggestedPostInfoApply()
                         if suggestedPostInfoNode !== strongSelf.suggestedPostInfoNode {
@@ -1047,7 +1096,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                             strongSelf.suggestedPostInfoNode = suggestedPostInfoNode
                             strongSelf.addSubnode(suggestedPostInfoNode)
                         }
-                        let suggestedPostInfoFrame = CGRect(origin: CGPoint(x: floor((params.width - suggestedPostInfoSize.width) * 0.5), y: 4.0), size: suggestedPostInfoSize)
+                        let suggestedPostInfoFrame = wegramLayout?[.suggestedPost] ?? CGRect(origin: CGPoint(x: floor((params.width - suggestedPostInfoSize.width) * 0.5), y: 4.0), size: suggestedPostInfoSize)
                         suggestedPostInfoNode.frame = suggestedPostInfoFrame
                     } else if let suggestedPostInfoNode = strongSelf.suggestedPostInfoNode {
                         strongSelf.suggestedPostInfoNode = nil
@@ -1058,11 +1107,12 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                     strongSelf.containerNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     strongSelf.contextSourceNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
                     strongSelf.contextSourceNode.contentNode.frame = CGRect(origin: CGPoint(), size: layoutSize)
-                    strongSelf.contextSourceNode.contentRect = strongSelf.imageNode.frame
+                    strongSelf.contextSourceNode.contentRect = wegramLayout?.contentRect ?? strongSelf.imageNode.frame
                     strongSelf.containerNode.targetNodeForActivationProgressContentRect = strongSelf.contextSourceNode.contentRect
                     
                     animation.animator.updateFrame(layer: strongSelf.dateAndStatusNode.layer, frame: dateAndStatusFrame, completion: nil)
                     dateAndStatusApply(animation)
+                    strongSelf.dateAndStatusNode.isHidden = false
                     if case .customChatContents = item.associatedData.subject {
                         strongSelf.dateAndStatusNode.isHidden = true
                     }
@@ -1149,7 +1199,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                             strongSelf.viaBotNode = viaBotNode
                             strongSelf.contextSourceNode.contentNode.addSubnode(viaBotNode)
                         }
-                        let viaBotFrame = CGRect(origin: CGPoint(x: (!incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + 11.0 + 5.0) : (params.width - params.rightInset - messageInfoSize.width - layoutConstants.bubble.edgeInset - 9.0 - 5.0)), y: headersOffset + 8.0), size: viaBotLayout.size)
+                        let viaBotFrame = wegramLayout?[.viaBot] ?? CGRect(origin: CGPoint(x: (!incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + 11.0 + 5.0) : (params.width - params.rightInset - messageInfoSize.width - layoutConstants.bubble.edgeInset - 9.0 - 5.0)), y: headersOffset + 8.0), size: viaBotLayout.size)
                         
                         viaBotNode.frame = viaBotFrame
                         
@@ -1175,7 +1225,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                                 forwardInfoNode.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.2)
                             }
                         }
-                        let forwardInfoFrame = CGRect(origin: CGPoint(x: (!incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + 12.0 + 5.0) : (params.width - params.rightInset - messageInfoSize.width - layoutConstants.bubble.edgeInset - 8.0 - 5.0)), y: headersOffset + 8.0 + messageInfoSize.height), size: forwardInfoSize)
+                        let forwardInfoFrame = wegramLayout?[.forward] ?? CGRect(origin: CGPoint(x: (!incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + 12.0 + 5.0) : (params.width - params.rightInset - messageInfoSize.width - layoutConstants.bubble.edgeInset - 8.0 - 5.0)), y: headersOffset + 8.0 + messageInfoSize.height), size: forwardInfoSize)
                         animation.animator.updateFrame(layer: forwardInfoNode.layer, frame: forwardInfoFrame, completion: nil)
                         
                         messageInfoSize = CGSize(width: messageInfoSize.width, height: messageInfoSize.height + forwardInfoSize.height + 8.0)
@@ -1212,7 +1262,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                             headersOffset += 6.0
                         }
                         
-                        let replyInfoFrame = CGRect(origin: CGPoint(x: (!incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + 11.0) : (params.width - params.rightInset - replyInfoSize.width - layoutConstants.bubble.edgeInset - 9.0)), y: headersOffset + 8.0 + messageInfoSize.height), size: replyInfoSize)
+                        let replyInfoFrame = wegramLayout?[.reply] ?? CGRect(origin: CGPoint(x: (!incoming ? (params.leftInset + layoutConstants.bubble.edgeInset + 11.0) : (params.width - params.rightInset - replyInfoSize.width - layoutConstants.bubble.edgeInset - 9.0)), y: headersOffset + 8.0 + messageInfoSize.height), size: replyInfoSize)
                         replyBackgroundFrame = replyInfoFrame
                         
                         let replyInfoNode = replyInfoApply(replyInfoFrame.size, synchronousLoads, animation)
@@ -1294,7 +1344,9 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                             strongSelf.addSubnode(deliveryFailedNode)
                         }
                         let deliveryFailedSize = deliveryFailedNode.updateLayout(theme: item.presentationData.theme.theme)
-                        let deliveryFailedFrame = CGRect(origin: CGPoint(x: imageFrame.maxX + deliveryFailedInset - deliveryFailedSize.width, y: imageFrame.maxY - deliveryFailedSize.height - innerImageInset), size: deliveryFailedSize)
+                        let deliveryFailedFrame = usesWegramLayout
+                            ? CGRect(x: wegramArea.maxX + 24 - deliveryFailedSize.width, y: updatedImageFrame.maxY - innerImageInset - deliveryFailedSize.height, width: deliveryFailedSize.width, height: deliveryFailedSize.height)
+                            : CGRect(origin: CGPoint(x: imageFrame.maxX + deliveryFailedInset - deliveryFailedSize.width, y: imageFrame.maxY - deliveryFailedSize.height - innerImageInset), size: deliveryFailedSize)
                         if isAppearing {
                             deliveryFailedNode.frame = deliveryFailedFrame
                             transition.animatePositionAdditive(node: deliveryFailedNode, offset: CGPoint(x: deliveryFailedInset, y: 0.0))
@@ -1312,7 +1364,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                     if let actionButtonsSizeAndApply = actionButtonsSizeAndApply {
                         let actionButtonsNode = actionButtonsSizeAndApply.1(animation)
                         let previousFrame = actionButtonsNode.frame
-                        let actionButtonsFrame = CGRect(origin: CGPoint(x: imageFrame.minX, y: imageFrame.maxY - 10.0), size: actionButtonsSizeAndApply.0)
+                        let actionButtonsFrame = wegramLayout?[.buttons] ?? CGRect(origin: CGPoint(x: imageFrame.minX, y: imageFrame.maxY - 10.0), size: actionButtonsSizeAndApply.0)
                         actionButtonsNode.frame = actionButtonsFrame
                         if actionButtonsNode !== strongSelf.actionButtonsNode {
                             strongSelf.actionButtonsNode = actionButtonsNode
@@ -1356,6 +1408,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                         if let actionButtonsSizeAndApply = actionButtonsSizeAndApply {
                             reactionButtonsFrame.origin.y += 4.0 + actionButtonsSizeAndApply.0.height
                         }
+                        if let frame = wegramLayout?[.reactions] { reactionButtonsFrame = frame }
                         if reactionButtonsNode !== strongSelf.reactionButtonsNode {
                             strongSelf.reactionButtonsNode = reactionButtonsNode
                             reactionButtonsNode.reactionSelected = { value, sourceView in
@@ -1562,8 +1615,8 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
             
                 return nil
             case .longTap, .doubleTap, .secondaryTap:
-                if let item = self.item, self.imageNode.frame.contains(location) {
-                    return .openContextMenu(InternalBubbleTapAction.OpenContextMenu(tapMessage: item.message, selectAll: false, subFrame: self.imageNode.frame))
+                if let item = self.item, (self.wegramContentRect ?? self.imageNode.frame).contains(location) {
+                    return .openContextMenu(InternalBubbleTapAction.OpenContextMenu(tapMessage: item.message, selectAll: false, subFrame: self.wegramContentRect ?? self.imageNode.frame))
                 }
             case .hold:
                 break
@@ -1750,6 +1803,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
         guard let item = self.item else {
             return
         }
+        self.selectionNode?.updateAppearance(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, usesWegramAppearance: item.usesWegramSelectionAppearance)
         
         if case let .replyThread(replyThreadMessage) = item.chatLocation, replyThreadMessage.effectiveTopId == item.message.id {
             return
@@ -1791,7 +1845,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 selectionNode.updateSelected(selected, animated: animated)
                 self.subnodeTransform = CATransform3DMakeTranslation(offset, 0.0, 0.0);
             } else {
-                let selectionNode = ChatMessageSelectionNode(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, toggle: { [weak self] value in
+                let selectionNode = ChatMessageSelectionNode(wallpaper: item.presentationData.theme.wallpaper, theme: item.presentationData.theme.theme, usesWegramAppearance: item.usesWegramSelectionAppearance, toggle: { [weak self] value in
                     if let strongSelf = self, let item = strongSelf.item {
                         item.controllerInteraction.toggleMessagesSelection([item.message.id], value)
                     }
@@ -2196,24 +2250,11 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
     }
     
     override public func contentFrame() -> CGRect {
-        return self.imageNode.frame
+        return self.wegramContentRect ?? self.imageNode.frame
     }
     
     override public func makeContentSnapshot() -> (UIImage, CGRect)? {
-        UIGraphicsBeginImageContextWithOptions(self.imageNode.view.bounds.size, false, 0.0)
-        let context = UIGraphicsGetCurrentContext()!
-        
-        context.translateBy(x: -self.imageNode.frame.minX, y: -self.imageNode.frame.minY)
-        self.contextSourceNode.contentNode.view.layer.render(in: context)
-        
-        let image = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        
-        guard let image else {
-            return nil
-        }
-        
-        return (image, self.imageNode.frame)
+        return wegramStickerMediaSnapshot(contentView: self.contextSourceNode.contentNode.view, mediaFrame: self.imageNode.frame, clippingRect: self.wegramMediaContentRect)
     }
     
     private func updateVisibility() {

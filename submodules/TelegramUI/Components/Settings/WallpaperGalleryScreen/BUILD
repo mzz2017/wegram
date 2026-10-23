@@ -41,3 +41,5 @@ swift_library(
         "//visibility:public",
     ],
 )
+
+exports_files(["Sources/WegramWallpaperCropController.swift", "Sources/WegramWallpaperPhoto.swift", "Sources/WallpaperCropNode.swift"], visibility = ["//submodules/TelegramPresentationData:__pkg__"])

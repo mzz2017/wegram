@@ -9,7 +9,7 @@ import AccountContext
 private func appSpecificAssetCollection() -> Signal<PHAssetCollection, NoError> {
     return Signal { subscriber in
         let fetchOption = PHFetchOptions()
-        let albumName = "Telegram"
+        let albumName = "WeGram"
         fetchOption.predicate = NSPredicate(format: "title == '" + albumName + "'")
         
         let fetchResult = PHAssetCollection.fetchAssetCollections(
@@ -138,9 +138,9 @@ private final class DownloadedMediaStoreContext {
                 
                 var filename: String?
                 if let image = media.media as? TelegramMediaImage {
-                    filename = "telegram-photo-\(image.imageId.namespace)-\(image.imageId.id).jpg"
+                    filename = "WeGram-photo-\(image.imageId.namespace)-\(image.imageId.id).jpg"
                 } else if let file = media.media as? TelegramMediaFile {
-                    filename = "telegram-video-\(file.fileId.namespace)-\(file.fileId.id).mov"
+                    filename = "WeGram-video-\(file.fileId.namespace)-\(file.fileId.id).mov"
                 }
                 let creationDate = Date(timeIntervalSince1970: TimeInterval(timestamp))
                 

@@ -215,6 +215,8 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     private var callStateDisposable: Disposable?
     
     private(set) var currentCallStatusBarNode: CallStatusBarNodeImpl?
+    // A minimized one-to-one call shows WeChat's floating tile instead of the in-call status bar.
+    private var wegramCallFloatingWindow: (call: PresentationCall, window: WegramCallFloatingWindow)?
     
     private var callDisposable: Disposable?
     private var groupCallDisposable: Disposable?
@@ -1479,15 +1481,39 @@ public final class SharedAccountContextImpl: SharedAccountContext {
             if let navigationController = self.mainWindow?.viewController as? NavigationController {
                 navigationController.setForceInCallStatusBar(nil)
             }
+            self.updateWegramCallFloatingWindow(call: nil)
         }
+    }
+    
+    private func updateWegramCallFloatingWindow(call: PresentationCall?) {
+        if let current = self.wegramCallFloatingWindow, current.call !== call {
+            self.wegramCallFloatingWindow = nil
+            // The completion holds the window until it has faded out.
+            let window = current.window
+            window.hide(completion: {
+                let _ = window
+            })
+        }
+        guard let call else {
+            return
+        }
+        if self.wegramCallFloatingWindow == nil, let window = WegramCallFloatingWindow(call: call, hostWindow: self.mainWindow?.hostView.containerView.window) {
+            window.tapAction = { [weak self, weak window] in
+                window?.hide()
+                self?.mainWindow?.inCallNavigate?()
+            }
+            self.wegramCallFloatingWindow = (call, window)
+        }
+        self.wegramCallFloatingWindow?.window.show()
     }
     
     private func updateInCallStatusBarData(hasGroupCallOnScreen: Bool) {
         var statusBarContent: CallStatusBarNodeImpl.Content?
+        var floatingCall: PresentationCall?
         if !hasGroupCallOnScreen, let currentCall = self.currentCall {
             switch currentCall {
             case let .call(call):
-                statusBarContent = .call(self, call.context.account, call)
+                floatingCall = call
             case let .group(groupCall):
                 switch groupCall {
                 case let .conferenceSource(conferenceSource):
@@ -1513,6 +1539,14 @@ public final class SharedAccountContextImpl: SharedAccountContext {
         
         if let navigationController = self.mainWindow?.viewController as? NavigationController {
             navigationController.setForceInCallStatusBar(resolvedCallStatusBarNode)
+        }
+        if let floatingCall {
+            self.updateWegramCallFloatingWindow(call: floatingCall)
+        } else if let current = self.wegramCallFloatingWindow, case let .call(call) = self.currentCall, current.call === call {
+            // The call is on screen again: keep the tile, and where it was dragged to, for the next minimize.
+            current.window.hide()
+        } else {
+            self.updateWegramCallFloatingWindow(call: nil)
         }
     }
     
@@ -2794,7 +2828,7 @@ public final class SharedAccountContextImpl: SharedAccountContext {
     }
     
     public func makeChatQrCodeScreen(context: AccountContext, peer: EnginePeer, threadId: Int64?, temporary: Bool) -> ViewController {
-        return ChatQrCodeScreenImpl(context: context, subject: .peer(peer: peer, threadId: threadId, temporary: temporary))
+        return ChatQrCodeScreenImpl(context: context, subject: .peer(peer: peer, threadId: threadId, temporary: temporary), usesWegramProfileLayout: peer.id == context.account.peerId && threadId == nil)
     }
     
     public func makePrivacyAndSecurityController(context: AccountContext) -> ViewController {
