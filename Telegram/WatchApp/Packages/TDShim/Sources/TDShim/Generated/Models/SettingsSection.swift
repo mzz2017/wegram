@@ -19,7 +19,7 @@ public indirect enum SettingsSection: Codable, Equatable, Hashable {
     /// The "Ask a question" section
     case settingsSectionAskQuestion
 
-    /// The "Telegram Business" section
+    /// The "WeGram Business" section
     case settingsSectionBusiness(SettingsSectionBusiness)
 
     /// The chat folder settings section
@@ -37,7 +37,7 @@ public indirect enum SettingsSection: Codable, Equatable, Hashable {
     /// The FAQ section
     case settingsSectionFaq
 
-    /// The "Telegram Features" section
+    /// The "WeGram Features" section
     case settingsSectionFeatures
 
     /// The in-app browser settings section
@@ -58,7 +58,7 @@ public indirect enum SettingsSection: Codable, Equatable, Hashable {
     /// The power saving settings section
     case settingsSectionPowerSaving(SettingsSectionPowerSaving)
 
-    /// The "Telegram Premium" section
+    /// The "WeGram Premium" section
     case settingsSectionPremium
 
     /// The privacy and security section
@@ -247,7 +247,7 @@ public struct SettingsSectionAppearance: Codable, Equatable, Hashable {
     }
 }
 
-/// The "Telegram Business" section
+/// The "WeGram Business" section
 public struct SettingsSectionBusiness: Codable, Equatable, Hashable {
 
     /// Subsection of the section; may be one of "", "do-not-hide-ads"

@@ -56,7 +56,7 @@ private func codeLength(from type: AuthenticationCodeType) -> Int? {
 private func typeDescription(from type: AuthenticationCodeType) -> String {
     switch type {
     case .authenticationCodeTypeSms: return "SMS"
-    case .authenticationCodeTypeTelegramMessage: return "Telegram message"
+    case .authenticationCodeTypeTelegramMessage: return "WeGram message"
     case .authenticationCodeTypeCall: return "Phone call"
     case .authenticationCodeTypeMissedCall: return "Missed call"
     case .authenticationCodeTypeFlashCall: return "Flash call"

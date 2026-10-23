@@ -80,7 +80,7 @@ func matchingDeviceContact(_ contact: CNContact) -> MatchingDeviceContact {
 
     var contactPeerId: PeerId?
     for address in contact.urlAddresses {
-        if address.label == "Telegram", let peerId = parseAppSpecificContactReference(address.value as String) {
+        if (address.label == "WeGram" || address.label == "Telegram"), let peerId = parseAppSpecificContactReference(address.value as String) {
             contactPeerId = peerId
         }
     }

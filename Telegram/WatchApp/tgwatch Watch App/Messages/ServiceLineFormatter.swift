@@ -23,7 +23,7 @@ private func withActor(_ action: String, actor: String, includeActor: Bool) -> S
     includeActor ? "\(actor) \(action)" : action
 }
 
-/// Bands the seconds value into a human label matching Telegram desktop.
+/// Bands the seconds value into a human label matching WeGram desktop.
 private func autoDeleteDuration(seconds: Int) -> String {
     if seconds < 60 { return "\(seconds)s" }
     if seconds < 3600 { return "\(seconds / 60) min" }
@@ -145,7 +145,7 @@ func serviceLineText(
 
     switch msg.content {
     case .messageContactRegistered:
-        return withActor("joined Telegram", actor: actor, includeActor: includeActor)
+        return withActor("joined WeGram", actor: actor, includeActor: includeActor)
 
     case .messageChatJoinByLink, .messageChatJoinByRequest:
         return withActor("joined the chat", actor: actor, includeActor: includeActor)
@@ -199,7 +199,7 @@ func serviceLineText(
         return withActor("started a video chat", actor: actor, includeActor: includeActor)
 
     case .messageVideoChatEnded(let m):
-        // Actor intentionally dropped — TDLib emits one but stock Telegram clients
+        // Actor intentionally dropped — TDLib emits one but stock WeGram clients
         // render this without one. includeActor is ignored.
         if m.duration >= 60 {
             let mins = m.duration / 60
@@ -229,7 +229,7 @@ func serviceLineText(
         return m.text
 
     case .messageBasicGroupChatCreate:
-        // Chat-lifecycle event — rendered without an actor (Telegram convention).
+        // Chat-lifecycle event — rendered without an actor (WeGram convention).
         return "Group created"
 
     case .messageSupergroupChatCreate:
@@ -284,7 +284,7 @@ func serviceLineText(
                          actor: actor, includeActor: includeActor)
 
     case .messageChatUpgradeTo, .messageChatUpgradeFrom:
-        // Chat-lifecycle event — actor-less (Telegram convention), ignores includeActor.
+        // Chat-lifecycle event — actor-less (WeGram convention), ignores includeActor.
         return "Group upgraded to a supergroup"
 
     case .messageChatShared:

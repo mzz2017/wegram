@@ -52,6 +52,7 @@ load(
     "@build_configuration//:variables.bzl",
     "telegram_bazel_path",
     "telegram_use_xcode_managed_codesigning",
+    "telegram_disable_provisioning_profiles",
     "telegram_bundle_id",
     "telegram_aps_environment",
     "telegram_team_id",
@@ -636,7 +637,7 @@ plist_fragment(
     template =
     """
     <key>CFBundleDisplayName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     """
 )
 
@@ -975,7 +976,7 @@ plist_fragment(
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}.Share</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>NSExtension</key>
@@ -1068,7 +1069,7 @@ plist_fragment(
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}.NotificationContent</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>NSExtension</key>
@@ -1176,7 +1177,7 @@ plist_fragment(
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}.Widget</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>NSExtension</key>
@@ -1294,7 +1295,7 @@ plist_fragment(
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}.SiriIntents</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>NSExtension</key>
@@ -1458,7 +1459,7 @@ plist_fragment(
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}.BroadcastUpload</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>NSExtension</key>
@@ -1552,7 +1553,7 @@ plist_fragment(
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}.NotificationService</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundlePackageType</key>
     <string>XPC!</string>
     <key>NSExtension</key>
@@ -1621,11 +1622,11 @@ plist_fragment(
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundleIdentifier</key>
     <string>{telegram_bundle_id}</string>
     <key>CFBundleName</key>
-    <string>Telegram</string>
+    <string>WeGram</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleSignature</key>
@@ -1896,7 +1897,7 @@ xcodeproj(
     project_name = "Telegram",
     tags = ["manual"],
     top_level_targets = [
-        top_level_target(":Telegram", target_environments = ["device", "simulator"]),
+        top_level_target(":Telegram", target_environments = ["simulator"] if telegram_disable_provisioning_profiles else ["device", "simulator"]),
         ":iOSAppUITestSuite",
     ],
     xcode_configurations = {
@@ -2045,5 +2046,5 @@ filegroup(
         ":GeneratedPresentationStrings/Resources/PresentationStrings.data",
         "Telegram-iOS/en.lproj/Localizable.strings",
     ],
-    visibility = ["//submodules/ChatListUI:__pkg__"],
+    visibility = ["//submodules/ChatListUI:__pkg__", "//submodules/TelegramPresentationData:__pkg__"],
 )

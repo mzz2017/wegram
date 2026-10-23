@@ -37,6 +37,11 @@ def generate_xcodeproj(build_environment: BuildEnvironment, disable_extensions, 
             project_bazel_arguments += ['--//{}:disableExtensions'.format(app_target)]
         project_bazel_arguments += ['--//{}:disableStripping'.format(app_target)]
 
+    if disable_provisioning_profiles:
+        flag = '--//{}:disableProvisioningProfiles'.format(app_target)
+        bazel_generate_arguments.append(flag)
+        project_bazel_arguments.append(flag)
+
     project_bazel_arguments += ['--features=-swift.debug_prefix_map']
     project_bazel_arguments += ['--features=swift.emit_swiftsourceinfo']
     

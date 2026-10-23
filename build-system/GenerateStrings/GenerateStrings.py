@@ -484,6 +484,14 @@ static NSString * _Nonnull getSingle(_PresentationStrings * _Nullable strings, N
             *isFound = true;
         }
     }
+    if ([result rangeOfString:@"Telegram" options:NSCaseInsensitiveSearch].location != NSNotFound || [result containsString:@"تيليجرام"] || [result containsString:@"تليجرام"] || [result containsString:@"تلگرام"]) {
+        static NSRegularExpression *brandRegex = nil;
+        static dispatch_once_t brandOnceToken;
+        dispatch_once(&brandOnceToken, ^{
+            brandRegex = [NSRegularExpression regularExpressionWithPattern:@"(?<![A-Za-z0-9_/@.])(?:Telegram|تيليجرام|تليجرام|تلگرام)(?![A-Za-z0-9_]|[.][A-Za-z0-9])" options:NSRegularExpressionCaseInsensitive error:nil];
+        });
+        result = [brandRegex stringByReplacingMatchesInString:result options:0 range:NSMakeRange(0, result.length) withTemplate:@"WeGram"];
+    }
     return result;
 }
 

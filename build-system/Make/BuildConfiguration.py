@@ -36,10 +36,11 @@ class BuildConfiguration:
         self.enable_siri = enable_siri
         self.enable_icloud = enable_icloud
 
-    def write_to_variables_file(self, bazel_path, use_xcode_managed_codesigning, aps_environment, path):
+    def write_to_variables_file(self, bazel_path, use_xcode_managed_codesigning, aps_environment, path, disable_provisioning_profiles=False):
         string = ''
         string += 'telegram_bazel_path = "{}"\n'.format(bazel_path)
         string += 'telegram_use_xcode_managed_codesigning = {}\n'.format('True' if use_xcode_managed_codesigning else 'False')
+        string += 'telegram_disable_provisioning_profiles = {}\n'.format('True' if disable_provisioning_profiles else 'False')
         string += 'telegram_bundle_id = "{}"\n'.format(self.bundle_id)
         string += 'telegram_api_id = "{}"\n'.format(self.api_id)
         string += 'telegram_api_hash = "{}"\n'.format(self.api_hash)

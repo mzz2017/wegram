@@ -79,3 +79,9 @@ xcode-files
 **/node_modules/
 tools/sim-watcher/dist/
 .mcp.json
+
+# Bazel symlink uses the checkout directory name.
+/bazel-wegram
+
+# Local Cloudflare account cache
+/.cloudflare/

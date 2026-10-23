@@ -131,7 +131,7 @@ public indirect enum InternalLinkType: Codable, Equatable, Hashable {
     /// The link is a link to a chat by its username. Call searchPublicChat with the given chat username to process the link. If the chat is found, open its profile information screen or the chat itself. If draft text isn't empty and the chat is a private chat with a regular user, then put the draft text in the input field
     case internalLinkTypePublicChat(InternalLinkTypePublicChat)
 
-    /// The link can be used to login the current user on another device, but it must be scanned from QR-code using in-app camera. An alert similar to "This code can be used to allow someone to log in to your Telegram account. To confirm Telegram login, please go to Settings > Devices > Scan QR and scan the code" needs to be shown
+    /// The link can be used to login the current user on another device, but it must be scanned from QR-code using in-app camera. An alert similar to "This code can be used to allow someone to log in to your WeGram account. To confirm WeGram login, please go to Settings > Devices > Scan QR and scan the code" needs to be shown
     case internalLinkTypeQrCodeAuthentication
 
     /// The link is a link to a dialog for creating of a managed bot. Call searchPublicChat with the given manager bot username. If the chat is found, the chat is a chat with a bot and the bot has can_manage_bots == true, then show bot creation confirmation dialog with the given suggested_bot_username and suggested_bot_name. If user agrees, call createBot with via_link == true to create the bot
