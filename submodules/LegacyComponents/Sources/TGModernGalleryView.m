@@ -6,6 +6,7 @@
 #import <LegacyComponents/TGHacks.h>
 
 #import <LegacyComponents/TGModernGalleryDefaultInterfaceView.h>
+#import <LegacyComponents/TGMediaPickerGalleryInterfaceView.h>
 #import <LegacyComponents/TGModernGalleryScrollView.h>
 
 #import <LegacyComponents/TGModernGalleryZoomableScrollViewSwipeGestureRecognizer.h>
@@ -33,6 +34,12 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
 
 @implementation TGModernGalleryView
 
+- (UIColor *)galleryBackgroundColorWithAlpha:(CGFloat)alpha
+{
+    bool usesWegramAppearance = [_interfaceView isKindOfClass:TGMediaPickerGalleryInterfaceView.class] && ((TGMediaPickerGalleryInterfaceView *)_interfaceView).usesWegramAppearance;
+    return UIColorRGBA(usesWegramAppearance ? 0x202020 : 0x000000, alpha);
+}
+
 - (instancetype)initWithFrame:(CGRect)__unused frame
 {
     NSAssert(false, @"use designated initializer");
@@ -55,7 +62,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
         }
         
         self.opaque = false;
-        self.backgroundColor = UIColorRGBA(0x000000, 1.0f);
+        self.backgroundColor = [self galleryBackgroundColorWithAlpha:1.0f];
         
         CGRect bounds = [self _boundsFrame];
         
@@ -69,6 +76,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
         [_scrollViewContainer addSubview:_scrollView];
         
         _interfaceView = interfaceView;
+        self.backgroundColor = [self galleryBackgroundColorWithAlpha:1.0f];
         _interfaceView.frame = bounds;
         _interfaceView.hidden = _previewMode;
         __weak TGModernGalleryView *weakSelf = self;
@@ -321,7 +329,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
 {
     CGFloat alpha = 1.0f - MAX(0.0f, MIN(1.0f, progress * 4.0f));
     CGFloat transitionProgress = MAX(0.0f, MIN(1.0f, progress * 2.0f));
-    UIColor *backgroundColor = UIColorRGBA(0x000000, alpha);
+    UIColor *backgroundColor = [self galleryBackgroundColorWithAlpha:alpha];
     
     if (animated)
     {
@@ -353,7 +361,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
     _interfaceView.frame = interfaceViewFrame;
     _scrollView.frame = scrollViewFrame;
     _overlayContainerView.alpha = 0.0f;
-    self.backgroundColor = UIColorRGBA(0x000000, 0.0f);
+    self.backgroundColor = [self galleryBackgroundColorWithAlpha:0.0f];
     
     [UIView animateWithDuration:ABS(distance / velocity) delay:0.0 options:7 << 16 animations:^{
         _scrollView.frame = targetFrame;
@@ -367,7 +375,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
     [UIView animateWithDuration:ABS(distance / velocity) animations:^
     {
         _overlayContainerView.alpha = 1.0f;
-        self.backgroundColor = UIColorRGBA(0x000000, 1.0f);
+        self.backgroundColor = [self galleryBackgroundColorWithAlpha:1.0f];
     } completion:nil];
 }
 
@@ -395,7 +403,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
     }];
     
     [UIView animateWithDuration:0.35 animations:^{
-        self.backgroundColor = UIColorRGBA(0x000000, 0.0f);
+        self.backgroundColor = [self galleryBackgroundColorWithAlpha:0.0f];
     }];
 }
 
@@ -403,12 +411,12 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
 {
     _interfaceView.alpha = 0.0f;
     _overlayContainerView.alpha = 0.0f;
-    self.backgroundColor = UIColorRGBA(0x000000, 0.0f);
+    self.backgroundColor = [self galleryBackgroundColorWithAlpha:0.0f];
     [UIView animateWithDuration:duration delay:0.0 options:0 animations:^
     {
         _interfaceView.alpha = 1.0f;
         _overlayContainerView.alpha = 1.0f;
-        self.backgroundColor = UIColorRGBA(0x000000, 1.0f);
+        self.backgroundColor = [self galleryBackgroundColorWithAlpha:1.0f];
     } completion:nil];
 }
 
@@ -418,7 +426,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
     {
         _interfaceView.alpha = 0.0f;
         _overlayContainerView.alpha = 0.0f;
-        self.backgroundColor = UIColorRGBA(0x000000, 0.0f);
+        self.backgroundColor = [self galleryBackgroundColorWithAlpha:0.0f];
     }];
 }
 
@@ -429,7 +437,7 @@ static const CGFloat swipeDistanceThreshold = 128.0f;
         _interfaceView.alpha = 0.0f;
         _scrollView.alpha = 0.0f;
         _overlayContainerView.alpha = 0.0f;
-        self.backgroundColor = UIColorRGBA(0x000000, 0.0f);
+        self.backgroundColor = [self galleryBackgroundColorWithAlpha:0.0f];
     } completion:^(__unused BOOL finished)
     {
         if (completion)

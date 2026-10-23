@@ -123,6 +123,7 @@ public final class ContextMenuActionItem {
 
     public let id: AnyHashable?
     public let text: String
+    public let isSelected: Bool
     public let entities: [MessageTextEntity]
     public let entityFiles: [Int64: TelegramMediaFile]
     public let enableEntityAnimations: Bool
@@ -146,6 +147,7 @@ public final class ContextMenuActionItem {
     convenience public init(
         id: AnyHashable? = nil,
         text: String,
+        isSelected: Bool = false,
         entities: [MessageTextEntity] = [],
         entityFiles: [Int64: TelegramMediaFile] = [:],
         enableEntityAnimations: Bool = true,
@@ -169,6 +171,7 @@ public final class ContextMenuActionItem {
         self.init(
             id: id,
             text: text,
+            isSelected: isSelected,
             entities: entities,
             entityFiles: entityFiles,
             enableEntityAnimations: enableEntityAnimations,
@@ -202,6 +205,7 @@ public final class ContextMenuActionItem {
     public init(
         id: AnyHashable? = nil,
         text: String,
+        isSelected: Bool = false,
         entities: [MessageTextEntity] = [],
         entityFiles: [Int64: TelegramMediaFile] = [:],
         enableEntityAnimations: Bool = true,
@@ -224,6 +228,7 @@ public final class ContextMenuActionItem {
     ) {
         self.id = id
         self.text = text
+        self.isSelected = isSelected
         self.entities = entities
         self.entityFiles = entityFiles
         self.enableEntityAnimations = enableEntityAnimations
@@ -468,6 +473,20 @@ public protocol ContextControllerItemsNode: ASDisplayNode {
     func update(presentationData: PresentationData, constrainedWidth: CGFloat, maxHeight: CGFloat, bottomInset: CGFloat, transition: ContainedViewLayoutTransition) -> (cleanSize: CGSize, apparentHeight: CGFloat)
     
     var apparentHeight: CGFloat { get }
+
+    func highlightGestureShouldBegin(location: CGPoint) -> Bool
+    func highlightGestureMoved(location: CGPoint)
+    func highlightGestureFinished(performAction: Bool)
+    func decreaseHighlightedIndex()
+    func increaseHighlightedIndex()
+}
+
+public extension ContextControllerItemsNode {
+    func highlightGestureShouldBegin(location: CGPoint) -> Bool { return true }
+    func highlightGestureMoved(location: CGPoint) {}
+    func highlightGestureFinished(performAction: Bool) {}
+    func decreaseHighlightedIndex() {}
+    func increaseHighlightedIndex() {}
 }
 
 public protocol ContextControllerItemsContent: AnyObject {

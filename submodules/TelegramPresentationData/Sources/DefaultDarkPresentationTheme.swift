@@ -97,7 +97,8 @@ public func customizeDefaultDarkPresentationTheme(theme: PresentationTheme, edit
         
         intro = intro.withUpdated(accentTextColor: accentColor, startButtonColor: accentColor)
         rootController = rootController.withUpdated(
-            tabBar: rootController.tabBar.withUpdated(selectedIconColor: accentColor, selectedTextColor: accentColor, badgeBackgroundColor: badgeFillColor, badgeTextColor: badgeTextColor),
+            // WeGram: the selected tab keeps WeChat green regardless of the theme accent.
+            tabBar: rootController.tabBar.withUpdated(badgeBackgroundColor: badgeFillColor, badgeTextColor: badgeTextColor),
             navigationBar: rootController.navigationBar.withUpdated(buttonColor: accentColor, accentTextColor: accentColor, badgeBackgroundColor: badgeFillColor, badgeTextColor: badgeTextColor),
             navigationSearchBar: rootController.navigationSearchBar.withUpdated(accentColor: accentColor)
         )
@@ -342,12 +343,12 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
         secondaryTextColor: UIColor(rgb: 0xffffff, alpha: 0.5),
         controlColor: UIColor(rgb: 0x767676),
         accentTextColor: UIColor(rgb: 0xffffff),
-        blurredBackgroundColor: UIColor(rgb: 0x1d1d1d, alpha: 0.9),
-        opaqueBackgroundColor: UIColor(rgb: 0x1d1d1d).mixedWith(UIColor(rgb: 0x000000), alpha: 0.1),
+        blurredBackgroundColor: UIColor(rgb: 0x111111),
+        opaqueBackgroundColor: UIColor(rgb: 0x111111),
         separatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-        badgeBackgroundColor:  UIColor(rgb: 0xffffff),
+        badgeBackgroundColor: UIColor(rgb: 0xfa5151),
         badgeStrokeColor: UIColor(rgb: 0x1c1c1d),
-        badgeTextColor:  UIColor(rgb: 0x000000),
+        badgeTextColor: UIColor(rgb: 0xffffff),
         segmentedBackgroundColor: UIColor(rgb: 0xffffff, alpha: 0.11),
         segmentedForegroundColor: UIColor(rgb: 0xffffff, alpha: 0.36),
         segmentedTextColor: UIColor(rgb: 0xffffff),
@@ -357,24 +358,26 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
     )
 
     let rootTabBar = PresentationThemeRootTabBar(
-        backgroundColor: rootNavigationBar.blurredBackgroundColor,
-        separatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-        iconColor: UIColor(rgb: 0xffffff),
-        selectedIconColor: UIColor(rgb: 0xffffff),
-        textColor: UIColor(rgb: 0xffffff),
-        selectedTextColor: UIColor(rgb: 0xffffff),
-        badgeBackgroundColor:  UIColor(rgb: 0xffffff),
+        backgroundColor: UIColor(rgb: 0x1e1e1e),
+        // The dark chat-list reference: a 1px line at 48 and unselected items at 212-213 (WeUI FG-0, white at
+        // 80%), on its 29-31 bar. That screenshot is Display P3, which is why its 07C160 reads as ~4CBE6B.
+        separatorColor: UIColor(rgb: 0x303030),
+        iconColor: UIColor(rgb: 0xffffff, alpha: 0.8),
+        selectedIconColor: UIColor(rgb: 0x07c160),
+        textColor: UIColor(rgb: 0xffffff, alpha: 0.8),
+        selectedTextColor: UIColor(rgb: 0x07c160),
+        badgeBackgroundColor: UIColor(rgb: 0xfa5151),
         badgeStrokeColor: UIColor(rgb: 0x1c1c1d),
-        badgeTextColor:  UIColor(rgb: 0x000000)
+        badgeTextColor: UIColor(rgb: 0xffffff)
     )
 
     let navigationSearchBar = PresentationThemeNavigationSearchBar(
-        backgroundColor: UIColor(rgb: 0x1c1c1d),
+        backgroundColor: UIColor(rgb: 0x111111),
         accentColor: UIColor(rgb: 0xffffff),
-        inputFillColor: UIColor(white: 1.0, alpha: 0.1),
+        inputFillColor: UIColor(rgb: 0x191919),
         inputTextColor: UIColor(rgb: 0xffffff),
-        inputPlaceholderTextColor: UIColor(rgb: 0x8f8f8f),
-        inputIconColor: UIColor(rgb: 0x8f8f8f),
+        inputPlaceholderTextColor: UIColor(rgb: 0x5e5e5e),
+        inputIconColor: UIColor(rgb: 0x5e5e5e),
         inputClearButtonColor: UIColor(rgb: 0x8f8f8f),
         separatorColor: UIColor(rgb: 0x545458, alpha: 0.55)
     )
@@ -410,23 +413,23 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
     )
 
     let list = PresentationThemeList(
-        blocksBackgroundColor: UIColor(rgb: 0x000000),
+        blocksBackgroundColor: UIColor(rgb: 0x111111),
         modalBlocksBackgroundColor: UIColor(rgb: 0x1c1c1d),
-        plainBackgroundColor: UIColor(rgb: 0x000000),
+        plainBackgroundColor: UIColor(rgb: 0x191919),
         modalPlainBackgroundColor: UIColor(rgb: 0x1c1c1d),
-        itemPrimaryTextColor: UIColor(rgb: 0xffffff),
+        itemPrimaryTextColor: UIColor(rgb: 0xffffff, alpha: 0.8),
         itemSecondaryTextColor: UIColor(rgb: 0x98989e),
         itemDisabledTextColor: UIColor(rgb: 0x8f8f8f),
         itemAccentColor: UIColor(rgb: 0xffffff),
         itemHighlightedColor: UIColor(rgb: 0x28b772),
         itemDestructiveColor: UIColor(rgb: 0xeb5545),
         itemPlaceholderTextColor: UIColor(rgb: 0x4d4d4d),
-        itemBlocksBackgroundColor: UIColor(rgb: 0x1c1c1d),
+        itemBlocksBackgroundColor: UIColor(rgb: 0x191919),
         itemModalBlocksBackgroundColor: UIColor(rgb: 0x2c2c2e),
         itemHighlightedBackgroundColor: UIColor(rgb: 0x313135),
-        itemBlocksSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-        itemPlainSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-        disclosureArrowColor: UIColor(rgb: 0xffffff, alpha: 0.28),
+        itemBlocksSeparatorColor: UIColor(rgb: 0xffffff, alpha: 0.1),
+        itemPlainSeparatorColor: UIColor(rgb: 0xffffff, alpha: 0.1),
+        disclosureArrowColor: UIColor(rgb: 0xffffff, alpha: 0.3),
         sectionHeaderTextColor: UIColor(rgb: 0x8d8e93),
         freeTextColor: UIColor(rgb: 0x8d8e93),
         freeTextErrorColor: UIColor(rgb: 0xcf3030),
@@ -477,18 +480,20 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
     )
 
     let chatList = PresentationThemeChatList(
-        backgroundColor: UIColor(rgb: 0x000000),
-        itemSeparatorColor: UIColor(rgb: 0x545458, alpha: 0.55),
-        itemBackgroundColor: UIColor(rgb: 0x000000),
-        pinnedItemBackgroundColor: UIColor(rgb: 0x1c1c1d),
+        backgroundColor: UIColor(rgb: 0x191919),
+        itemSeparatorColor: UIColor(rgb: 0xffffff, alpha: 0.1),
+        itemBackgroundColor: UIColor(rgb: 0x191919),
+        pinnedItemBackgroundColor: UIColor(rgb: 0x202020),
         itemHighlightedBackgroundColor: UIColor(rgb: 0x121212),
         pinnedItemHighlightedBackgroundColor: UIColor(rgb: 0x2b2b2c),
-        itemSelectedBackgroundColor: UIColor(rgb: 0x191919),
-        titleColor: UIColor(rgb: 0xffffff),
+        itemSelectedBackgroundColor: UIColor(rgb: 0x121212),
+        // Alpha white, as IMG_2438 reads on both row backgrounds: title 0.8, date 0.11, preview 0.3
+        // (212/56/102 on the 202020 pinned rows, 211/50/97 on 191919).
+        titleColor: UIColor(rgb: 0xffffff, alpha: 0.8),
         secretTitleColor: UIColor(rgb: 0x00b12c),
-        dateTextColor: UIColor(rgb: 0x8d8e93),
+        dateTextColor: UIColor(rgb: 0xffffff, alpha: 0.11),
         authorNameColor: UIColor(rgb: 0xffffff),
-        messageTextColor: UIColor(rgb: 0x8d8e93),
+        messageTextColor: UIColor(rgb: 0xffffff, alpha: 0.3),
         messageHighlightedTextColor: UIColor(rgb: 0xffffff),
         messageDraftTextColor: UIColor(rgb: 0xdd4b39),
         checkmarkColor: UIColor(rgb: 0xffffff),
@@ -496,10 +501,10 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
         failedFillColor: UIColor(rgb: 0xeb5545),
         failedForegroundColor: UIColor(rgb: 0xffffff),
         muteIconColor: UIColor(rgb: 0x8d8e93),
-        unreadBadgeActiveBackgroundColor: UIColor(rgb: 0xffffff),
-        unreadBadgeActiveTextColor: UIColor(rgb: 0x000000),
+        unreadBadgeActiveBackgroundColor: UIColor(rgb: 0xfa5151),
+        unreadBadgeActiveTextColor: UIColor(rgb: 0xffffff),
         unreadBadgeInactiveBackgroundColor: UIColor(rgb: 0x666666),
-        unreadBadgeInactiveTextColor:UIColor(rgb: 0x000000),
+        unreadBadgeInactiveTextColor:UIColor(rgb: 0x212121),
         reactionBadgeActiveBackgroundColor: UIColor(rgb: 0xFF2D55),
         pinnedBadgeColor: UIColor(rgb: 0x767677),
         pinnedSearchBarColor: UIColor(rgb: 0x272728),
@@ -507,23 +512,24 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
         sectionHeaderFillColor: .black,
         sectionHeaderTextColor: UIColor(rgb: 0x8d8e93),
         verifiedIconFillColor: UIColor(rgb: 0xffffff),
-        verifiedIconForegroundColor:  UIColor(rgb: 0x000000),
+        verifiedIconForegroundColor:  UIColor(rgb: 0x212121),
         secretIconColor: UIColor(rgb: 0x00b12c),
         pinnedArchiveAvatarColor: PresentationThemeArchiveAvatarColors(backgroundColors: PresentationThemeGradientColors(topColor: UIColor(rgb: 0x72d5fd), bottomColor: UIColor(rgb: 0x2a9ef1)), foregroundColor: UIColor(rgb: 0xffffff)),
-        unpinnedArchiveAvatarColor: PresentationThemeArchiveAvatarColors(backgroundColors: PresentationThemeGradientColors(topColor: UIColor(rgb: 0x666666), bottomColor: UIColor(rgb: 0x666666)), foregroundColor: UIColor(rgb: 0x000000)),
+        unpinnedArchiveAvatarColor: PresentationThemeArchiveAvatarColors(backgroundColors: PresentationThemeGradientColors(topColor: UIColor(rgb: 0x666666), bottomColor: UIColor(rgb: 0x666666)), foregroundColor: UIColor(rgb: 0x212121)),
         onlineDotColor: UIColor(rgb: 0x4cc91f),
         storyUnseenColors: PresentationThemeGradientColors(topColor: UIColor(rgb: 0x34C76F), bottomColor: UIColor(rgb: 0x3DA1FD)),
         storyUnseenPrivateColors: PresentationThemeGradientColors(topColor: UIColor(rgb: 0x7CD636), bottomColor: UIColor(rgb: 0x26B470)),
         storySeenColors: PresentationThemeGradientColors(topColor: UIColor(rgb: 0x48484A), bottomColor: UIColor(rgb: 0x48484A))
     )
 
-    let incomingBubbleAlpha: CGFloat = 0.9
+    // WeChat draws received bubbles opaque (#2C2C2C over any wallpaper), matching the dark reference.
+    let incomingBubbleAlpha: CGFloat = 1.0
     
     let message = PresentationThemeChatMessage(
         incoming: PresentationThemePartedColors(
             bubble: PresentationThemeBubbleColor(
                 withWallpaper: PresentationThemeBubbleColorComponents(
-                    fill: [UIColor(rgb: 0x1D1D1D, alpha: incomingBubbleAlpha)],
+                    fill: [UIColor(rgb: 0x2c2c2c, alpha: incomingBubbleAlpha)],
                     highlightedFill: UIColor(rgb: 0xffffff, alpha: 0.35),
                     stroke: .clear,
                     shadow: nil,
@@ -539,7 +545,7 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
                     reactionActiveMediaPlaceholder: UIColor(rgb: 0x000000, alpha: 0.1)
                 ),
                 withoutWallpaper: PresentationThemeBubbleColorComponents(
-                    fill: [UIColor(rgb: 0x1D1D1D, alpha: incomingBubbleAlpha)],
+                    fill: [UIColor(rgb: 0x2c2c2c, alpha: incomingBubbleAlpha)],
                     highlightedFill: UIColor(rgb: 0xffffff, alpha: 0.35),
                     stroke: .clear,
                     shadow: nil,
@@ -555,14 +561,14 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
                     reactionActiveMediaPlaceholder: UIColor(rgb: 0x000000, alpha: 0.1)
                 )
             ),
-            primaryTextColor: UIColor(rgb: 0xffffff),
+            primaryTextColor: UIColor(rgb: 0xd6d6d6),
             secondaryTextColor: UIColor(rgb: 0xffffff, alpha: 0.5), linkTextColor: UIColor(rgb: 0xffffff), linkHighlightColor: UIColor(rgb: 0xffffff, alpha: 0.5), scamColor: UIColor(rgb: 0xeb5545), textHighlightColor: UIColor(rgb: 0xf5c038), accentTextColor: UIColor(rgb: 0xffffff), accentControlColor: UIColor(rgb: 0xffffff), accentControlDisabledColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaActiveControlColor: UIColor(rgb: 0xffffff), mediaInactiveControlColor: UIColor(rgb: 0xffffff, alpha: 0.4), mediaControlInnerBackgroundColor: UIColor(rgb: 0x262628), pendingActivityColor: UIColor(rgb: 0xffffff, alpha: 0.5), fileTitleColor: UIColor(rgb: 0xffffff), fileDescriptionColor: UIColor(rgb: 0xffffff, alpha: 0.5), fileDurationColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaPlaceholderColor: UIColor(rgb: 0x1f1f1f).mixedWith(UIColor(rgb: 0xffffff), alpha: 0.05), polls: PresentationThemeChatBubblePolls(radioButton: UIColor(rgb: 0x737373), radioProgress: UIColor(rgb: 0xffffff), highlight: UIColor(rgb: 0xffffff, alpha: 0.5), separator: UIColor(rgb: 0x000000), bar: UIColor(rgb: 0xffffff), barIconForeground: .clear, barPositive: UIColor(rgb: 0x00A700), barNegative: UIColor(rgb: 0xFE3824)), actionButtonsFillColor: PresentationThemeVariableColor(withWallpaper: UIColor(rgb: 0x000000, alpha: 0.5), withoutWallpaper: UIColor(rgb: 0x000000, alpha: 0.5)), actionButtonsStrokeColor: PresentationThemeVariableColor(color: UIColor(rgb: 0xb2b2b2, alpha: 0.18)), actionButtonsTextColor: PresentationThemeVariableColor(color: UIColor(rgb: 0xffffff)), textSelectionColor: UIColor(rgb: 0xffffff, alpha: 0.2), textSelectionKnobColor: UIColor(rgb: 0xffffff)
         ),
         outgoing: PresentationThemePartedColors(
             bubble: PresentationThemeBubbleColor(
                 withWallpaper: PresentationThemeBubbleColorComponents(
-                    fill: [UIColor(rgb: 0x61BCF9), UIColor(rgb: 0x0088ff)],
-                    highlightedFill: UIColor(rgb: 0x61BCF9),
+                    fill: [UIColor(rgb: 0x59b36a)],
+                    highlightedFill: UIColor(rgb: 0x50a15f),
                     stroke: .clear,
                     shadow: nil,
                     reactionInactiveBackground: UIColor(rgb: 0xffffff, alpha: 0.1),
@@ -577,8 +583,8 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
                     reactionActiveMediaPlaceholder: UIColor(rgb: 0x000000, alpha: 0.1)
                 ),
                 withoutWallpaper: PresentationThemeBubbleColorComponents(
-                    fill: [UIColor(rgb: 0x61BCF9), UIColor(rgb: 0x0088ff)],
-                    highlightedFill: UIColor(rgb: 0x61BCF9),
+                    fill: [UIColor(rgb: 0x59b36a)],
+                    highlightedFill: UIColor(rgb: 0x50a15f),
                     stroke: .clear,
                     shadow: nil,
                     reactionInactiveBackground: UIColor(rgb: 0xffffff, alpha: 0.1),
@@ -592,7 +598,7 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
                     reactionInactiveMediaPlaceholder: UIColor(rgb: 0x000000, alpha: 0.1),
                     reactionActiveMediaPlaceholder: UIColor(rgb: 0x000000, alpha: 0.1)
                 )
-            ), primaryTextColor: UIColor(rgb: 0xffffff), secondaryTextColor: UIColor(rgb: 0xffffff, alpha: 0.5), linkTextColor: UIColor(rgb: 0xffffff), linkHighlightColor: UIColor(rgb: 0xffffff, alpha: 0.5), scamColor: UIColor(rgb: 0xeb5545), textHighlightColor: UIColor(rgb: 0xf5c038), accentTextColor: UIColor(rgb: 0xffffff), accentControlColor: UIColor(rgb: 0xffffff), accentControlDisabledColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaActiveControlColor: UIColor(rgb: 0xffffff), mediaInactiveControlColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaControlInnerBackgroundColor:  UIColor(rgb: 0x313131), pendingActivityColor: UIColor(rgb: 0xffffff, alpha: 0.5), fileTitleColor: UIColor(rgb: 0xffffff), fileDescriptionColor: UIColor(rgb: 0xffffff, alpha: 0.5), fileDurationColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaPlaceholderColor: UIColor(rgb: 0xffffff, alpha: 0.2), polls: PresentationThemeChatBubblePolls(radioButton: UIColor(rgb: 0xffffff, alpha: 0.5), radioProgress: UIColor(rgb: 0xffffff), highlight: UIColor(rgb: 0xffffff).withAlphaComponent(0.12), separator: UIColor(rgb: 0xffffff, alpha: 0.5), bar: UIColor(rgb: 0xffffff), barIconForeground: .clear, barPositive: UIColor(rgb: 0xffffff), barNegative: UIColor(rgb: 0xffffff)), actionButtonsFillColor: PresentationThemeVariableColor(withWallpaper: UIColor(rgb: 0x000000, alpha: 0.5), withoutWallpaper: UIColor(rgb: 0x000000, alpha: 0.5)), actionButtonsStrokeColor: PresentationThemeVariableColor(color: UIColor(rgb: 0xb2b2b2, alpha: 0.18)), actionButtonsTextColor: PresentationThemeVariableColor(color: UIColor(rgb: 0xffffff)), textSelectionColor: UIColor(rgb: 0xffffff, alpha: 0.2), textSelectionKnobColor: UIColor(rgb: 0xffffff)
+            ), primaryTextColor: UIColor(rgb: 0x000000, alpha: 0.9), secondaryTextColor: UIColor(rgb: 0x000000, alpha: 0.5), linkTextColor: UIColor(rgb: 0x153b28), linkHighlightColor: UIColor(rgb: 0xffffff, alpha: 0.5), scamColor: UIColor(rgb: 0xeb5545), textHighlightColor: UIColor(rgb: 0xf5c038), accentTextColor: UIColor(rgb: 0xffffff), accentControlColor: UIColor(rgb: 0xffffff), accentControlDisabledColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaActiveControlColor: UIColor(rgb: 0xffffff), mediaInactiveControlColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaControlInnerBackgroundColor:  UIColor(rgb: 0x313131), pendingActivityColor: UIColor(rgb: 0xffffff, alpha: 0.5), fileTitleColor: UIColor(rgb: 0xffffff), fileDescriptionColor: UIColor(rgb: 0xffffff, alpha: 0.5), fileDurationColor: UIColor(rgb: 0xffffff, alpha: 0.5), mediaPlaceholderColor: UIColor(rgb: 0xffffff, alpha: 0.2), polls: PresentationThemeChatBubblePolls(radioButton: UIColor(rgb: 0xffffff, alpha: 0.5), radioProgress: UIColor(rgb: 0xffffff), highlight: UIColor(rgb: 0xffffff).withAlphaComponent(0.12), separator: UIColor(rgb: 0xffffff, alpha: 0.5), bar: UIColor(rgb: 0xffffff), barIconForeground: .clear, barPositive: UIColor(rgb: 0xffffff), barNegative: UIColor(rgb: 0xffffff)), actionButtonsFillColor: PresentationThemeVariableColor(withWallpaper: UIColor(rgb: 0x000000, alpha: 0.5), withoutWallpaper: UIColor(rgb: 0x000000, alpha: 0.5)), actionButtonsStrokeColor: PresentationThemeVariableColor(color: UIColor(rgb: 0xb2b2b2, alpha: 0.18)), actionButtonsTextColor: PresentationThemeVariableColor(color: UIColor(rgb: 0xffffff)), textSelectionColor: UIColor(rgb: 0xffffff, alpha: 0.2), textSelectionKnobColor: UIColor(rgb: 0xffffff)
         ),
         freeform: PresentationThemeBubbleColor(
             withWallpaper: PresentationThemeBubbleColorComponents(
@@ -727,10 +733,10 @@ public func makeDefaultDarkPresentationTheme(extendingThemeReference: Presentati
         badgeTextColor:  UIColor(rgb: 0x000000)
     )
 
-    let defaultPatternWallpaper: TelegramWallpaper = defaultBuiltinWallpaper(data: .default, colors: defaultDarkWallpaperGradientColors.map(\.rgb), intensity: -34)
-    
+    // WeChat's dark chat background is plain. Telegram's inverted pattern (negative intensity) also
+    // paints its purple gradient into the outgoing bubbles.
     let chat = PresentationThemeChat(
-        defaultWallpaper: defaultPatternWallpaper,
+        defaultWallpaper: .color(0x111111),
         animateMessageColors: false,
         message: message,
         serviceMessage: serviceMessage,

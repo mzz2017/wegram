@@ -45,7 +45,32 @@ public extension ToolbarTheme {
     }
 }
 
+/// WeChat's bar titles are PingFang Medium 17pt on every page with a bar (发现 IMG_2442, contact 设置 IMG_2446,
+/// chat IMG_2437), from ink weight against the system's own CJK cascade (`.PingFangUIDisplaySC`).
+public let wegramNavigationTitleFont: UIFont = .systemFont(ofSize: 17, weight: .medium)
+
+public struct WegramNavigationColors {
+    public let control: UIColor
+    public let background: UIColor
+    /// The unread pill beside a bar's `<`: 214 on 238 in IMG_2441 (Folded Chats), 44 on 19 in IMG_2437.
+    public let badge: UIColor
+
+    public init(isDark: Bool) {
+        self.control = UIColor(rgb: isDark ? 0xd0d0d0 : 0x181818)
+        self.background = UIColor(rgb: isDark ? 0x151515 : 0xeeeeee)
+        self.badge = UIColor(rgb: isDark ? 0x2c2c2c : 0xd6d6d6)
+    }
+}
+
 public extension NavigationBarTheme {
+    /// `contentTopInset`: measured on every WeChat screen with a bar (IMG_2437-2446): titles at 212-262px and
+    /// content from 301px, i.e. the 44pt row starts 7px (7/3pt) below the status bar.
+    convenience init(wegramTheme: PresentationTheme, hideBadge: Bool = false, nominalHeight: CGFloat = 44, contentTopInset: CGFloat = 7.0 / 3.0) {
+        let colors = WegramNavigationColors(isDark: wegramTheme.overallDarkAppearance)
+        self.init(overallDarkAppearance: wegramTheme.overallDarkAppearance, buttonColor: colors.control, disabledButtonColor: colors.control.withAlphaComponent(0.5), primaryTextColor: colors.control, backgroundColor: colors.background, opaqueBackgroundColor: colors.background, enableBackgroundBlur: false, separatorColor: .clear, badgeBackgroundColor: hideBadge ? .clear : colors.badge, badgeStrokeColor: .clear, badgeTextColor: hideBadge ? .clear : colors.control, edgeEffectColor: .clear, accentButtonColor: wegramTheme.list.itemCheckColors.fillColor, accentDisabledButtonColor: wegramTheme.chat.inputPanel.panelControlDisabledColor, accentForegroundColor: wegramTheme.list.itemCheckColors.foregroundColor, style: .legacy, nominalHeight: nominalHeight + contentTopInset, contentTopInset: contentTopInset, titleFont: wegramNavigationTitleFont)
+    }
+
+
     convenience init(rootControllerTheme: PresentationTheme, enableBackgroundBlur: Bool = true, hideBackground: Bool = false, hideBadge: Bool = false, hideSeparator: Bool = false, edgeEffectColor: UIColor? = nil, style: NavigationBar.Style = .legacy, glassStyle: NavigationBar.GlassStyle = .default) {
         let theme = rootControllerTheme.rootController.navigationBar
         
@@ -94,6 +119,14 @@ public extension NavigationBarPresentationData {
 }
 
 public extension ActionSheetControllerTheme {
+    convenience init(wegramTheme: PresentationTheme, fontSize: PresentationFontSize) {
+        let dark = wegramTheme.overallDarkAppearance
+        let text = UIColor(rgb: dark ? 0xd0d0d0 : 0x181818)
+        let background = UIColor(rgb: dark ? 0x202020 : 0xffffff)
+        let gap = UIColor(rgb: dark ? 0x191919 : 0xf7f7f7)
+        self.init(dimColor: UIColor(white: 0.0, alpha: 0.5), backgroundType: dark ? .dark : .light, itemBackgroundColor: background, itemHighlightedBackgroundColor: gap, standardActionTextColor: text, destructiveActionTextColor: UIColor(rgb: 0xfa5151), disabledActionTextColor: UIColor(rgb: dark ? 0x666666 : 0xb2b2b2), primaryTextColor: text, secondaryTextColor: dark ? UIColor(rgb: 0x999999) : wegramTheme.actionSheet.secondaryTextColor, controlAccentColor: UIColor(rgb: 0x07c160), controlColor: wegramTheme.list.disclosureArrowColor, switchFrameColor: wegramTheme.list.itemSwitchColors.frameColor, switchContentColor: wegramTheme.list.itemSwitchColors.contentColor, switchHandleColor: wegramTheme.list.itemSwitchColors.handleColor, baseFontSize: fontSize.baseDisplaySize, usesWegramLayout: true)
+    }
+
     convenience init(presentationData: PresentationData) {
         let presentationTheme = presentationData.theme
         

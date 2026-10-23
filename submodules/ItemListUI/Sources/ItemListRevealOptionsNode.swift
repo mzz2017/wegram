@@ -76,6 +76,11 @@ public struct ItemListRevealOption: Equatable {
 
 private let titleFont = Font.regular(11.0)
 private let iconlessTitleFont = Font.regular(13.0)
+private let flatTitleFont = Font.regular(16.0)
+
+// Measured from the user's WeChat chat list (IMG_2438/2439): 不显示 and 删除 are 80pt, 标为未读 is 92pt.
+private let flatMinimumWidth: CGFloat = 80.0
+private let flatTitleHorizontalPadding: CGFloat = 14.0
 
 private let spacing: CGFloat = 10.0
 private let edgeInset: CGFloat = 10.0
@@ -236,6 +241,9 @@ private final class ItemListRevealOptionNode: ASDisplayNode {
 
     private let enableAnimations: Bool
     private let displaysTitleInsidePill: Bool
+    private let usesFlatStyle: Bool
+    private(set) var flatWidth: CGFloat = 0.0
+    var activate: (() -> Void)?
 
     private var animationScale: CGFloat = 1.0
     private var animationNodeOffset: CGFloat = 0.0
@@ -262,7 +270,9 @@ private final class ItemListRevealOptionNode: ASDisplayNode {
         return titleWidth
     }
 
-    init(title: String, icon: ItemListRevealOptionIcon, color: UIColor, iconColor: UIColor, textColor: UIColor, enableAnimations: Bool) {
+    init(title: String, icon: ItemListRevealOptionIcon, color: UIColor, iconColor: UIColor, textColor: UIColor, enableAnimations: Bool, flatStyle: Bool = false) {
+        let icon: ItemListRevealOptionIcon = flatStyle ? .none : icon
+        self.usesFlatStyle = flatStyle
         self.contentContainerNode = ASDisplayNode()
         self.backgroundNode = ASDisplayNode()
         self.highlightNode = ASDisplayNode()
@@ -280,7 +290,11 @@ private final class ItemListRevealOptionNode: ASDisplayNode {
             displaysTitleInsidePill = false
         }
         self.displaysTitleInsidePill = displaysTitleInsidePill
-        self.titleNode.attributedText = NSAttributedString(string: title, font: displaysTitleInsidePill ? iconlessTitleFont : titleFont, textColor: displaysTitleInsidePill ? iconColor : textColor)
+        if flatStyle {
+            self.titleNode.attributedText = NSAttributedString(string: title, font: flatTitleFont, textColor: iconColor)
+        } else {
+            self.titleNode.attributedText = NSAttributedString(string: title, font: displaysTitleInsidePill ? iconlessTitleFont : titleFont, textColor: displaysTitleInsidePill ? iconColor : textColor)
+        }
 
         self.enableAnimations = enableAnimations
 
@@ -329,6 +343,48 @@ private final class ItemListRevealOptionNode: ASDisplayNode {
         }
         self.backgroundNode.backgroundColor = color
         self.highlightNode.backgroundColor = color.withMultipliedBrightnessBy(0.9)
+
+        if flatStyle {
+            self.clipsToBounds = true
+            let titleWidth = self.titleNode.updateLayout(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
+            self.flatWidth = max(flatMinimumWidth, ceil(titleWidth) + flatTitleHorizontalPadding * 2.0)
+        }
+
+        self.isAccessibilityElement = true
+        self.accessibilityLabel = title
+        self.accessibilityTraits = .button
+    }
+
+    override func accessibilityActivate() -> Bool {
+        guard let activate = self.activate else {
+            return false
+        }
+        activate()
+        return true
+    }
+
+    func updateFlatLayout(isLeft: Bool, isExpanded: Bool, transition: ContainedViewLayoutTransition) {
+        let bounds = CGRect(origin: CGPoint(), size: self.bounds.size)
+        transition.updateFrame(node: self.contentContainerNode, frame: bounds)
+        transition.updateFrame(node: self.backgroundNode, frame: bounds)
+        transition.updateFrame(node: self.highlightNode, frame: bounds)
+        self.contentContainerNode.alpha = 1.0
+        self.contentContainerNode.transform = CATransform3DIdentity
+
+        if self.isExpanded != isExpanded {
+            self.isExpanded = isExpanded
+        }
+        self.didApplyLayout = true
+
+        let titleSize = self.titleNode.updateLayout(CGSize(width: max(1.0, self.flatWidth - flatTitleHorizontalPadding), height: bounds.height))
+        let titleCenterX: CGFloat
+        if isExpanded {
+            titleCenterX = isLeft ? bounds.width - self.flatWidth / 2.0 : self.flatWidth / 2.0
+        } else {
+            titleCenterX = bounds.midX
+        }
+        let titleFrame = CGRect(origin: CGPoint(x: floorToScreenPixels(titleCenterX - titleSize.width / 2.0), y: floorToScreenPixels((bounds.height - titleSize.height) / 2.0)), size: titleSize)
+        transition.updateFrame(node: self.titleNode, frame: titleFrame)
     }
 
     deinit {
@@ -623,6 +679,9 @@ private final class ItemListRevealOptionNode: ASDisplayNode {
     }
 
     override func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
+        if self.usesFlatStyle {
+            return CGSize(width: self.flatWidth, height: constrainedSize.height)
+        }
         let metrics = ItemListRevealOptionLayoutMetrics.metrics(for: constrainedSize.height, hasVisualIcons: !self.displaysTitleInsidePill)
         return CGSize(width: metrics.slotWidth, height: constrainedSize.height)
     }
@@ -636,6 +695,7 @@ public final class ItemListRevealOptionsNode: ASDisplayNode {
 
     private var options: [ItemListRevealOption] = []
     private var isLeft: Bool = false
+    private var usesFlatStyle: Bool = false
 
     private var optionNodes: [ItemListRevealOptionNode] = []
     private var revealOffset: CGFloat = 0.0
@@ -685,16 +745,21 @@ public final class ItemListRevealOptionsNode: ASDisplayNode {
         self.view.addGestureRecognizer(gestureRecognizer)
     }
 
-    public func setOptions(_ options: [ItemListRevealOption], isLeft: Bool, enableAnimations: Bool) {
-        if self.options != options || self.isLeft != isLeft {
+    public func setOptions(_ options: [ItemListRevealOption], isLeft: Bool, enableAnimations: Bool, flatStyle: Bool = false) {
+        if self.options != options || self.isLeft != isLeft || self.usesFlatStyle != flatStyle {
             self.resetVisualRevealDistance(to: abs(self.revealOffset))
             self.options = options
             self.isLeft = isLeft
+            self.usesFlatStyle = flatStyle
             for node in self.optionNodes {
                 node.removeFromSupernode()
             }
             self.optionNodes = options.map { option in
-                return ItemListRevealOptionNode(title: option.title, icon: option.icon, color: option.color, iconColor: option.iconColor, textColor: option.textColor, enableAnimations: enableAnimations)
+                let node = ItemListRevealOptionNode(title: option.title, icon: option.icon, color: option.color, iconColor: option.iconColor, textColor: option.textColor, enableAnimations: enableAnimations, flatStyle: flatStyle)
+                node.activate = { [weak self] in
+                    self?.optionSelected(option)
+                }
+                return node
             }
             if isLeft {
                 for node in self.optionNodes.reversed() {
@@ -725,6 +790,12 @@ public final class ItemListRevealOptionsNode: ASDisplayNode {
     }
 
     override public func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
+        if self.usesFlatStyle {
+            for node in self.optionNodes {
+                let _ = node.measure(constrainedSize)
+            }
+            return CGSize(width: self.optionNodes.reduce(0.0, { $0 + $1.flatWidth }), height: constrainedSize.height)
+        }
         let metrics = self.layoutMetrics(for: constrainedSize)
         for node in self.optionNodes {
             let _ = node.measure(constrainedSize)
@@ -814,6 +885,10 @@ public final class ItemListRevealOptionsNode: ASDisplayNode {
     private func updateNodesLayout(transition: ContainedViewLayoutTransition) {
         let size = self.bounds.size
         if size.width.isLessThanOrEqualTo(0.0) || self.optionNodes.isEmpty {
+            return
+        }
+        if self.usesFlatStyle {
+            self.updateFlatNodesLayout(size: size, transition: transition)
             return
         }
         let metrics = self.layoutMetrics(for: size)
@@ -916,6 +991,53 @@ public final class ItemListRevealOptionsNode: ASDisplayNode {
             } else {
                 i += 1
             }
+        }
+    }
+
+    private func updateFlatNodesLayout(size: CGSize, transition: ContainedViewLayoutTransition) {
+        let revealedDistance = abs(self.revealOffset)
+        let edgeInset = abs(self.sideInset)
+        let totalWidth = max(1.0, self.optionNodes.reduce(0.0, { $0 + $1.flatWidth }))
+        let contentWidth = max(0.0, revealedDistance - edgeInset)
+        let factor = contentWidth / totalWidth
+        let overswipeDistance = max(0.0, revealedDistance - size.width)
+        let expandedActivationDistance = 50.0 * (expandedActivationWidthFactor - 1.0)
+        let primaryIndex = self.isLeft ? 0 : self.optionNodes.count - 1
+
+        let clippingFrameX: CGFloat = self.isLeft ? max(0.0, size.width - revealedDistance) : 0.0
+        transition.updateFrame(node: self.clippingContainerNode, frame: CGRect(origin: CGPoint(x: clippingFrameX, y: 0.0), size: CGSize(width: revealedDistance, height: size.height)))
+        transition.updateFrame(node: self.optionsContainerNode, frame: CGRect(origin: CGPoint(x: -clippingFrameX, y: 0.0), size: CGSize(width: max(size.width, revealedDistance), height: size.height)))
+
+        let contentMinX = self.isLeft ? size.width - contentWidth : 0.0
+        let revealedMinX = self.isLeft ? size.width - revealedDistance : 0.0
+        let revealedMaxX = self.isLeft ? size.width : revealedDistance
+
+        var offset: CGFloat = 0.0
+        for i in 0 ..< self.optionNodes.count {
+            let node = self.optionNodes[i]
+            let isPrimary = i == primaryIndex
+            // WeGram's right side ends in 删除 (as in WeChat), which must never fire from an overswipe.
+            let isExpanded = self.isLeft && isPrimary && overswipeDistance > expandedActivationDistance
+            if node.hasAppliedLayout && node.isExpanded != isExpanded && !transition.isAnimated {
+                self.tapticAction()
+            }
+
+            var minX = contentMinX + offset * factor
+            var maxX = minX + node.flatWidth * factor
+            offset += node.flatWidth
+            if isExpanded {
+                minX = revealedMinX
+                maxX = revealedMaxX
+            } else if isPrimary {
+                if self.isLeft {
+                    minX = revealedMinX
+                } else {
+                    maxX = revealedMaxX
+                }
+            }
+            let nodeFrame = CGRect(origin: CGPoint(x: floorToScreenPixels(minX), y: 0.0), size: CGSize(width: max(0.0, floorToScreenPixels(maxX) - floorToScreenPixels(minX)), height: size.height))
+            transition.updateFrame(node: node, frame: nodeFrame)
+            node.updateFlatLayout(isLeft: self.isLeft, isExpanded: isExpanded, transition: transition)
         }
     }
 

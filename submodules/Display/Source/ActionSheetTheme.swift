@@ -7,6 +7,7 @@ public enum ActionSheetControllerThemeBackgroundType {
 }
 
 public final class ActionSheetControllerTheme: Equatable {
+    public let usesWegramLayout: Bool
     public let dimColor: UIColor
     public let backgroundType: ActionSheetControllerThemeBackgroundType
     public let itemBackgroundColor: UIColor
@@ -23,7 +24,8 @@ public final class ActionSheetControllerTheme: Equatable {
     public let switchHandleColor: UIColor
     public let baseFontSize: CGFloat
     
-    public init(dimColor: UIColor, backgroundType: ActionSheetControllerThemeBackgroundType, itemBackgroundColor: UIColor, itemHighlightedBackgroundColor: UIColor, standardActionTextColor: UIColor, destructiveActionTextColor: UIColor, disabledActionTextColor: UIColor, primaryTextColor: UIColor, secondaryTextColor: UIColor, controlAccentColor: UIColor, controlColor: UIColor, switchFrameColor: UIColor, switchContentColor: UIColor, switchHandleColor: UIColor, baseFontSize: CGFloat) {
+    public init(dimColor: UIColor, backgroundType: ActionSheetControllerThemeBackgroundType, itemBackgroundColor: UIColor, itemHighlightedBackgroundColor: UIColor, standardActionTextColor: UIColor, destructiveActionTextColor: UIColor, disabledActionTextColor: UIColor, primaryTextColor: UIColor, secondaryTextColor: UIColor, controlAccentColor: UIColor, controlColor: UIColor, switchFrameColor: UIColor, switchContentColor: UIColor, switchHandleColor: UIColor, baseFontSize: CGFloat, usesWegramLayout: Bool = false) {
+        self.usesWegramLayout = usesWegramLayout
         self.dimColor = dimColor
         self.backgroundType = backgroundType
         self.itemBackgroundColor = itemBackgroundColor
@@ -42,6 +44,7 @@ public final class ActionSheetControllerTheme: Equatable {
     }
     
     public static func ==(lhs: ActionSheetControllerTheme, rhs: ActionSheetControllerTheme) -> Bool {
+        if lhs.usesWegramLayout != rhs.usesWegramLayout { return false }
         if lhs.dimColor != rhs.dimColor {
             return false
         }

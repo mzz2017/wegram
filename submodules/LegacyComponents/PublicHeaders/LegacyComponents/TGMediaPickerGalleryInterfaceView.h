@@ -10,6 +10,8 @@
 @class TGMediaEditingContext;
 @class TGMediaPickerGallerySelectedItemsModel;
 
+FOUNDATION_EXPORT NSString *TGMediaPickerGalleryPositionText(NSArray *items, id focusedItem);
+
 @interface TGMediaPickerGalleryInterfaceView : UIView <TGModernGalleryInterfaceView>
 
 @property (nonatomic, copy) void (^captionSet)(id<TGModernGalleryItem>, NSAttributedString *);
@@ -17,6 +19,7 @@
 @property (nonatomic, copy) void (^doneLongPressed)(id<TGModernGalleryItem>, UIView *);
 
 @property (nonatomic, copy) void (^photoStripItemSelected)(NSInteger index);
+@property (nonatomic, copy) NSString *(^galleryPosition)(id<TGModernGalleryItem> item);
 
 @property (nonatomic, copy) void (^timerRequested)(void);
 
@@ -26,6 +29,11 @@
 @property (nonatomic, assign) bool onlyCrop;
 @property (nonatomic, assign) bool inhibitDocumentCaptions;
 @property (nonatomic, assign) bool usesSimpleLayout;
+@property (nonatomic, assign) bool usesWegramAppearance;
+@property (nonatomic, assign) bool hidesSelectionCounterWhenClosed;
+@property (nonatomic, assign) bool hidesWegramCaptionPanel;
+@property (nonatomic, strong) UIView *wegramMergeView;
+@property (nonatomic, copy) void (^updateWegramMergeView)(void);
 @property (nonatomic, assign) bool hasSwipeGesture;
 @property (nonatomic, assign) bool usesFadeOutForDismissal;
 @property (nonatomic, assign) bool inhibitMute;
@@ -43,6 +51,8 @@
 - (void)setEditorTabPressed:(void (^)(TGPhotoEditorTab tab))editorTabPressed;
 
 - (void)setThumbnailSignalForItem:(SSignal *(^)(id))thumbnailSignalForItem;
+
+- (void)toggleSelectedPhotosFromMenu;
 
 - (void)updateSelectionInterface:(NSUInteger)selectedCount counterVisible:(bool)counterVisible animated:(bool)animated;
 - (void)updateSelectedPhotosView:(bool)reload incremental:(bool)incremental add:(bool)add index:(NSInteger)index;

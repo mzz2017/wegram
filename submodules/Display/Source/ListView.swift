@@ -4003,10 +4003,12 @@ open class ListViewImpl: ASDisplayNode, ListView, ASScrollViewDelegate, ASGestur
             let naturalY: CGFloat
             var stickLocationDistanceFactor: CGFloat = 0.0
             var stickLocationDistance: CGFloat
+            var stickPushDistance: CGFloat = 0.0
             switch item.stickDirection {
             case .top:
                 naturalY = lowerBound
                 if item.isSticky {
+                    stickPushDistance = max(0.0, max(upperDisplayBound, upperBound) - (lowerBound - itemHeaderHeight))
                     headerFrame = CGRect(origin: CGPoint(x: 0.0, y: min(max(upperDisplayBound, upperBound), lowerBound - itemHeaderHeight)), size: CGSize(width: self.visibleSize.width, height: itemHeaderHeight))
                 } else {
                     headerFrame = CGRect(origin: CGPoint(x: 0.0, y: min(upperBound, lowerBound - itemHeaderHeight)), size: CGSize(width: self.visibleSize.width, height: itemHeaderHeight))
@@ -4020,7 +4022,7 @@ open class ListViewImpl: ASDisplayNode, ListView, ASScrollViewDelegate, ASGestur
                 stickLocationDistanceFactor = max(0.0, min(1.0, stickLocationDistance / itemHeaderHeight))
             case .bottom:
                 naturalY = lowerBound
-                headerFrame = CGRect(origin: CGPoint(x: 0.0, y: max(upperBound, min(lowerBound, lowerDisplayBound) - itemHeaderHeight)), size: CGSize(width: self.visibleSize.width, height: itemHeaderHeight))
+                headerFrame = CGRect(origin: CGPoint(x: 0.0, y: ListViewHeaderGeometry.bottomOriginY(upperBound: upperBound, lowerBound: lowerBound, displayBound: lowerDisplayBound, height: itemHeaderHeight, isSticky: item.isSticky)), size: CGSize(width: self.visibleSize.width, height: itemHeaderHeight))
                 stickLocationDistance = lowerBound - headerFrame.maxY
                 stickLocationDistanceFactor = max(0.0, min(1.0, stickLocationDistance / itemHeaderHeight))
                 
@@ -4143,6 +4145,7 @@ open class ListViewImpl: ASDisplayNode, ListView, ASScrollViewDelegate, ASGestur
                     }
                 }
                 headerNode.updateStickDistanceFactor(stickLocationDistanceFactor, distance: stickLocationDistance, transition: transition.0)
+                headerNode.updateStickPushDistance(stickPushDistance)
             } else {
                 headerNode = item.node(synchronousLoad: synchronousLoad)
                 headerNode.alpha = initialHeaderNodeAlpha
@@ -4183,6 +4186,7 @@ open class ListViewImpl: ASDisplayNode, ListView, ASScrollViewDelegate, ASGestur
                     headerNode.animateAdded(duration: 0.2)
                 }
                 headerNode.updateStickDistanceFactor(stickLocationDistanceFactor, distance: stickLocationDistance, transition: .immediate)
+                headerNode.updateStickPushDistance(stickPushDistance)
             }
             
             if headerNode.contributesToEdgeEffect && stickLocationDistance > 0.0 {

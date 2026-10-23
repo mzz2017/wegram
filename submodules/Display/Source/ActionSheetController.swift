@@ -23,6 +23,7 @@ open class ActionSheetController: ViewController, PresentableController, Standal
     
     private var isDismissed: Bool = false
     
+    public var willDismiss: (() -> Void)?
     public var dismissed: ((Bool) -> Void)?
     
     private var allowInputInset: Bool
@@ -51,6 +52,9 @@ open class ActionSheetController: ViewController, PresentableController, Standal
     open override func loadDisplayNode() {
         self.displayNode = ActionSheetControllerNode(theme: self.theme, allowInputInset: self.allowInputInset)
         self.displayNodeDidLoad()
+        self.actionSheetNode.willDismiss = { [weak self] in
+            self?.willDismiss?()
+        }
         
         self.actionSheetNode.dismiss = { [weak self] cancelled in
             self?.dismissed?(cancelled)

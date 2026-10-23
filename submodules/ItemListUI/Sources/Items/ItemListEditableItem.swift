@@ -65,6 +65,7 @@ open class ItemListRevealOptionsItemNode: ListViewItemNode, ASGestureRecognizerD
     private var rightRevealNode: ItemListRevealOptionsNode?
     private var revealOptions: (left: [ItemListRevealOption], right: [ItemListRevealOption]) = ([], [])
     private var enableAnimations: Bool = true
+    public var revealOptionsUseFlatStyle: Bool = false
     
     private var initialRevealOffset: CGFloat = 0.0
     private var hasActiveRevealGestureOffset: Bool = false
@@ -505,7 +506,7 @@ open class ItemListRevealOptionsItemNode: ListViewItemNode, ASGestureRecognizerD
             }, tapticAction: { [weak self] in
                 self?.hapticImpact()
             })
-            revealNode.setOptions(self.revealOptions.left, isLeft: true, enableAnimations: self.enableAnimations)
+            revealNode.setOptions(self.revealOptions.left, isLeft: true, enableAnimations: self.enableAnimations, flatStyle: self.revealOptionsUseFlatStyle)
             self.leftRevealNode = revealNode
             
             if let (size, leftInset, _) = self.validLayout {
@@ -527,7 +528,7 @@ open class ItemListRevealOptionsItemNode: ListViewItemNode, ASGestureRecognizerD
             }, tapticAction: { [weak self] in
                 self?.hapticImpact()
             })
-            revealNode.setOptions(self.revealOptions.right, isLeft: false, enableAnimations: self.enableAnimations)
+            revealNode.setOptions(self.revealOptions.right, isLeft: false, enableAnimations: self.enableAnimations, flatStyle: self.revealOptionsUseFlatStyle)
             self.rightRevealNode = revealNode
             
             if let (size, _, rightInset) = self.validLayout {

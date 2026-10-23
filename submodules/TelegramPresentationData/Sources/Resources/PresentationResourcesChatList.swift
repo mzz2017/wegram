@@ -187,6 +187,13 @@ public struct PresentationResourcesChatList {
         })
     }
     
+    // WeChat draws every unread avatar badge in the same red, whatever the theme accent.
+    public static func wegramBadgeBackground(_ theme: PresentationTheme, diameter: CGFloat) -> UIImage? {
+        return theme.image(PresentationResourceParameterKey.chatListWegramBadgeBackground(diameter), { _ in
+            return generateFilledCircleImage(diameter: diameter, color: UIColor(rgb: 0xfa5151))?.stretchableImage(withLeftCapWidth: Int(diameter / 2.0), topCapHeight: Int(diameter / 2.0))
+        })
+    }
+
     public static func badgeBackgroundActiveProvisional(_ theme: PresentationTheme, diameter: CGFloat) -> UIImage? {
         return theme.image(PresentationResourceParameterKey.chatListBadgeBackgroundActiveProvisional(diameter), { theme in
             return generateBadgeBackgroundImage(theme: theme, diameter: diameter, active: true, reaction: false, provisional: true)

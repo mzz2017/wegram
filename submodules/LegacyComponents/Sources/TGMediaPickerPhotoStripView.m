@@ -104,6 +104,45 @@
     return self;
 }
 
+- (void)setUsesWegramAppearance:(bool)usesWegramAppearance
+{
+    if (_usesWegramAppearance == usesWegramAppearance)
+        return;
+    _usesWegramAppearance = usesWegramAppearance;
+    _wrapperView.backgroundColor = usesWegramAppearance ? UIColorRGB(0x333333) : UIColor.clearColor;
+    _effectView.hidden = usesWegramAppearance;
+    _backgroundView.hidden = usesWegramAppearance;
+    _collectionViewLayout.itemSize = usesWegramAppearance ? CGSizeMake(64, 64) : TGPhotoThumbnailSizeForCurrentScreen();
+    _collectionViewLayout.minimumInteritemSpacing = usesWegramAppearance ? 12 : 4;
+    _collectionViewLayout.minimumLineSpacing = usesWegramAppearance ? 12 : 4;
+    _collectionView.contentInset = usesWegramAppearance ? UIEdgeInsetsZero : UIEdgeInsetsMake(0, 4, 0, 4);
+    [_collectionViewLayout invalidateLayout];
+    [self reloadData];
+}
+
+- (void)setFocusedItemIdentifier:(NSString *)focusedItemIdentifier
+{
+    _focusedItemIdentifier = [focusedItemIdentifier copy];
+    if (!_usesWegramAppearance)
+        return;
+    [_collectionView layoutIfNeeded];
+    for (NSIndexPath *indexPath in _collectionView.indexPathsForVisibleItems)
+    {
+        TGMediaPickerPhotoStripCell *cell = (TGMediaPickerPhotoStripCell *)[_collectionView cellForItemAtIndexPath:indexPath];
+        if (indexPath.row < _selectedItemsModel.items.count)
+            cell.previewFocused = [[_selectedItemsModel.items[indexPath.row] uniqueIdentifier] isEqualToString:focusedItemIdentifier];
+    }
+    NSUInteger index = [_selectedItemsModel.items indexOfObjectPassingTest:^BOOL(id<TGMediaSelectableItem> item, NSUInteger __unused idx, BOOL *__unused stop) {
+        return [item.uniqueIdentifier isEqualToString:focusedItemIdentifier];
+    }];
+    if (index != NSNotFound && index < (NSUInteger)[_collectionView numberOfItemsInSection:0] && !self.isInternalHidden && _collectionView.bounds.size.width > 0)
+    {
+        UICollectionViewLayoutAttributes *attributes = [_collectionViewLayout layoutAttributesForItemAtIndexPath:[NSIndexPath indexPathForItem:index inSection:0]];
+        if (attributes != nil)
+            [_collectionView scrollRectToVisible:CGRectInset(attributes.frame, -16, -16) animated:false];
+    }
+}
+
 - (void)dealloc
 {
     _collectionView.dataSource = nil;
@@ -120,6 +159,15 @@
 
 - (void)insertItemAtIndex:(NSInteger)index
 {
+    if (_usesWegramAppearance)
+    {
+        // The full-width strip keeps focus stable instead of using the legacy trailing bubble offset.
+        [self reloadData];
+        [_collectionView layoutIfNeeded];
+        self.focusedItemIdentifier = _focusedItemIdentifier;
+        return;
+    }
+
     void (^updateLayout)(void) = ^
     {
         [UIView animateWithDuration:0.3f
@@ -165,6 +213,15 @@
 
 - (void)deleteItemAtIndex:(NSInteger)index
 {
+    if (_usesWegramAppearance)
+    {
+        // The full-width strip keeps focus stable instead of using the legacy trailing bubble offset.
+        [self reloadData];
+        [_collectionView layoutIfNeeded];
+        self.focusedItemIdentifier = _focusedItemIdentifier;
+        return;
+    }
+
     NSInteger collectionItemsCount = [_collectionView numberOfItemsInSection:0];
     NSInteger modelItemsCount = self.selectedItemsModel.totalCount;
     bool validBatchUpdate = modelItemsCount == collectionItemsCount - 1 && index >= 0 && index < collectionItemsCount;
@@ -335,12 +392,17 @@
     TGMediaPickerPhotoStripCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:TGMediaPickerPhotoStripCellKind forIndexPath:indexPath];
     cell.selectionContext = self.selectionContext;
     cell.editingContext = self.editingContext;
+    cell.usesWegramAppearance = _usesWegramAppearance;
  
     id item = nil;
     if (indexPath.row < _selectedItemsModel.items.count) {
         item = _selectedItemsModel.items[indexPath.row];
     }
     
+    cell.previewFocused = _usesWegramAppearance && [[item uniqueIdentifier] isEqualToString:_focusedItemIdentifier];
+    cell.isAccessibilityElement = _usesWegramAppearance;
+    if (_usesWegramAppearance)
+        cell.accessibilityLabel = [NSString stringWithFormat:@"%ld / %ld", (long)indexPath.row + 1, (long)_selectedItemsModel.totalCount];
     if (item != nil) {
         cell.itemSelected = ^(id<TGMediaSelectableItem> item, bool selected, __unused id sender)
         {
@@ -359,7 +421,7 @@
             if (strongSelf.itemRemoved != nil)
                 strongSelf.itemRemoved([strongSelf->_selectedItemsModel.items indexOfObject:item]);
         };
-        [cell setItem:item signal:self.thumbnailSignalForItem(item) removable:self.removable];
+        [cell setItem:item signal:self.thumbnailSignalForItem != nil ? self.thumbnailSignalForItem(item) : nil removable:self.removable];
     }
     
     return cell;
@@ -367,6 +429,8 @@
 
 - (void)collectionView:(UICollectionView *)__unused collectionView didSelectItemAtIndexPath:(NSIndexPath *)indexPath
 {
+    if (indexPath.row >= _selectedItemsModel.totalCount || self.isInternalHidden)
+        return;
     if (self.itemSelected != nil)
         self.itemSelected(indexPath.row);
     
@@ -402,11 +466,13 @@
 
 - (UIEdgeInsets)collectionView:(UICollectionView *)__unused collectionView layout:(UICollectionViewLayout*)__unused collectionViewLayout insetForSectionAtIndex:(NSInteger)__unused section
 {
-    return UIEdgeInsetsMake(40, 40, 40, 40);
+    return _usesWegramAppearance ? UIEdgeInsetsMake(16, 16, 16, 16) : UIEdgeInsetsMake(40, 40, 40, 40);
 }
 
 - (void)scrollViewDidScroll:(UIScrollView *)__unused scrollView
 {
+    if (_usesWegramAppearance)
+        return;
     UIView *backgroundView = iosMajorVersion() >= 8 ? _effectView : _backgroundView;
     
     if (_collectionViewLayout.scrollDirection == UICollectionViewScrollDirectionHorizontal)
@@ -516,6 +582,14 @@
 
 - (void)_layoutCollectionViewForOrientation:(UIInterfaceOrientation)orientation
 {
+    if (_usesWegramAppearance)
+    {
+        _maskView.frame = self.bounds;
+        _collectionView.frame = _maskView.bounds;
+        if (self.hidden)
+            [self setHidden:true animated:false];
+        return;
+    }
     NSInteger numberOfItems = MAX(1, [self collectionView:_collectionView numberOfItemsInSection:0]);
     CGFloat size = 0.0f;
     

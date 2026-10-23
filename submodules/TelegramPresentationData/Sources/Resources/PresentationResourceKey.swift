@@ -398,6 +398,7 @@ public enum PresentationResourceParameterKey: Hashable {
     case chatFreePartialCheck(CGFloat, Bool)
     
     case chatListBadgeBackgroundActive(CGFloat)
+    case chatListWegramBadgeBackground(CGFloat)
     case chatListBadgeBackgroundActiveProvisional(CGFloat)
     case chatListBadgeBackgroundInactive(CGFloat)
     case chatListBadgeBackgroundInactiveProvisional(CGFloat)

@@ -5,14 +5,18 @@ import TelegramCore
 public struct ChatArchiveSettings: Equatable, Codable {
     public var isHiddenByDefault: Bool
     public var hiddenPsaPeerId: EnginePeer.Id?
+    /// WeGram: the newest folded message when the Folded Chats page was last opened. The Folded Chats
+    /// row sorts at this time rather than rising with every new folded message, as WeChat's does.
+    public var wegramFoldedChatsTimestamp: Int32?
     
     public static var `default`: ChatArchiveSettings {
         return ChatArchiveSettings(isHiddenByDefault: false, hiddenPsaPeerId: nil)
     }
     
-    public init(isHiddenByDefault: Bool, hiddenPsaPeerId: EnginePeer.Id?) {
+    public init(isHiddenByDefault: Bool, hiddenPsaPeerId: EnginePeer.Id?, wegramFoldedChatsTimestamp: Int32? = nil) {
         self.isHiddenByDefault = isHiddenByDefault
         self.hiddenPsaPeerId = hiddenPsaPeerId
+        self.wegramFoldedChatsTimestamp = wegramFoldedChatsTimestamp
     }
     
     public init(from decoder: Decoder) throws {
@@ -20,6 +24,7 @@ public struct ChatArchiveSettings: Equatable, Codable {
 
         self.isHiddenByDefault = (try container.decode(Int32.self, forKey: "isHiddenByDefault")) != 0
         self.hiddenPsaPeerId = (try container.decodeIfPresent(Int64.self, forKey: "hiddenPsaPeerId")).flatMap(EnginePeer.Id.init)
+        self.wegramFoldedChatsTimestamp = try container.decodeIfPresent(Int32.self, forKey: "wegramFoldedChatsTimestamp")
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -31,6 +36,7 @@ public struct ChatArchiveSettings: Equatable, Codable {
         } else {
             try container.encodeNil(forKey: "hiddenPsaPeerId")
         }
+        try container.encodeIfPresent(self.wegramFoldedChatsTimestamp, forKey: "wegramFoldedChatsTimestamp")
     }
 }
 

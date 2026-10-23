@@ -79,6 +79,10 @@ public final class ChatPresentationData {
             isPreview: self.isPreview
         )
     }
+
+    public func withChatBubbleCorners(_ corners: PresentationChatBubbleCorners) -> ChatPresentationData {
+        return ChatPresentationData(theme: self.theme, fontSize: self.fontSize, strings: self.strings, dateTimeFormat: self.dateTimeFormat, nameDisplayOrder: self.nameDisplayOrder, disableAnimations: self.disableAnimations, largeEmoji: self.largeEmoji, chatBubbleCorners: corners, animatedEmojiScale: self.animatedEmojiScale, isPreview: self.isPreview)
+    }
 }
 
 extension ChatPresentationData {

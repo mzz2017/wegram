@@ -79,9 +79,9 @@ func mediaBubbleCornerImage(incoming: Bool, radius: CGFloat, inset: CGFloat) -> 
     return formContext.generateImage()!
 }
 
-public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloat, incoming: Bool, fillColor: UIColor, strokeColor: UIColor, neighbors: MessageBubbleImageNeighbors, theme: PresentationThemeChat, wallpaper: TelegramWallpaper, knockout knockoutValue: Bool, mask: Bool = false, extendedEdges: Bool = false, onlyOutline: Bool = false, onlyShadow: Bool = false, alwaysFillColor: Bool = false) -> UIImage {
+public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloat, incoming: Bool, fillColor: UIColor, strokeColor: UIColor, neighbors: MessageBubbleImageNeighbors, theme: PresentationThemeChat, wallpaper: TelegramWallpaper, knockout knockoutValue: Bool, mask: Bool = false, extendedEdges: Bool = false, onlyOutline: Bool = false, onlyShadow: Bool = false, alwaysFillColor: Bool = false, usesWegramShape: Bool = false) -> UIImage {
     let bubbleColors = incoming ? theme.message.incoming : theme.message.outgoing
-    return messageBubbleImage(maxCornerRadius: maxCornerRadius, minCornerRadius: minCornerRadius, incoming: incoming, fillColor: fillColor, strokeColor: strokeColor, neighbors: neighbors, shadow: bubbleColors.bubble.withWallpaper.shadow, wallpaper: wallpaper, knockout: knockoutValue, mask: mask, extendedEdges: extendedEdges, onlyOutline: onlyOutline, onlyShadow: onlyShadow, alwaysFillColor: alwaysFillColor)
+    return messageBubbleImage(maxCornerRadius: maxCornerRadius, minCornerRadius: minCornerRadius, incoming: incoming, fillColor: fillColor, strokeColor: strokeColor, neighbors: neighbors, shadow: bubbleColors.bubble.withWallpaper.shadow, wallpaper: wallpaper, knockout: knockoutValue, mask: mask, extendedEdges: extendedEdges, onlyOutline: onlyOutline, onlyShadow: onlyShadow, alwaysFillColor: alwaysFillColor, usesWegramShape: usesWegramShape)
 }
 
 public func messageBubbleArguments(maxCornerRadius: CGFloat, minCornerRadius: CGFloat, incoming: Bool, neighbors: MessageBubbleImageNeighbors) -> (topLeftRadius: CGFloat, topRightRadius: CGFloat, bottomLeftRadius: CGFloat, bottomRightRadius: CGFloat, drawTail: Bool) {
@@ -143,7 +143,7 @@ public func messageBubbleArguments(maxCornerRadius: CGFloat, minCornerRadius: CG
     return (topLeftRadius, topRightRadius, bottomLeftRadius, bottomRightRadius, drawTail)
 }
 
-public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloat, incoming: Bool, fillColor: UIColor, strokeColor: UIColor, neighbors: MessageBubbleImageNeighbors, shadow: PresentationThemeBubbleShadow?, wallpaper: TelegramWallpaper, knockout knockoutValue: Bool, mask: Bool = false, extendedEdges: Bool = false, onlyOutline: Bool = false, onlyShadow: Bool = false, alwaysFillColor: Bool = false) -> UIImage {
+public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloat, incoming: Bool, fillColor: UIColor, strokeColor: UIColor, neighbors: MessageBubbleImageNeighbors, shadow: PresentationThemeBubbleShadow?, wallpaper: TelegramWallpaper, knockout knockoutValue: Bool, mask: Bool = false, extendedEdges: Bool = false, onlyOutline: Bool = false, onlyShadow: Bool = false, alwaysFillColor: Bool = false, usesWegramShape: Bool = false) -> UIImage {
     let topLeftRadius: CGFloat
     let topRightRadius: CGFloat
     let bottomLeftRadius: CGFloat
@@ -192,10 +192,10 @@ public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloa
     let fixedMainDiameter: CGFloat = 33.0
     let innerSize = CGSize(width: fixedMainDiameter + 6.0, height: fixedMainDiameter)
     let strokeInset: CGFloat = 1.0
-    let sourceRawSize = CGSize(width: innerSize.width + strokeInset * 2.0, height: innerSize.height + strokeInset * 2.0)
+    let sourceRawSize = usesWegramShape ? WegramBubbleGeometry.sourceSize : CGSize(width: innerSize.width + strokeInset * 2.0, height: innerSize.height + strokeInset * 2.0)
     let additionalInset: CGFloat = onlyShadow ? 10.0 : 1.0
     let imageSize = CGSize(width: sourceRawSize.width + additionalInset * 2.0, height: sourceRawSize.height + additionalInset * 2.0)
-    let outgoingStretchPoint: (x: Int, y: Int) = (Int(additionalInset + strokeInset + round(fixedMainDiameter / 2.0)) - 1, Int(additionalInset + strokeInset + round(fixedMainDiameter / 2.0)))
+    let outgoingStretchPoint: (x: Int, y: Int) = usesWegramShape ? (Int(additionalInset + WegramBubbleGeometry.stretchPoint.x), Int(additionalInset + WegramBubbleGeometry.stretchPoint.y)) : (Int(additionalInset + strokeInset + round(fixedMainDiameter / 2.0)) - 1, Int(additionalInset + strokeInset + round(fixedMainDiameter / 2.0)))
     let incomingStretchPoint: (x: Int, y: Int) = (Int(sourceRawSize.width) - outgoingStretchPoint.x + Int(additionalInset), outgoingStretchPoint.y)
     
     let knockout = knockoutValue && !mask
@@ -208,6 +208,14 @@ public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloa
     let formContext = DrawingContext(size: imageSize)!
     formContext.withFlippedContext { context in
         context.clear(CGRect(origin: CGPoint(), size: rawSize))
+        if usesWegramShape {
+            let showsTail: Bool
+            if case .extracted = neighbors { showsTail = false } else { showsTail = true }
+            context.addPath(WegramBubbleGeometry.path(in: CGRect(origin: CGPoint(x: additionalInset, y: additionalInset), size: sourceRawSize), incoming: false, showsTail: showsTail))
+            context.setFillColor(UIColor.black.cgColor)
+            context.fillPath()
+            return
+        }
         context.translateBy(x: additionalInset + strokeInset, y: additionalInset + strokeInset)
         
         context.setFillColor(UIColor.black.cgColor)
@@ -243,6 +251,15 @@ public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloa
     let outlineContext = DrawingContext(size: imageSize)!
     outlineContext.withFlippedContext { context in
         context.clear(CGRect(origin: CGPoint(), size: rawSize))
+        if usesWegramShape {
+            let showsTail: Bool
+            if case .extracted = neighbors { showsTail = false } else { showsTail = true }
+            context.addPath(WegramBubbleGeometry.path(in: CGRect(origin: CGPoint(x: additionalInset, y: additionalInset), size: sourceRawSize), incoming: false, showsTail: showsTail))
+            context.setStrokeColor(UIColor.black.cgColor)
+            context.setLineWidth(UIScreenPixel)
+            context.strokePath()
+            return
+        }
         context.translateBy(x: additionalInset + strokeInset, y: additionalInset + strokeInset)
         
         context.setStrokeColor(UIColor.black.cgColor)
@@ -363,7 +380,7 @@ public func messageBubbleImage(maxCornerRadius: CGFloat, minCornerRadius: CGFloa
         if onlyShadow {
             context.clear(CGRect(origin: CGPoint(), size: rawSize))
             
-            if let shadow = shadow {
+            if !usesWegramShape, let shadow = shadow {
                 context.translateBy(x: rawSize.width / 2.0, y: rawSize.height / 2.0)
                 context.scaleBy(x: incoming ? -1.0 : 1.0, y: -1.0)
                 context.translateBy(x: -rawSize.width / 2.0, y: -rawSize.height / 2.0)

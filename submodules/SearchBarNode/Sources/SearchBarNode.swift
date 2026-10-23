@@ -1012,6 +1012,9 @@ public class SearchBarNode: ASDisplayNode, UITextFieldDelegate {
     private var validLayout: (CGSize, CGFloat, CGFloat)?
     
     public let fieldStyle: SearchBarStyle
+    public let usesWegramAppearance: Bool
+    private let wegramContentBackground: Bool
+    private weak var wegramSourcePlaceholder: SearchBarPlaceholderNode?
     private let forceSeparator: Bool
     private var theme: SearchBarNodeTheme?
     private var presentationTheme: PresentationTheme
@@ -1021,11 +1024,13 @@ public class SearchBarNode: ASDisplayNode, UITextFieldDelegate {
     
     private var isAnimatingOut: Bool = false
     
-    public init(theme: SearchBarNodeTheme, presentationTheme: PresentationTheme, preferClearGlass: Bool = false, strings: PresentationStrings, fieldStyle: SearchBarStyle = .legacy, icon: Icon = .loupe, forceSeparator: Bool = false, displayBackground: Bool = true, cancelText: String? = nil, hasOwnGlassContainer: Bool = true) {
+    public init(theme: SearchBarNodeTheme, presentationTheme: PresentationTheme, preferClearGlass: Bool = false, strings: PresentationStrings, fieldStyle: SearchBarStyle = .legacy, icon: Icon = .loupe, forceSeparator: Bool = false, displayBackground: Bool = true, cancelText: String? = nil, hasOwnGlassContainer: Bool = true, usesWegramAppearance: Bool = false, wegramContentBackground: Bool = false) {
         self.presentationTheme = presentationTheme
         self.preferClearGlass = preferClearGlass
         
-        self.fieldStyle = fieldStyle
+        self.usesWegramAppearance = usesWegramAppearance
+        self.wegramContentBackground = wegramContentBackground
+        self.fieldStyle = usesWegramAppearance ? .modern : fieldStyle
         self.forceSeparator = forceSeparator
         self.cancelText = cancelText
         self.icon = icon
@@ -1049,7 +1054,7 @@ public class SearchBarNode: ASDisplayNode, UITextFieldDelegate {
         self.iconNode.displaysAsynchronously = false
         self.iconNode.displayWithoutProcessing = true
         
-        self.textField = SearchBarTextField(theme: theme, style: fieldStyle)
+        self.textField = SearchBarTextField(theme: theme, style: self.fieldStyle)
         self.textField.accessibilityTraits = .searchField
         self.textField.autocorrectionType = .no
         self.textField.returnKeyType = .search
@@ -1147,6 +1152,23 @@ public class SearchBarNode: ASDisplayNode, UITextFieldDelegate {
             }
         }
         
+        if self.usesWegramAppearance {
+            self.backgroundNode.isHidden = true
+            self.separatorNode.isHidden = true
+            self.backgroundColor = UIColor(rgb: presentationTheme.overallDarkAppearance ? (self.wegramContentBackground ? 0x191919 : 0x111111) : (self.wegramContentBackground ? 0xffffff : 0xeeeeee))
+            self.textBackgroundNode.backgroundColor = UIColor(rgb: presentationTheme.overallDarkAppearance ? (self.wegramContentBackground ? 0x232323 : 0x191919) : (self.wegramContentBackground ? 0xededed : 0xffffff))
+            self.textBackgroundNode.cornerRadius = 5
+            self.textField.textColor = WegramNavigationColors(isDark: presentationTheme.overallDarkAppearance).control
+            self.textField.tintColor = UIColor(rgb: 0x07c160)
+            self.textField.accessibilityIdentifier = "Wegram.Search.Query"
+            self.placeholderString = NSAttributedString(string: self.placeholderString?.string ?? strings.Common_Search, font: Font.regular(17), textColor: theme.placeholder)
+            self.cancelButton.setAttributedTitle(NSAttributedString(string: self.cancelText ?? strings.Common_Cancel, font: Font.regular(17), textColor: UIColor(rgb: presentationTheme.overallDarkAppearance ? 0x7d90a9 : 0x576b95)), for: [])
+            self.cancelButton.accessibilityIdentifier = "Wegram.Search.Cancel"
+            self.cancelButton.accessibilityTraits = .button
+            self.clearButton.accessibilityIdentifier = "Wegram.Search.Clear"
+            self.clearButton.accessibilityTraits = .button
+            self.clearButton.hitTestSlop = UIEdgeInsets(top: -4, left: -4, bottom: -4, right: -4)
+        }
         self.theme = theme
         self.presentationTheme = presentationTheme
         self.preferClearGlass = preferClearGlass
@@ -1164,6 +1186,26 @@ public class SearchBarNode: ASDisplayNode, UITextFieldDelegate {
         transition.updateFrame(node: self.separatorNode, frame: CGRect(origin: CGPoint(x: 0.0, y: self.bounds.size.height), size: CGSize(width: self.bounds.size.width, height: UIScreenPixel)))
         
         let contentFrame = CGRect(origin: CGPoint(x: leftInset, y: 0.0), size: CGSize(width: boundingSize.width - leftInset - rightInset, height: boundingSize.height))
+
+        if self.usesWegramAppearance {
+            let cancelSize = self.cancelButton.measure(CGSize(width: max(44, contentFrame.width / 2), height: 44))
+            let cancelWidth = self.hasCancelButton ? max(44, cancelSize.width) : 0
+            let cancelFrame = CGRect(x: contentFrame.maxX - 4 - cancelWidth, y: (boundingSize.height - 44) / 2, width: cancelWidth, height: 44)
+            transition.updateFrame(node: self.cancelButton, frame: cancelFrame)
+            let fieldRight = self.hasCancelButton ? cancelFrame.minX - 8 : contentFrame.maxX - 8
+            let field = CGRect(x: contentFrame.minX + 8, y: (boundingSize.height - 36) / 2, width: max(0, fieldRight - contentFrame.minX - 8), height: 36)
+            transition.updateFrame(node: self.textBackgroundNode, frame: field)
+            self.textField.frame = CGRect(x: field.minX + 30, y: field.minY, width: max(1, field.width - 70), height: field.height)
+            if let image = self.iconNode.image {
+                transition.updateFrame(node: self.iconNode, frame: CGRect(x: field.minX + 8, y: field.midY - image.size.height / 2, width: image.size.width, height: image.size.height))
+            }
+            if let indicator = self.activityIndicator {
+                let size = indicator.measure(CGSize(width: 32, height: 32))
+                transition.updateFrame(node: indicator, frame: CGRect(x: field.minX + 10, y: field.midY - size.height / 2, width: size.width, height: size.height))
+            }
+            transition.updateFrame(node: self.clearButton, frame: CGRect(x: field.maxX - 36, y: field.minY, width: 36, height: 36))
+            return
+        }
         
         let textBackgroundHeight: CGFloat
         if case .inlineNavigation = self.fieldStyle {
@@ -1282,6 +1324,12 @@ public class SearchBarNode: ASDisplayNode, UITextFieldDelegate {
             return
         }
         
+        if self.usesWegramAppearance {
+            self.wegramSourcePlaceholder = node
+            node.isHidden = true
+            self.layer.animateAlpha(from: 0, to: 1, duration: 0.2)
+            return
+        }
         self.inlineSearchPlaceholder.isHidden = true
         
         let takenSearchPlaceholderContentView = node.takeContents()
@@ -1379,6 +1427,19 @@ public class SearchBarNode: ASDisplayNode, UITextFieldDelegate {
     
     public func transitionOut(to node: SearchBarPlaceholderNode, transition: ContainedViewLayoutTransition, completion: @escaping () -> Void) {
         self.isAnimatingOut = true
+        if self.usesWegramAppearance {
+            let finish = { [weak self, weak node] in
+                self?.wegramSourcePlaceholder?.isHidden = false
+                node?.isHidden = false
+                completion()
+            }
+            if transition.isAnimated {
+                self.layer.animateAlpha(from: self.alpha, to: 0, duration: 0.2, removeOnCompletion: false, completion: { _ in finish() })
+            } else {
+                finish()
+            }
+            return
+        }
         
         /*let targetTextBackgroundFrame = node.view.convert(node.backgroundView.frame, to: self.view)
         

@@ -3,6 +3,8 @@ import UIKit
 import AsyncDisplayKit
 
 open class AlertContentNode: ASDisplayNode {
+    open var containerCornerRadius: CGFloat { return 14.0 }
+
     open var requestLayout: ((ContainedViewLayoutTransition) -> Void)?
     
     open var dismissOnOutsideTap: Bool {

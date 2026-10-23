@@ -57,6 +57,7 @@ public final class SearchBarPlaceholderContentView: UIView {
     }
     
     let fieldStyle: SearchBarStyle
+    private let backgroundCornerRadius: CGFloat?
     let plainBackgroundView: UIImageView
     let glassBackgroundContainerView: GlassBackgroundContainerView?
     let glassBackgroundView: GlassBackgroundView?
@@ -77,8 +78,9 @@ public final class SearchBarPlaceholderContentView: UIView {
     
     public var onCancel: (() -> Void)?
     
-    init(fieldStyle: SearchBarStyle, hasOwnGlassContainer: Bool) {
+    init(fieldStyle: SearchBarStyle, hasOwnGlassContainer: Bool, backgroundCornerRadius: CGFloat?) {
         self.fieldStyle = fieldStyle
+        self.backgroundCornerRadius = backgroundCornerRadius
         
         self.fillBackgroundColor = UIColor.white
         self.foregroundColor = UIColor(rgb: 0xededed)
@@ -290,7 +292,7 @@ public final class SearchBarPlaceholderContentView: UIView {
         }
         
         let outerAlpha = min(0.3, params.expansionProgress) / 0.3
-        let cornerRadius = height * 0.5
+        let cornerRadius = min(height * 0.5, self.backgroundCornerRadius ?? height * 0.5)
         
         if self.plainBackgroundView.layer.cornerRadius != cornerRadius {
             if !transition.isAnimated {
@@ -525,9 +527,9 @@ public class SearchBarPlaceholderNode: ASDisplayNode {
     private var currentLayoutHeight: CGFloat?
     private var isTakenOut: Bool = false
     
-    public init(fieldStyle: SearchBarStyle = .legacy, hasOwnGlassContainer: Bool = true) {
+    public init(fieldStyle: SearchBarStyle = .legacy, hasOwnGlassContainer: Bool = true, backgroundCornerRadius: CGFloat? = nil) {
         self.containerView = UIView()
-        self.contentView = SearchBarPlaceholderContentView(fieldStyle: fieldStyle, hasOwnGlassContainer: hasOwnGlassContainer)
+        self.contentView = SearchBarPlaceholderContentView(fieldStyle: fieldStyle, hasOwnGlassContainer: hasOwnGlassContainer, backgroundCornerRadius: backgroundCornerRadius)
         
         super.init()
         
@@ -649,5 +651,18 @@ public class SearchBarPlaceholderNode: ASDisplayNode {
         if case .ended = recognizer.state {
             self.activate?()
         }
+    }
+}
+
+public final class WegramSearchBarPlaceholderNode: SearchBarPlaceholderNode {
+    public override func accessibilityActivate() -> Bool {
+        guard self.isAccessibilityElement, let activate = self.activate else { return false }
+        var view: UIView? = self.view
+        while let current = view {
+            guard !current.isHidden, current.alpha > 0.01, current.isUserInteractionEnabled else { return false }
+            view = current.superview
+        }
+        activate()
+        return true
     }
 }

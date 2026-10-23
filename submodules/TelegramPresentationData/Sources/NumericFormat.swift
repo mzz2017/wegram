@@ -2,6 +2,11 @@ import Foundation
 import PresentationStrings
 import TelegramCore
 
+/// WeChat's unread badges show the exact count up to 99 and "99+" from 100 on; they never abbreviate.
+public func wegramUnreadCountString(_ count: Int) -> String {
+    return count > 99 ? "99+" : "\(count)"
+}
+
 public func compactNumericCountString(_ count: Int, decimalSeparator: String = ".", showDecimalPart: Bool = true) -> String {
     if count >= 1000 * 1000 {
         let remainder = (count % (1000 * 1000)) / (1000 * 100)

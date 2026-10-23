@@ -29,6 +29,9 @@ typedef enum
 
 @interface TGCheckButtonView : UIButton
 
+@property (nonatomic, assign) bool usesWegramAppearance;
+@property (nonatomic, assign) bool usesWegramGridAppearance;
+
 - (instancetype)initWithStyle:(TGCheckButtonStyle)style;
 - (instancetype)initWithStyle:(TGCheckButtonStyle)style pallete:(TGCheckButtonPallete *)pallete;
 

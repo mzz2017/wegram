@@ -39,10 +39,16 @@ final class ActionSheetItemGroupNode: ASDisplayNode, ASScrollViewDelegate {
         
         self.clippingNode = ASDisplayNode()
         self.clippingNode.clipsToBounds = true
-        self.clippingNode.cornerRadius = 16.0
+        self.clippingNode.cornerRadius = theme.usesWegramLayout ? 0.0 : 16.0
         
         self.backgroundEffectView = UIVisualEffectView(effect: UIBlurEffect(style: self.theme.backgroundType == .light ? .light : .dark))
         
+        self.backgroundEffectView.isHidden = theme.usesWegramLayout
+        self.centerDimView.isHidden = theme.usesWegramLayout
+        self.topDimView.isHidden = theme.usesWegramLayout
+        self.bottomDimView.isHidden = theme.usesWegramLayout
+        self.trailingDimView.backgroundColor = theme.usesWegramLayout ? theme.itemHighlightedBackgroundColor : theme.dimColor
+
         self.scrollNode = ASScrollNode()
         self.scrollNode.canCancelAllTouchesInViews = true
         if #available(iOSApplicationExtension 11.0, iOS 11.0, *) {

@@ -303,17 +303,21 @@ public final class EngineChatList: Equatable {
 
         public let id: Group
         public let topMessage: EngineMessage?
+        /// The newest message in the group however many chats it holds; `topMessage` is set only for one chat.
+        public let latestMessage: EngineMessage?
         public let items: [Item]
         public let unreadCount: Int
 
         public init(
             id: Group,
             topMessage: EngineMessage?,
+            latestMessage: EngineMessage? = nil,
             items: [Item],
             unreadCount: Int
         ) {
             self.id = id
             self.topMessage = topMessage
+            self.latestMessage = latestMessage
             self.items = items
             self.unreadCount = unreadCount
         }
@@ -326,6 +330,9 @@ public final class EngineChatList: Equatable {
                 return false
             }
             if lhs.topMessage?.stableVersion != rhs.topMessage?.stableVersion {
+                return false
+            }
+            if lhs.latestMessage?.index != rhs.latestMessage?.index || lhs.latestMessage?.stableVersion != rhs.latestMessage?.stableVersion {
                 return false
             }
             if lhs.items != rhs.items {
@@ -640,6 +647,7 @@ extension EngineChatList.GroupItem {
         self.init(
             id: EngineChatList.Group(entry.groupId),
             topMessage: entry.message.flatMap(EngineMessage.init),
+            latestMessage: entry.latestMessage.flatMap(EngineMessage.init),
             items: entry.renderedPeers.map { peer in
                 return EngineChatList.GroupItem.Item(
                     peer: EngineRenderedPeer(peer.peer),

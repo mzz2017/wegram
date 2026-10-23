@@ -29,6 +29,7 @@ public class NavigationBarSearchContentNode: NavigationBarContentNode {
     public var theme: PresentationTheme?
     public var placeholder: String
     public var compactPlaceholder: String
+    public let usesWegramAppearance: Bool
     public let hasOwnGlassContainer: Bool
     private let inline: Bool
     private var displayGlassBackgroundWhenInactive: Bool
@@ -37,12 +38,15 @@ public class NavigationBarSearchContentNode: NavigationBarContentNode {
     public let placeholderNode: SearchBarPlaceholderNode
     public var placeholderHeight: CGFloat?
     private var disabledOverlay: ASDisplayNode?
+    private var searchIsEnabled = true
+    private var placeholderIsVisible = true
     
     public var expansionProgress: CGFloat = 1.0
 
     private var validLayout: (CGSize, CGFloat, CGFloat)?
     
-    public init(theme: PresentationTheme, placeholder: String, compactPlaceholder: String? = nil, inline: Bool = false, displayGlassBackgroundWhenInactive: Bool = false, alignPlaceholderToLeftWhenInactive: Bool = false, hasOwnGlassContainer: Bool = true, activate: @escaping () -> Void) {
+    public init(theme: PresentationTheme, placeholder: String, compactPlaceholder: String? = nil, inline: Bool = false, displayGlassBackgroundWhenInactive: Bool = false, alignPlaceholderToLeftWhenInactive: Bool = false, hasOwnGlassContainer: Bool = true, usesWegramAppearance: Bool = false, activate: @escaping () -> Void) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.theme = theme
         self.placeholder = placeholder
         self.compactPlaceholder = compactPlaceholder ?? placeholder
@@ -51,7 +55,11 @@ public class NavigationBarSearchContentNode: NavigationBarContentNode {
         self.displayGlassBackgroundWhenInactive = displayGlassBackgroundWhenInactive
         self.alignPlaceholderToLeftWhenInactive = alignPlaceholderToLeftWhenInactive
         
-        self.placeholderNode = SearchBarPlaceholderNode(fieldStyle: .glass, hasOwnGlassContainer: hasOwnGlassContainer)
+        if usesWegramAppearance {
+            self.placeholderNode = WegramSearchBarPlaceholderNode(fieldStyle: .glass, hasOwnGlassContainer: hasOwnGlassContainer, backgroundCornerRadius: 5)
+        } else {
+            self.placeholderNode = SearchBarPlaceholderNode(fieldStyle: .glass, hasOwnGlassContainer: hasOwnGlassContainer)
+        }
         self.placeholderNode.labelNode.displaysAsynchronously = false
         
         super.init()
@@ -125,16 +133,25 @@ public class NavigationBarSearchContentNode: NavigationBarContentNode {
     }
     
     public func setIsEnabled(_ enabled: Bool, animated: Bool = false) {
+        self.searchIsEnabled = enabled
         let transition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.25, curve: .easeInOut) : .immediate
         transition.updateAlpha(node: self.placeholderNode, alpha: enabled ? 1.0 : 0.6)
         self.placeholderNode.isUserInteractionEnabled = enabled
+        self.updateWegramAvailability()
+    }
+
+    private func updateWegramAvailability() {
+        guard self.usesWegramAppearance else { return }
+        self.placeholderNode.isUserInteractionEnabled = self.searchIsEnabled && self.placeholderIsVisible
+        self.placeholderNode.isAccessibilityElement = self.placeholderIsVisible
+        self.placeholderNode.accessibilityTraits = self.searchIsEnabled ? .searchField : [.searchField, .notEnabled]
     }
     
     private func updatePlaceholder(_ progress: CGFloat, size: CGSize, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition) {
-        let padding: CGFloat = 16.0
+        let padding: CGFloat = self.usesWegramAppearance ? 8 : 16
         let baseWidth = size.width - padding * 2.0 - leftInset - rightInset
         
-        let fieldHeight: CGFloat = 44.0
+        let fieldHeight: CGFloat = self.usesWegramAppearance ? 36 : 44
         let fraction = fieldHeight / self.nominalHeight
         let fullFraction = navigationBarSearchContentHeight / self.nominalHeight
         
@@ -144,9 +161,12 @@ public class NavigationBarSearchContentNode: NavigationBarContentNode {
         let toHigh: CGFloat = 1.0
         var visibleProgress: CGFloat = toLow + (self.expansionProgress - fromLow) * (toHigh - toLow) / (fromHigh - fromLow)
         visibleProgress = max(0.0, min(1.0, visibleProgress))
+        self.placeholderIsVisible = visibleProgress > 0.01
+        self.updateWegramAvailability()
         
         let textColor = self.theme?.rootController.navigationSearchBar.inputPlaceholderTextColor ?? UIColor(rgb: 0x8e8e93)
         var fillColor = self.theme?.rootController.navigationSearchBar.inputFillColor ?? .clear
+        if self.usesWegramAppearance { fillColor = UIColor(rgb: self.theme?.overallDarkAppearance == true ? 0x191919 : 0xffffff) }
         if self.inline, let theme = self.theme, fillColor.distance(to: theme.list.blocksBackgroundColor) < 100 {
             fillColor = fillColor.withMultipliedBrightnessBy(0.8)
         }

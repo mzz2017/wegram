@@ -69,13 +69,67 @@ public struct PresentationChatBubbleCorners: Equatable, Hashable {
     public var auxiliaryRadius: CGFloat
     public var mergeBubbleCorners: Bool
     public var hasTails: Bool
+    public var usesWegramShape: Bool
+    public var usesWegramNeutralFill: Bool
     
-    public init(mainRadius: CGFloat, auxiliaryRadius: CGFloat, mergeBubbleCorners: Bool, hasTails: Bool = true) {
+    public init(mainRadius: CGFloat, auxiliaryRadius: CGFloat, mergeBubbleCorners: Bool, hasTails: Bool = true, usesWegramShape: Bool = false, usesWegramNeutralFill: Bool = false) {
         self.mainRadius = mainRadius
         self.auxiliaryRadius = auxiliaryRadius
         self.mergeBubbleCorners = mergeBubbleCorners
         self.hasTails = hasTails
+        self.usesWegramShape = usesWegramShape
+        self.usesWegramNeutralFill = usesWegramNeutralFill
     }
+
+    public func messageColors(theme: PresentationTheme, incoming: Bool) -> PresentationThemePartedColors {
+        return incoming || (self.usesWegramShape && self.usesWegramNeutralFill) ? theme.chat.message.incoming : theme.chat.message.outgoing
+    }
+
+    public static let wegram = PresentationChatBubbleCorners(mainRadius: 4, auxiliaryRadius: 4, mergeBubbleCorners: false, usesWegramShape: true)
+    public static let wegramCard = PresentationChatBubbleCorners(mainRadius: 4, auxiliaryRadius: 4, mergeBubbleCorners: false, usesWegramShape: true, usesWegramNeutralFill: true)
+}
+
+// WeChat lets you pick a photo as the chat background and nothing else. Telegram's colour, gradient
+// and pattern backgrounds are theming: a pattern with negative intensity even paints its gradient
+// into the outgoing bubbles (`hasExtraBubbleBackground`), which is how a saved night pattern turned
+// the green WeChat bubbles purple. Those fall back to the theme's own background.
+public func wegramAllowsChatWallpaper(_ wallpaper: TelegramWallpaper) -> Bool {
+    switch wallpaper {
+    case .image:
+        return true
+    case let .file(file):
+        return !file.isPattern && file.settings.emoticon == nil
+    case .builtin, .color, .gradient, .emoticon:
+        return false
+    }
+}
+
+// WeGram does not let users theme the app. Whatever appearance settings were saved (accent and
+// bubble colours, bubble corners, custom or cloud themes), only the WeChat day/night pair renders.
+// A photo chat background survives, since WeChat lets you choose one.
+public func wegramLockedThemeSettings(_ settings: PresentationThemeSettings) -> PresentationThemeSettings {
+    var result = settings
+    let isDark: Bool
+    switch settings.theme {
+    case .builtin(.night), .builtin(.nightAccent):
+        isDark = true
+    default:
+        isDark = false
+    }
+    result.theme = .builtin(isDark ? .night : .dayClassic)
+    result.automaticThemeSwitchSetting.theme = .builtin(.night)
+    result.themePreferredBaseTheme = [:]
+    result.themeSpecificAccentColors = [:]
+    result.chatBubbleSettings = .default
+    var wallpapers: [Int64: TelegramWallpaper] = [:]
+    for reference in [PresentationThemeReference.builtin(.dayClassic), .builtin(.night)] {
+        guard let wallpaper = settings.themeSpecificChatWallpapers[reference.index], wegramAllowsChatWallpaper(wallpaper) else {
+            continue
+        }
+        wallpapers[reference.index] = wallpaper
+    }
+    result.themeSpecificChatWallpapers = wallpapers
+    return result
 }
 
 public final class PresentationData: Equatable {
@@ -318,7 +372,7 @@ public func currentPresentationDataAndSettings(accountManager: AccountManager<Te
         
         let themeSettings: PresentationThemeSettings
         if let current = internalData.presentationThemeSettings?.get(PresentationThemeSettings.self) {
-            themeSettings = current
+            themeSettings = wegramLockedThemeSettings(current)
         } else {
             themeSettings = PresentationThemeSettings.defaultSettings
         }
@@ -727,7 +781,7 @@ public func updatedPresentationData(accountManager: AccountManager<TelegramAccou
     |> mapToSignal { sharedData, systemUserInterfaceStyle -> Signal<PresentationData, NoError> in
         let themeSettings: PresentationThemeSettings
         if let current = sharedData.entries[ApplicationSpecificSharedDataKeys.presentationThemeSettings]?.get(PresentationThemeSettings.self) {
-            themeSettings = current
+            themeSettings = wegramLockedThemeSettings(current)
         } else {
             themeSettings = PresentationThemeSettings.defaultSettings
         }
@@ -765,12 +819,10 @@ public func updatedPresentationData(accountManager: AccountManager<TelegramAccou
                         var preferredBaseTheme: TelegramBaseTheme?
                         if autoNightModeTriggered {
                             let automaticTheme = themeSettings.automaticThemeSwitchSetting.theme
+                            // Upstream substitutes the blue preset here when no accent is saved; its bubble
+                            // colours are Telegram's purple gradient. WeGram's night theme keeps its own green.
                             effectiveColors = themeSettings.themeSpecificAccentColors[automaticTheme.index]
-                            
-                            if automaticTheme == .builtin(.night) && effectiveColors == nil {
-                                effectiveColors = PresentationThemeAccentColor(baseColor: .blue)
-                            }
-                            
+
                             let themeSpecificWallpaper = (themeSettings.themeSpecificChatWallpapers[coloredThemeIndex(reference: automaticTheme, accentColor: effectiveColors)] ?? themeSettings.themeSpecificChatWallpapers[automaticTheme.index])
                             
                             if let themeSpecificWallpaper = themeSpecificWallpaper {

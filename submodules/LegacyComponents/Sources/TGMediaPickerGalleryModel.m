@@ -144,7 +144,7 @@
 
 - (void)setCurrentItemWithIndex:(NSUInteger)index
 {
-    if (_selectedItemsModel == nil)
+    if (_selectedItemsModel == nil || index >= _selectedItemsModel.items.count)
         return;
     
     TGModernGalleryController *galleryController = self.controller;
@@ -187,6 +187,9 @@
     {
         __weak TGMediaPickerGalleryModel *weakSelf = self;
         _interfaceView = [[TGMediaPickerGalleryInterfaceView alloc] initWithContext:_context focusItem:_initialFocusItem selectionContext:_selectionContext editingContext:_editingContext stickersContext:_stickersContext hasSelectionPanel:_hasSelectionPanel hasCameraButton:_hasCamera recipientName:_recipientName isScheduledMessages:_isScheduledMessages isActionButtonDone:_isActionButtonDone hasCoverButton:_hasCoverButton];
+        _interfaceView.galleryPosition = ^NSString *(id<TGModernGalleryItem> item) {
+            return TGMediaPickerGalleryPositionText(weakSelf.items, item);
+        };
         _interfaceView.hasCaptions = _hasCaptions;
         _interfaceView.allowCaptionEntities = _allowCaptionEntities;
         _interfaceView.hasTimer = _hasTimer;

@@ -10,7 +10,16 @@ public final class NavigationBarBadgeNode: ASDisplayNode {
     private let textNode: ImmediateTextNode
     private let backgroundNode: ASImageNode
     
-    private let font: UIFont = Font.regular(13.0)
+    public var usesWegramAppearance = false {
+        didSet {
+            if self.usesWegramAppearance != oldValue {
+                self.updateTheme(fillColor: self.fillColor, strokeColor: self.strokeColor, textColor: self.textColor)
+                self.invalidateCalculatedLayout()
+            }
+        }
+    }
+    private var font: UIFont { return Font.regular(self.usesWegramAppearance ? 17 : 13) }
+    private var badgeDiameter: CGFloat { return self.usesWegramAppearance ? 24 : 18 }
     
     public var text: String = "" {
         didSet {
@@ -31,7 +40,7 @@ public final class NavigationBarBadgeNode: ASDisplayNode {
         self.backgroundNode = ASImageNode()
         self.backgroundNode.isLayerBacked = true
         self.backgroundNode.displaysAsynchronously = false
-        self.backgroundNode.image = generateStretchableFilledCircleImage(radius: 9.0, color: fillColor, backgroundColor: nil)
+        self.backgroundNode.image = generateStretchableFilledCircleImage(radius: 9, color: fillColor, backgroundColor: nil)
         
         super.init()
         
@@ -43,7 +52,7 @@ public final class NavigationBarBadgeNode: ASDisplayNode {
         self.fillColor = fillColor
         self.strokeColor = strokeColor
         self.textColor = textColor
-        self.backgroundNode.image = generateStretchableFilledCircleImage(radius: 9.0, color: fillColor, backgroundColor: nil)
+        self.backgroundNode.image = generateStretchableFilledCircleImage(radius: self.badgeDiameter * 0.5, color: fillColor, backgroundColor: nil)
         self.textNode.attributedText = NSAttributedString(string: self.text, font: self.font, textColor: self.textColor)
         self.textNode.redrawIfPossible()
     }
@@ -52,9 +61,9 @@ public final class NavigationBarBadgeNode: ASDisplayNode {
         let badgeSize = self.textNode.updateLayout(constrainedSize)
         let backgroundSize: CGSize
         if self.text.count < 2 {
-            backgroundSize = CGSize(width: 18.0, height: 18.0)
+            backgroundSize = CGSize(width: self.badgeDiameter, height: self.badgeDiameter)
         } else {
-            backgroundSize = CGSize(width: max(18.0, badgeSize.width + 10.0 + 1.0), height: 18.0)
+            backgroundSize = CGSize(width: max(self.badgeDiameter, badgeSize.width + 11), height: self.badgeDiameter)
         }
         let backgroundFrame = CGRect(origin: CGPoint(), size: backgroundSize)
         self.backgroundNode.frame = backgroundFrame

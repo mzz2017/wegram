@@ -30,6 +30,10 @@ public extension ListViewItemHeader {
 
 open class ListViewItemHeaderNode: ASDisplayNode {
     let isRotated: Bool
+    // How far the next header has pushed this sticky one above its pinned position (0 when not pushed).
+    open func updateStickPushDistance(_ distance: CGFloat) {
+    }
+    
     final private(set) var internalStickLocationDistanceFactor: CGFloat = 0.0
     final var internalStickLocationDistance: CGFloat = 0.0
     private var isFlashingOnScrolling = false

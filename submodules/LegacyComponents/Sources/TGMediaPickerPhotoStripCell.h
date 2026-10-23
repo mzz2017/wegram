@@ -7,6 +7,8 @@
 
 @interface TGMediaPickerPhotoStripCell : UICollectionViewCell
 
+@property (nonatomic, assign) bool usesWegramAppearance;
+@property (nonatomic, assign) bool previewFocused;
 @property (nonatomic, strong) TGMediaSelectionContext *selectionContext;
 @property (nonatomic, strong) TGMediaEditingContext *editingContext;
 @property (nonatomic, copy) void (^itemSelected)(id<TGMediaSelectableItem> item, bool selected, id sender);

@@ -55,13 +55,13 @@ public class ActionSheetCheckboxItemNode: ActionSheetItemNode {
     
     override public init(theme: ActionSheetControllerTheme) {
         self.theme = theme
-        self.defaultFont = Font.regular(floor(theme.baseFontSize * 20.0 / 17.0))
+        self.defaultFont = Font.regular(theme.usesWegramLayout ? theme.baseFontSize : floor(theme.baseFontSize * 20.0 / 17.0))
         
         self.button = HighlightTrackingButton()
         self.button.isAccessibilityElement = false
         
         self.titleNode = ImmediateTextNode()
-        self.titleNode.maximumNumberOfLines = 1
+        self.titleNode.maximumNumberOfLines = theme.usesWegramLayout ? 2 : 1
         self.titleNode.isUserInteractionEnabled = false
         self.titleNode.displaysAsynchronously = false
         self.titleNode.isAccessibilityElement = false
@@ -120,13 +120,14 @@ public class ActionSheetCheckboxItemNode: ActionSheetItemNode {
     func setItem(_ item: ActionSheetCheckboxItem) {
         self.item = item
         
-        let defaultFont = Font.regular(floor(theme.baseFontSize * 20.0 / 17.0))
+        let defaultFont = self.defaultFont
         
         self.titleNode.attributedText = NSAttributedString(string: item.title, font: defaultFont, textColor: self.theme.primaryTextColor)
         self.labelNode.attributedText = NSAttributedString(string: item.label, font: defaultFont, textColor: self.theme.secondaryTextColor)
         self.checkNode.isHidden = !item.value
         
         self.accessibilityArea.accessibilityLabel = item.title
+        self.accessibilityArea.accessibilityValue = self.theme.usesWegramLayout && !item.label.isEmpty ? item.label : nil
         
         var accessibilityTraits: UIAccessibilityTraits = [.button]
         if item.value {
@@ -136,6 +137,25 @@ public class ActionSheetCheckboxItemNode: ActionSheetItemNode {
     }
     
     public override func updateLayout(constrainedSize: CGSize, transition: ContainedViewLayoutTransition) -> CGSize {
+        if self.theme.usesWegramLayout {
+            let alignRight = self.item?.style == .alignRight
+            let titleX: CGFloat = alignRight ? 16 : 50
+            let trailing: CGFloat = alignRight ? 50 : 16
+            let availableWidth = max(0, constrainedSize.width - titleX - trailing)
+            let labelSize = self.labelNode.updateLayout(CGSize(width: availableWidth * 0.45, height: CGFloat.greatestFiniteMagnitude))
+            let gap: CGFloat = self.item?.label.isEmpty == false ? 12 : 0
+            let titleSize = self.titleNode.updateLayout(CGSize(width: max(0, availableWidth - labelSize.width - gap), height: CGFloat.greatestFiniteMagnitude))
+            let size = CGSize(width: constrainedSize.width, height: max(56, ceil(max(titleSize.height, labelSize.height)) + 24))
+            self.button.frame = CGRect(origin: .zero, size: size)
+            self.titleNode.frame = CGRect(x: titleX, y: floorToScreenPixels((size.height - titleSize.height) / 2), width: titleSize.width, height: titleSize.height)
+            self.labelNode.frame = CGRect(x: size.width - trailing - labelSize.width, y: floorToScreenPixels((size.height - labelSize.height) / 2), width: labelSize.width, height: labelSize.height)
+            if let image = self.checkNode.image {
+                self.checkNode.frame = CGRect(x: floor((alignRight ? size.width - 27 : 27) - image.size.width / 2), y: floor((size.height - image.size.height) / 2), width: image.size.width, height: image.size.height)
+            }
+            self.accessibilityArea.frame = CGRect(origin: .zero, size: size)
+            self.updateInternalLayout(size, constrainedSize: constrainedSize)
+            return size
+        }
         let size = CGSize(width: constrainedSize.width, height: 57.0)
        
         self.button.frame = CGRect(origin: CGPoint(), size: size)

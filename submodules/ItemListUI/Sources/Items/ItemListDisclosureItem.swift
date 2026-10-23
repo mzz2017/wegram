@@ -69,6 +69,7 @@ public class ItemListDisclosureItem: ListViewItem, ItemListItem, ListItemCompone
     let style: ItemListStyle
     let disclosureStyle: ItemListDisclosureStyle
     let noInsets: Bool
+    let usesWegramSearchFooterLayout: Bool
     let action: (() -> Void)?
     let clearHighlightAutomatically: Bool
     public let tag: ItemListItemTag?
@@ -96,6 +97,7 @@ public class ItemListDisclosureItem: ListViewItem, ItemListItem, ListItemCompone
         style: ItemListStyle,
         disclosureStyle: ItemListDisclosureStyle = .arrow,
         noInsets: Bool = false,
+        usesWegramSearchFooterLayout: Bool = false,
         action: (() -> Void)?,
         clearHighlightAutomatically: Bool = true,
         tag: ItemListItemTag? = nil,
@@ -122,6 +124,7 @@ public class ItemListDisclosureItem: ListViewItem, ItemListItem, ListItemCompone
         self.style = style
         self.disclosureStyle = disclosureStyle
         self.noInsets = noInsets
+        self.usesWegramSearchFooterLayout = usesWegramSearchFooterLayout
         self.action = action
         self.clearHighlightAutomatically = clearHighlightAutomatically
         self.tag = tag
@@ -178,6 +181,9 @@ public class ItemListDisclosureItem: ListViewItem, ItemListItem, ListItemCompone
     
     public static func ==(lhs: ItemListDisclosureItem, rhs: ItemListDisclosureItem) -> Bool {
         if lhs.presentationData != rhs.presentationData {
+            return false
+        }
+        if lhs.usesWegramSearchFooterLayout != rhs.usesWegramSearchFooterLayout {
             return false
         }
         if lhs.context !== rhs.context {
@@ -417,7 +423,7 @@ public class ItemListDisclosureItemNode: ListViewItemNode, ItemListItemNode {
             
             var leftInset = 16.0 + params.leftInset
             if item.icon != nil {
-                leftInset += item.noInsets ? 49.0 : 43.0
+                leftInset += item.usesWegramSearchFooterLayout ? 32.0 : (item.noInsets ? 49.0 : 43.0)
             } else if item.iconPeer != nil {
                 leftInset += 46.0
             }
@@ -559,6 +565,10 @@ public class ItemListDisclosureItemNode: ListViewItemNode, ItemListItemNode {
                 height = max(height, 40.0 + verticalInset * 2.0)
             }
             
+            if item.usesWegramSearchFooterLayout {
+                height = max(height, 44.0)
+            }
+
             switch item.style {
             case .plain:
                 itemBackgroundColor = item.presentationData.theme.list.plainBackgroundColor
@@ -604,7 +614,8 @@ public class ItemListDisclosureItemNode: ListViewItemNode, ItemListItemNode {
                         } else {
                             iconY = floor((layout.contentSize.height - icon.size.height) / 2.0)
                         }
-                        strongSelf.iconNode.frame = CGRect(origin: CGPoint(x: params.leftInset + floor((leftInset - params.leftInset - icon.size.width) / 2.0), y: iconY), size: icon.size)
+                        let iconX = item.usesWegramSearchFooterLayout ? params.leftInset + 28.0 - icon.size.width / 2.0 : params.leftInset + floor((leftInset - params.leftInset - icon.size.width) / 2.0)
+                        strongSelf.iconNode.frame = CGRect(origin: CGPoint(x: iconX, y: iconY), size: icon.size)
                     } else if strongSelf.iconNode.supernode != nil {
                         strongSelf.iconNode.image = nil
                         strongSelf.iconNode.removeFromSupernode()

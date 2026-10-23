@@ -62,8 +62,8 @@ public class ActionSheetButtonNode: ActionSheetItemNode {
     override public init(theme: ActionSheetControllerTheme) {
         self.theme = theme
         
-        self.defaultFont = Font.regular(floor(theme.baseFontSize * 20.0 / 17.0))
-        self.boldFont = Font.medium(floor(theme.baseFontSize * 20.0 / 17.0))
+        self.defaultFont = Font.regular(floor(theme.baseFontSize * (theme.usesWegramLayout ? 1.0 : 20.0 / 17.0)))
+        self.boldFont = Font.medium(floor(theme.baseFontSize * (theme.usesWegramLayout ? 1.0 : 20.0 / 17.0)))
         
         self.button = HighlightTrackingButton()
         self.button.isAccessibilityElement = false
@@ -146,9 +146,9 @@ public class ActionSheetButtonNode: ActionSheetItemNode {
         }
         switch item.font {
             case .default:
-                textFont = Font.regular(floor(theme.baseFontSize * 20.0 / 17.0))
+                textFont = Font.regular(floor(theme.baseFontSize * (theme.usesWegramLayout ? 1.0 : 20.0 / 17.0)))
             case .bold:
-                textFont = Font.medium(floor(theme.baseFontSize * 20.0 / 17.0))
+                textFont = Font.medium(floor(theme.baseFontSize * (theme.usesWegramLayout ? 1.0 : 20.0 / 17.0)))
         }
         self.label.attributedText = NSAttributedString(string: item.title, font: textFont, textColor: textColor)
         self.label.isAccessibilityElement = false
@@ -165,7 +165,7 @@ public class ActionSheetButtonNode: ActionSheetItemNode {
     }
     
     public override func updateLayout(constrainedSize: CGSize, transition: ContainedViewLayoutTransition) -> CGSize {
-        let size = CGSize(width: constrainedSize.width, height: 57.0)
+        let size = CGSize(width: constrainedSize.width, height: self.theme.usesWegramLayout ? max(56.0, self.defaultFont.lineHeight + 24.0) : 57.0)
         
         self.button.frame = CGRect(origin: CGPoint(), size: size)
         
@@ -178,7 +178,7 @@ public class ActionSheetButtonNode: ActionSheetItemNode {
     }
     
     @objc func buttonPressed() {
-        if let item = self.item {
+        if let item = self.item, item.enabled {
             item.action()
         }
     }

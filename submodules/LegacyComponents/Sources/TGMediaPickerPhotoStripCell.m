@@ -28,6 +28,7 @@ NSString *const TGMediaPickerPhotoStripCellKind = @"PhotoStripCell";
 {
     TGMediaPickerPhotoStripDeleteButton *_deleteButton;
     TGCheckButtonView *_checkButton;
+    UIView *_focusBorderView;
     UIImageView *_iconView;
     UIImageView *_gradientView;
     UILabel *_label;
@@ -108,8 +109,31 @@ NSString *const TGMediaPickerPhotoStripCellKind = @"PhotoStripCell";
         _label.font = TGSystemFontOfSize(12.0f);
         [_label sizeToFit];
         [self addSubview:_label];
+        _focusBorderView = [[UIView alloc] initWithFrame:self.bounds];
+        _focusBorderView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _focusBorderView.userInteractionEnabled = false;
+        _focusBorderView.layer.borderWidth = 4.0;
+        _focusBorderView.layer.borderColor = UIColorRGB(0x07c160).CGColor;
+        _focusBorderView.hidden = true;
+        [self addSubview:_focusBorderView];
     }
     return self;
+}
+
+- (void)setUsesWegramAppearance:(bool)usesWegramAppearance
+{
+    _usesWegramAppearance = usesWegramAppearance;
+    self.layer.cornerRadius = usesWegramAppearance ? 0.0 : 4.0;
+    _checkButton.hidden = usesWegramAppearance;
+    [self setPreviewFocused:_previewFocused];
+}
+
+- (void)setPreviewFocused:(bool)focused
+{
+    _previewFocused = focused;
+    _focusBorderView.hidden = !_usesWegramAppearance || !focused;
+    [self bringSubviewToFront:_focusBorderView];
+    self.accessibilityTraits = _usesWegramAppearance ? UIAccessibilityTraitButton | (focused ? UIAccessibilityTraitSelected : 0) : UIAccessibilityTraitNone;
 }
 
 - (void)dealloc
@@ -144,6 +168,7 @@ NSString *const TGMediaPickerPhotoStripCellKind = @"PhotoStripCell";
                 [self addSubview:_checkButton];
             }
             
+            _checkButton.hidden = _usesWegramAppearance;
             if (_itemSelectedDisposable == nil)
                 _itemSelectedDisposable = [[SMetaDisposable alloc] init];
             

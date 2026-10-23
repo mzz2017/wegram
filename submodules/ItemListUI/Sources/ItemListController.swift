@@ -124,6 +124,8 @@ open class ItemListController: ViewController, KeyShortcutResponder, Presentable
     
     private var presentationData: ItemListPresentationData
     private let hideNavigationBarBackground: Bool
+    private let usesWegramAppearance: Bool
+    private let wegramTitleLabel = UILabel()
     
     private var validLayout: ContainerViewLayout?
     
@@ -273,7 +275,8 @@ open class ItemListController: ViewController, KeyShortcutResponder, Presentable
         updatedPresentationData: Signal<ItemListPresentationData, NoError>,
         state: Signal<(ItemListControllerState, (ItemListNodeState, ItemGenerationArguments)), NoError>,
         tabBarItem: Signal<ItemListControllerTabBarItem, NoError>?,
-        hideNavigationBarBackground: Bool = false
+        hideNavigationBarBackground: Bool = false,
+        usesWegramAppearance: Bool = false
     ) {
         self.state = state
         |> map { controllerState, nodeStateAndArgument -> (ItemListControllerState, (ItemListNodeState, Any)) in
@@ -282,13 +285,17 @@ open class ItemListController: ViewController, KeyShortcutResponder, Presentable
         
         self.presentationData = presentationData
         self.hideNavigationBarBackground = hideNavigationBarBackground
+        self.usesWegramAppearance = usesWegramAppearance
         
-        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: NavigationBarTheme(rootControllerTheme: presentationData.theme, hideBackground: hideNavigationBarBackground, hideSeparator: hideNavigationBarBackground, style: .glass), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
+        super.init(navigationBarPresentationData: NavigationBarPresentationData(theme: usesWegramAppearance ? NavigationBarTheme(wegramTheme: presentationData.theme) : NavigationBarTheme(rootControllerTheme: presentationData.theme, hideBackground: hideNavigationBarBackground, hideSeparator: hideNavigationBarBackground, style: .glass), strings: NavigationBarStrings(presentationStrings: presentationData.strings)))
         
         self.isOpaqueWhenInOverlay = true
         self.blocksBackgroundWhenInOverlay = true
         self.automaticallyControlPresentationContextLayout = false
-        self._hasGlassStyle = true
+        self._hasGlassStyle = !usesWegramAppearance
+        self.wegramTitleLabel.font = wegramNavigationTitleFont
+        self.wegramTitleLabel.textAlignment = .center
+        self.wegramTitleLabel.accessibilityTraits = .header
         
         self.statusBar.statusBarStyle = presentationData.theme.rootController.statusBarStyle.style
         
@@ -340,8 +347,13 @@ open class ItemListController: ViewController, KeyShortcutResponder, Presentable
                         }
                         switch controllerState.title {
                             case let .text(text):
-                                strongSelf.title = text
-                                strongSelf.navigationItem.titleView = nil
+                                strongSelf.title = strongSelf.usesWegramAppearance ? nil : text
+                                if strongSelf.usesWegramAppearance {
+                                    strongSelf.wegramTitleLabel.text = text
+                                    strongSelf.navigationItem.titleView = strongSelf.wegramTitleLabel
+                                } else {
+                                    strongSelf.navigationItem.titleView = nil
+                                }
                                 strongSelf.segmentedTitleView = nil
                                 if previousHadContentNode {
                                     strongSelf.navigationBar?.setContentNode(nil, animated: false)
@@ -557,7 +569,8 @@ open class ItemListController: ViewController, KeyShortcutResponder, Presentable
                     if strongSelf.presentationData != controllerState.presentationData || isFirstTime {
                         strongSelf.presentationData = controllerState.presentationData
                         
-                        strongSelf.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: NavigationBarTheme(rootControllerTheme: strongSelf.presentationData.theme, hideBackground: strongSelf.hideNavigationBarBackground, hideSeparator: strongSelf.hideNavigationBarBackground, edgeEffectColor: state.0.style == .blocks ? strongSelf.presentationData.theme.list.blocksBackgroundColor : strongSelf.presentationData.theme.list.plainBackgroundColor, style: .glass), strings: NavigationBarStrings(presentationStrings: strongSelf.presentationData.strings)), transition: .immediate)
+                        strongSelf.navigationBar?.updatePresentationData(NavigationBarPresentationData(theme: strongSelf.usesWegramAppearance ? NavigationBarTheme(wegramTheme: strongSelf.presentationData.theme) : NavigationBarTheme(rootControllerTheme: strongSelf.presentationData.theme, hideBackground: strongSelf.hideNavigationBarBackground, hideSeparator: strongSelf.hideNavigationBarBackground, edgeEffectColor: state.0.style == .blocks ? strongSelf.presentationData.theme.list.blocksBackgroundColor : strongSelf.presentationData.theme.list.plainBackgroundColor, style: .glass), strings: NavigationBarStrings(presentationStrings: strongSelf.presentationData.strings)), transition: .immediate)
+                        strongSelf.wegramTitleLabel.textColor = WegramNavigationColors(isDark: strongSelf.presentationData.theme.overallDarkAppearance).control
                         strongSelf.statusBar.updateStatusBarStyle(strongSelf.presentationData.theme.rootController.statusBarStyle.style, animated: true)
                         
                         strongSelf.segmentedTitleView?.theme = controllerState.presentationData.theme
@@ -579,7 +592,7 @@ open class ItemListController: ViewController, KeyShortcutResponder, Presentable
         }
         |> map { ($0.presentationData, $1) }
         
-        let displayNode = ItemListControllerNode(controller: self, navigationBar: self.navigationBar!, state: nodeState)
+        let displayNode = ItemListControllerNode(controller: self, navigationBar: self.navigationBar!, state: nodeState, usesWegramAppearance: self.usesWegramAppearance)
         displayNode.dismiss = { [weak self] in
             self?.presentingViewController?.dismiss(animated: true, completion: nil)
         }

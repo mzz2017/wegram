@@ -22,6 +22,10 @@ open class NavigationBarContentNode: ASDisplayNode {
         return 44.0
     }
     
+    open var replacementRespectsTopInset: Bool {
+        return false
+    }
+
     open var mode: NavigationBarContentMode {
         return .replacement
     }

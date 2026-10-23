@@ -22,6 +22,8 @@
     
     UILabel *_numberLabel;
     NSInteger _number;
+    UIImageView *_wegramCheckView;
+    bool _wegramRenderedSelected;
     
     UIColor *_checkColor;
     
@@ -30,6 +32,100 @@
 @end
 
 @implementation TGCheckButtonView
+
+@synthesize usesWegramAppearance = _usesWegramAppearance;
+@synthesize usesWegramGridAppearance = _usesWegramGridAppearance;
+
+- (void)setUsesWegramAppearance:(bool)usesWegramAppearance
+{
+    if (_usesWegramAppearance == usesWegramAppearance)
+        return;
+    _usesWegramAppearance = usesWegramAppearance;
+    CGSize size = usesWegramAppearance ? CGSizeMake(44.0, 44.0) : _size;
+    self.frame = CGRectMake(self.frame.origin.x, self.frame.origin.y, size.width, size.height);
+    [self updateWegramCheck];
+}
+
+- (void)setUsesWegramGridAppearance:(bool)usesWegramGridAppearance
+{
+    if (_usesWegramGridAppearance == usesWegramGridAppearance)
+        return;
+    _usesWegramGridAppearance = usesWegramGridAppearance;
+    _wegramCheckView.image = nil;
+    [self updateWegramCheck];
+}
+
+- (void)updateWegramCheck
+{
+    _wrapperView.hidden = _usesWegramAppearance;
+    _wegramCheckView.hidden = !_usesWegramAppearance;
+    if (!_usesWegramAppearance)
+        return;
+    if (_wegramCheckView == nil)
+    {
+        _wegramCheckView = [[UIImageView alloc] initWithFrame:self.bounds];
+        _wegramCheckView.userInteractionEnabled = false;
+        _wegramCheckView.isAccessibilityElement = false;
+        _wegramCheckView.contentMode = UIViewContentModeCenter;
+        [self addSubview:_wegramCheckView];
+    }
+    _wegramCheckView.frame = self.bounds;
+    if (_wegramCheckView.image != nil && _wegramRenderedSelected == self.selected)
+        return;
+    _wegramRenderedSelected = self.selected;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(44.0, 44.0), false, _usesWegramGridAppearance ? MAX(1.0, self.traitCollection.displayScale) : 0.0);
+    CGContextRef context = UIGraphicsGetCurrentContext();
+    CGRect circle = _usesWegramGridAppearance ? CGRectMake(12.0, 8.0, 24.0, 24.0) : CGRectMake(9.5, 9.5, 25.0, 25.0);
+    if (self.selected)
+    {
+        CGContextSetFillColorWithColor(context, [UIColor colorWithRed:7.0 / 255.0 green:193.0 / 255.0 blue:96.0 / 255.0 alpha:1.0].CGColor);
+        CGContextFillEllipseInRect(context, circle);
+        CGContextSetStrokeColorWithColor(context, UIColor.whiteColor.CGColor);
+        CGContextSetLineWidth(context, _usesWegramGridAppearance ? 2.0 : 1.8);
+        CGContextSetLineCap(context, kCGLineCapRound);
+        CGContextSetLineJoin(context, kCGLineJoinRound);
+        if (_usesWegramGridAppearance)
+        {
+            CGContextMoveToPoint(context, 19.1667, 20.0);
+            CGContextAddLineToPoint(context, 23.0, 23.5);
+            CGContextAddLineToPoint(context, 29.5, 17.3333);
+        }
+        else
+        {
+            CGContextMoveToPoint(context, 16.5, 22.0);
+            CGContextAddLineToPoint(context, 20.5, 26.0);
+            CGContextAddLineToPoint(context, 28.0, 18.0);
+        }
+        CGContextStrokePath(context);
+    }
+    else
+    {
+        if (_usesWegramGridAppearance)
+        {
+            CGContextSetFillColorWithColor(context, [UIColor colorWithWhite:0.0 alpha:0.1].CGColor);
+            CGContextFillEllipseInRect(context, circle);
+        }
+        CGContextSetStrokeColorWithColor(context, UIColor.whiteColor.CGColor);
+        CGContextSetLineWidth(context, 1.5);
+        CGContextStrokeEllipseInRect(context, CGRectInset(circle, 0.75, 0.75));
+    }
+    _wegramCheckView.image = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+}
+
+- (void)layoutSubviews
+{
+    [super layoutSubviews];
+    if (_usesWegramAppearance)
+        [self updateWegramCheck];
+}
+
+- (void)setSelected:(BOOL)selected
+{
+    [super setSelected:selected];
+    if (_usesWegramAppearance)
+        [self updateWegramCheck];
+}
 
 + (void)resetCache {
 }
@@ -473,7 +569,7 @@
         }
     }
     
-    super.selected = selected;
+    self.selected = selected;
 }
 
 - (void)setNumber:(NSUInteger)number

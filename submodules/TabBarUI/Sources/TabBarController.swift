@@ -209,6 +209,8 @@ open class TabBarControllerImpl: ViewController, TabBarController {
                             if let controller = strongSelf.currentController {
                                 if longTap {
                                     controller.longTapWithTabBar?()
+                                } else if let sourceView = strongSelf.tabBarControllerNode.contextSourceViewForControllerTab(at: index), controller.tabBarItemTapAction(sourceView: sourceView) {
+                                    // The active tab can expose secondary actions without a permanent toolbar.
                                 } else {
                                     controller.scrollToTopWithTabBar?()
                                 }

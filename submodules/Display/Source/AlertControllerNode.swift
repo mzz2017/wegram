@@ -46,7 +46,7 @@ final class AlertControllerNode: ASDisplayNode {
         self.rightDimView.backgroundColor = dimColor
         
         self.containerNode = ASDisplayNode()
-        self.containerNode.layer.cornerRadius = 14.0
+        self.containerNode.layer.cornerRadius = contentNode.containerCornerRadius
         self.containerNode.layer.masksToBounds = true
         
         self.backgroundNode = ASDisplayNode()
@@ -127,7 +127,7 @@ final class AlertControllerNode: ASDisplayNode {
             self.existingAlertControllerNode = nil
         } else {
             self.centerDimView.backgroundColor = nil
-            self.centerDimView.image = generateStretchableFilledCircleImage(radius: 16.0, color: nil, backgroundColor: UIColor(white: 0.0, alpha: 0.5))
+            self.centerDimView.image = generateStretchableFilledCircleImage(radius: self.contentNode.containerCornerRadius + 2.0, color: nil, backgroundColor: UIColor(white: 0.0, alpha: 0.5))
             self.centerDimView.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)
             
             self.topDimView.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.3)

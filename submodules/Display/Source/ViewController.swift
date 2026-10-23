@@ -260,13 +260,15 @@ public protocol CustomViewControllerNavigationDataSummary: AnyObject {
         }
     }
 
+    open var navigationBarDefaultHeight: CGFloat { return self.navigationBar?.nominalHeight ?? 60 }
+
     open func navigationLayout(layout: ContainerViewLayout) -> NavigationLayout {
         let statusBarHeight: CGFloat = layout.statusBarHeight ?? 0.0
         var defaultNavigationBarHeight: CGFloat
         if self._presentedInModal && self._hasGlassStyle {
             defaultNavigationBarHeight = 68.0
         } else {
-            defaultNavigationBarHeight = 60.0
+            defaultNavigationBarHeight = self.navigationBarDefaultHeight
         }
         let navigationBarHeight: CGFloat = statusBarHeight + (self.navigationBar?.contentHeight(defaultHeight: defaultNavigationBarHeight) ?? defaultNavigationBarHeight)
 
@@ -713,6 +715,11 @@ public protocol CustomViewControllerNavigationDataSummary: AnyObject {
     open func tabBarItemContextAction(sourceView: ContextExtractedContentContainingView, gesture: ContextGesture) {
     }
     
+    /// Return true when a repeated tap is handled instead of scrolling to the top.
+    open func tabBarItemTapAction(sourceView: ContextExtractedContentContainingView) -> Bool {
+        return false
+    }
+
     open func tabBarItemHasDoubleTapAction() -> Bool {
         return false
     }

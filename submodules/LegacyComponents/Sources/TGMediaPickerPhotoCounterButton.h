@@ -4,6 +4,7 @@
 @interface TGMediaPickerPhotoCounterButton : UIButton
 
 @property (nonatomic, assign) bool internalHidden;
+@property (nonatomic, assign) bool hidesWhenUnselected;
 
 - (void)setSelectedCount:(NSInteger)count animated:(bool)animated;
 - (void)setActiveNumber:(NSInteger)number animated:(bool)animated;

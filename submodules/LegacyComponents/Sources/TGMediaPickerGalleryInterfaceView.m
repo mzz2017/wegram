@@ -1,4 +1,5 @@
 #import <LegacyComponents/LegacyComponents.h>
+#import <QuartzCore/QuartzCore.h>
 #import <LegacyComponents/TGMediaPickerGalleryInterfaceView.h>
 
 #import "LegacyComponentsInternal.h"
@@ -79,6 +80,16 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     return forceLivePhotoEnabled ? TGMediaLivePhotoModeLive : TGMediaLivePhotoModeOff;
 }
 
+NSString *TGMediaPickerGalleryPositionText(NSArray *items, id focusedItem)
+{
+    if (focusedItem == nil)
+        return nil;
+    NSUInteger index = [items indexOfObject:focusedItem];
+    if (items.count == 0 || index == NSNotFound)
+        return nil;
+    return [NSString stringWithFormat:@"%lu/%lu", (unsigned long)index + 1, (unsigned long)items.count];
+}
+
 @interface TGMediaPickerGalleryWrapperView: UIView
 {
     
@@ -122,6 +133,13 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     
     TGPhotoCaptionInputMixin *_captionMixin;
     
+    TGModernButton *_wegramBackButton;
+    UILabel *_wegramPositionLabel;
+    UIView *_wegramPreviewShade;
+    CAGradientLayer *_wegramPreviewGradient;
+    bool _wegramSelectionInterfaceHidden;
+    bool _wegramCaptionRequested;
+    bool _wegramNativeCaptionHidden;
     TGModernButton *_muteButton;
     TGCheckButtonView *_checkButton;
     bool _ignoreSetSelected;
@@ -159,6 +177,8 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     id<LegacyComponentsContext> _context;
     
     bool _ignoreSelectionUpdates;
+    NSString *_selectionLabelBeforeWegram;
+    NSString *_counterLabelBeforeWegram;
 }
 
 @property (nonatomic, strong) ASHandle *actionHandle;
@@ -169,6 +189,141 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 @implementation TGMediaPickerGalleryInterfaceView
 
 @synthesize safeAreaInset = _safeAreaInset;
+@synthesize usesWegramAppearance = _usesWegramAppearance;
+
+- (void)setWegramMergeView:(UIView *)wegramMergeView
+{
+    [_wegramMergeView removeFromSuperview];
+    _wegramMergeView = wegramMergeView;
+    if (wegramMergeView != nil)
+        [_wrapperView addSubview:wegramMergeView];
+    [self setNeedsLayout];
+}
+
+- (void)setHidesWegramCaptionPanel:(bool)hidesWegramCaptionPanel
+{
+    if (_hidesWegramCaptionPanel && !hidesWegramCaptionPanel)
+        _captionMixin.inputPanelView.hidden = _wegramNativeCaptionHidden;
+    _hidesWegramCaptionPanel = hidesWegramCaptionPanel;
+    if (hidesWegramCaptionPanel && _wegramPreviewShade == nil)
+    {
+        _wegramPreviewShade = [[UIView alloc] init];
+        _wegramPreviewShade.userInteractionEnabled = false;
+        _wegramPreviewGradient = [CAGradientLayer layer];
+        _wegramPreviewGradient.colors = @[(id)UIColorRGB(0x333333).CGColor, (id)UIColorRGB(0x151515).CGColor];
+        [_wegramPreviewShade.layer addSublayer:_wegramPreviewGradient];
+        [_wrapperView insertSubview:_wegramPreviewShade atIndex:0];
+    }
+    _wegramPreviewShade.hidden = !hidesWegramCaptionPanel;
+    [self updateWegramPreviewSelection];
+    [self setNeedsLayout];
+}
+
+- (void)updateWegramPreviewSelection
+{
+    if (!_usesWegramAppearance)
+        return;
+    if (self.updateWegramMergeView != nil)
+        self.updateWegramMergeView();
+    _wegramPreviewShade.hidden = !_hidesWegramCaptionPanel || _wegramSelectionInterfaceHidden;
+    _wegramMergeView.alpha = _wegramSelectionInterfaceHidden ? 0.0 : 1.0;
+    _wegramMergeView.userInteractionEnabled = !_wegramSelectionInterfaceHidden && !_ignoreSelectionUpdates;
+    if (_hidesWegramCaptionPanel)
+        _captionMixin.inputPanelView.hidden = _wegramNativeCaptionHidden || (!_wegramCaptionRequested && !_captionMixin.editing);
+    _wegramPositionLabel.text = self.galleryPosition != nil ? self.galleryPosition(_currentItem) : nil;
+    id<TGMediaSelectableItem> selectableItem = nil;
+    if ([_currentItem conformsToProtocol:@protocol(TGModernGallerySelectableItem)])
+        selectableItem = ((id<TGModernGallerySelectableItem>)_currentItem).selectableMediaItem;
+    [_selectedPhotosView setHidden:_wegramSelectionInterfaceHidden || _selectedPhotosView.selectedItemsModel.totalCount == 0 animated:false];
+    _selectedPhotosView.focusedItemIdentifier = selectableItem.uniqueIdentifier;
+}
+
+- (void)updateWegramCounterAppearance
+{
+    bool hidesWhenUnselected = _usesWegramAppearance && _hidesSelectionCounterWhenClosed;
+    if (_photoCounterButton.hidesWhenUnselected == hidesWhenUnselected)
+        return;
+    if (hidesWhenUnselected)
+    {
+        _counterLabelBeforeWegram = _photoCounterButton.accessibilityLabel;
+        _photoCounterButton.accessibilityLabel = TGLocalized(@"Common.Close");
+    }
+    else
+    {
+        _photoCounterButton.accessibilityLabel = _counterLabelBeforeWegram;
+        _counterLabelBeforeWegram = nil;
+    }
+    _photoCounterButton.hidesWhenUnselected = hidesWhenUnselected;
+}
+
+- (void)setHidesSelectionCounterWhenClosed:(bool)hidesSelectionCounterWhenClosed
+{
+    _hidesSelectionCounterWhenClosed = hidesSelectionCounterWhenClosed;
+    [self updateWegramCounterAppearance];
+}
+
+- (void)setUsesWegramAppearance:(bool)usesWegramAppearance
+{
+    if (_usesWegramAppearance == usesWegramAppearance)
+        return;
+    _usesWegramAppearance = usesWegramAppearance;
+    _checkButton.usesWegramAppearance = usesWegramAppearance;
+    _recipientLabel.hidden = usesWegramAppearance;
+    _arrowView.hidden = usesWegramAppearance;
+    [self updateWegramCounterAppearance];
+    if (usesWegramAppearance && _wegramBackButton == nil)
+    {
+        _wegramBackButton = [[TGModernButton alloc] initWithFrame:CGRectMake(0, 0, 44, 44)];
+        UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(28, 28)];
+        UIImage *backImage = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            CGContextRef cgContext = context.CGContext;
+            CGContextSetStrokeColorWithColor(cgContext, UIColor.whiteColor.CGColor);
+            CGContextSetLineWidth(cgContext, 1.33);
+            CGContextSetLineCap(cgContext, kCGLineCapRound);
+            CGContextSetLineJoin(cgContext, kCGLineJoinRound);
+            CGContextMoveToPoint(cgContext, 17, 6);
+            CGContextAddLineToPoint(cgContext, 9.5, 14);
+            CGContextAddLineToPoint(cgContext, 17, 22);
+            CGContextStrokePath(cgContext);
+        }];
+        [_wegramBackButton setImage:backImage forState:UIControlStateNormal];
+        _wegramBackButton.accessibilityLabel = TGLocalized(@"Common.Back");
+        [_wegramBackButton addTarget:self action:@selector(wegramBackButtonPressed) forControlEvents:UIControlEventTouchUpInside];
+        [_wrapperView addSubview:_wegramBackButton];
+        _wegramBackButton.alpha = _checkButton != nil ? _checkButton.alpha : _portraitToolbarView.alpha;
+        _wegramBackButton.userInteractionEnabled = _checkButton != nil ? _checkButton.userInteractionEnabled : _portraitToolbarView.userInteractionEnabled;
+    }
+    if (usesWegramAppearance && _wegramPositionLabel == nil)
+    {
+        _wegramPositionLabel = [[UILabel alloc] init];
+        _wegramPositionLabel.font = TGSystemFontOfSize(17);
+        _wegramPositionLabel.textColor = UIColor.whiteColor;
+        _wegramPositionLabel.textAlignment = NSTextAlignmentCenter;
+        _wegramPositionLabel.alpha = _wegramBackButton.alpha;
+        [_wrapperView addSubview:_wegramPositionLabel];
+    }
+    if (!usesWegramAppearance && _hidesWegramCaptionPanel)
+        _captionMixin.inputPanelView.hidden = _wegramNativeCaptionHidden;
+    _wegramPreviewShade.hidden = !usesWegramAppearance || !_hidesWegramCaptionPanel;
+    _wegramMergeView.hidden = !usesWegramAppearance;
+    _wegramPositionLabel.hidden = !usesWegramAppearance;
+    _selectedPhotosView.usesWegramAppearance = usesWegramAppearance;
+    if (!usesWegramAppearance)
+        [_selectedPhotosView setHidden:!_photoCounterButton.selected animated:false];
+    _wegramBackButton.hidden = !usesWegramAppearance;
+    [self updateWegramPreviewSelection];
+    if (usesWegramAppearance)
+    {
+        _selectionLabelBeforeWegram = _checkButton.accessibilityLabel;
+        _checkButton.accessibilityLabel = TGLocalized(@"Common.Select");
+    }
+    else
+    {
+        _checkButton.accessibilityLabel = _selectionLabelBeforeWegram;
+        _selectionLabelBeforeWegram = nil;
+    }
+    [self setNeedsLayout];
+}
 
 - (instancetype)initWithContext:(id<LegacyComponentsContext>)context focusItem:(id<TGModernGalleryItem>)focusItem selectionContext:(TGMediaSelectionContext *)selectionContext editingContext:(TGMediaEditingContext *)editingContext stickersContext:(id<TGPhotoPaintStickersContext>)stickersContext hasSelectionPanel:(bool)hasSelectionPanel hasCameraButton:(bool)hasCameraButton recipientName:(NSString *)recipientName isScheduledMessages:(bool)isScheduledMessages isActionButtonDone:(bool)isActionButtonDone hasCoverButton:(bool)hasCoverButton
 {
@@ -212,6 +367,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
                 return;
             
             strongSelf->_ignoreSelectionUpdates = true;
+            strongSelf->_wegramMergeView.userInteractionEnabled = false;
             [strongSelf->_selectionChangedDisposable dispose];
             [strongSelf->_itemSelectedDisposable dispose];
             
@@ -317,6 +473,14 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
                 [strongSelf updateGroupingButtonVisibility];
             } file:__FILE_NAME__ line:__LINE__];
             
+            _groupingChangedDisposable = [[[_selectionContext groupingChangedSignal] deliverOn:[SQueue mainQueue]] startStrictWithNext:^(__unused id next) {
+                __strong TGMediaPickerGalleryInterfaceView *strongSelf = weakSelf;
+                if (strongSelf != nil && strongSelf.usesWegramAppearance) {
+                    [strongSelf updateWegramPreviewSelection];
+                    [strongSelf setNeedsLayout];
+                }
+            } file:__FILE_NAME__ line:__LINE__];
+
             if (_selectionContext.allowGrouping)
             {
                 if (_editingContext != nil)
@@ -388,6 +552,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
                 [photoItemView returnFromEditing];
             }
             
+            strongSelf->_wegramCaptionRequested = false;
             [strongSelf setSelectionInterfaceHidden:false delay:0.25 animated:true];
             [strongSelf setItemHeaderViewHidden:false animated:true];
             
@@ -552,6 +717,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     [_itemSelectedDisposable dispose];
     [_itemAvailabilityDisposable dispose];
     [_selectionChangedDisposable dispose];
+    [_groupingChangedDisposable dispose];
     [_timersChangedDisposable dispose];
     [_adjustmentsChangedDisposable dispose];
 }
@@ -601,10 +767,18 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 }
 
 - (bool)canBeginEditingCaption {
-    return _hasCaptions && _captionMixin != nil && _captionMixin.inputPanel != nil && !_captionMixin.inputPanelView.hidden && !_captionMixin.editing;
+    if (_usesWegramAppearance && _hidesWegramCaptionPanel && _ignoreSelectionUpdates)
+        return false;
+    return _hasCaptions && _captionMixin != nil && _captionMixin.inputPanel != nil && (!_captionMixin.inputPanelView.hidden || (_usesWegramAppearance && _hidesWegramCaptionPanel && !_wegramNativeCaptionHidden)) && !_captionMixin.editing;
 }
 
 - (void)beginEditingCaption {
+    if (_usesWegramAppearance && _hidesWegramCaptionPanel) {
+        if (![self canBeginEditingCaption])
+            return;
+        _wegramCaptionRequested = true;
+        _captionMixin.inputPanelView.hidden = false;
+    }
     [_captionMixin activateInput];
 }
 
@@ -684,6 +858,9 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 {
     _selectedPhotosView.selectedItemsModel = selectedItemsModel;
     [_selectedPhotosView reloadData];
+    [self updateWegramPreviewSelection];
+    if (_usesWegramAppearance)
+        [self setNeedsLayout];
     
     if (selectedItemsModel != nil && _selectedPhotosView != nil)
         _photoCounterButton.userInteractionEnabled = true;
@@ -699,6 +876,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 {
     _currentItem = item;
     _currentItemView = itemView;
+    [self updateWegramPreviewSelection];
     
     [_currentItemView setSafeAreaInset:[self localSafeAreaInset]];
     
@@ -838,9 +1016,22 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     [_selectedPhotosView setThumbnailSignalForItem:thumbnailSignalForItem];
 }
 
+- (void)wegramBackButtonPressed
+{
+    if (!_usesWegramAppearance || self.window == nil || _ignoreSelectionUpdates)
+        return;
+    for (UIView *view = _wegramBackButton; view != nil; view = view.superview)
+    {
+        if (view.hidden || view.alpha <= 0.01 || !view.userInteractionEnabled)
+            return;
+    }
+    [self cancelButtonPressed];
+}
+
 - (void)cancelButtonPressed
 {
     _ignoreSelectionUpdates = true;
+    _wegramMergeView.userInteractionEnabled = false;
     if (_cameraButton != nil && _selectionContext != nil)
     {
         __weak TGMediaPickerGalleryInterfaceView *weakSelf = self;
@@ -928,11 +1119,23 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     _ignoreSetSelected = false;
 }
 
+- (void)toggleSelectedPhotosFromMenu
+{
+    if (!_usesWegramAppearance || self.window == nil || _ignoreSelectionUpdates || _selectedPhotosView == nil || !_photoCounterButton.userInteractionEnabled || _selectionContext.count == 0)
+        return;
+    for (UIView *view = _wegramBackButton; view != nil; view = view.superview)
+    {
+        if (view.hidden || view.alpha <= 0.01 || !view.userInteractionEnabled)
+            return;
+    }
+    [self photoCounterButtonPressed];
+}
+
 - (void)photoCounterButtonPressed
 {
     bool selected = !_photoCounterButton.selected;
     [_photoCounterButton setSelected:!_photoCounterButton.selected animated:true];
-    [_selectedPhotosView setHidden:!_photoCounterButton.selected animated:true];
+    [_selectedPhotosView setHidden:_usesWegramAppearance ? false : !_photoCounterButton.selected animated:true];
     [_groupButton setHidden:!_photoCounterButton.selected animated:true];
     
     void (^changeBlock)(void) = ^
@@ -1173,12 +1376,16 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
             if ([adjustments isKindOfClass:[TGVideoEditAdjustments class]])
             {
                 TGVideoEditAdjustments *videoAdjustments = (TGVideoEditAdjustments *)adjustments;
-                [strongSelf->_captionMixin setCaptionPanelHidden:(videoAdjustments.sendAsGif && strongSelf->_inhibitDocumentCaptions) animated:true];
+                strongSelf->_wegramNativeCaptionHidden = videoAdjustments.sendAsGif && strongSelf->_inhibitDocumentCaptions;
+                [strongSelf->_captionMixin setCaptionPanelHidden:strongSelf->_wegramNativeCaptionHidden animated:true];
             }
             else
             {
+                strongSelf->_wegramNativeCaptionHidden = false;
                 [strongSelf->_captionMixin setCaptionPanelHidden:false animated:true];
             }
+            [strongSelf updateWegramPreviewSelection];
+            [strongSelf setNeedsLayout];
             
             CGSize originalSize = CGSizeZero;
             if ([editableMediaItem respondsToSelector:@selector(originalSize)])
@@ -1362,6 +1569,8 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     NSUInteger finalCount = MAX(1, selectedCount);
     _portraitToolbarView.sendPaidMessageStars = (_editingContext.sendPaidMessageStars * finalCount);
     [_portraitToolbarView setNeedsLayout];
+    if (_usesWegramAppearance)
+        [_landscapeToolbarView setNeedsLayout];
     
     if (counterVisible)
     {
@@ -1407,6 +1616,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     {
         [_selectedPhotosView reloadData];
     }
+    [self updateWegramPreviewSelection];
 }
 
 - (void)setSelectionInterfaceHidden:(bool)hidden animated:(bool)animated
@@ -1416,11 +1626,15 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 
 - (void)setSelectionInterfaceHidden:(bool)hidden delay:(NSTimeInterval)__unused delay animated:(bool)animated
 {
+    _wegramSelectionInterfaceHidden = hidden;
+    [self updateWegramPreviewSelection];
     CGFloat alpha = (hidden ? 0.0f : 1.0f);
     if (animated)
     {
         [UIView animateWithDuration:0.2 delay:0.0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState animations:^
         {
+            _wegramBackButton.alpha = alpha;
+            _wegramPositionLabel.alpha = alpha;
             _checkButton.alpha = alpha;
             _muteButton.alpha = alpha;
             _coverButton.alpha = alpha;
@@ -1431,6 +1645,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
         {
             if (finished)
             {
+                _wegramBackButton.userInteractionEnabled = !hidden;
                 _checkButton.userInteractionEnabled = !hidden;
                 _muteButton.userInteractionEnabled = !hidden;
                 _coverButton.userInteractionEnabled = !hidden;
@@ -1452,7 +1667,10 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
         _cameraButton.alpha = alpha;
         _cameraButton.userInteractionEnabled = !hidden;
         
+        _wegramBackButton.alpha = alpha;
+        _wegramPositionLabel.alpha = alpha;
         _checkButton.alpha = alpha;
+        _wegramBackButton.userInteractionEnabled = !hidden;
         _checkButton.userInteractionEnabled = !hidden;
         
         _muteButton.alpha = alpha;
@@ -1486,11 +1704,15 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 
 - (void)setAllInterfaceHidden:(bool)hidden keepHeader:(bool)keepHeader delay:(NSTimeInterval)__unused delay animated:(bool)animated
 {
+    _wegramSelectionInterfaceHidden = hidden;
+    [self updateWegramPreviewSelection];
     CGFloat alpha = (hidden ? 0.0f : 1.0f);
     if (animated)
     {
         [UIView animateWithDuration:0.2 delay:0.0 options:UIViewAnimationOptionCurveLinear | UIViewAnimationOptionBeginFromCurrentState animations:^
         {
+            _wegramBackButton.alpha = alpha;
+            _wegramPositionLabel.alpha = alpha;
             _checkButton.alpha = alpha;
             _muteButton.alpha = alpha;
             _coverButton.alpha = alpha;
@@ -1504,6 +1726,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
         {
             if (finished)
             {
+                _wegramBackButton.userInteractionEnabled = !hidden;
                 _checkButton.userInteractionEnabled = !hidden;
                 _muteButton.userInteractionEnabled = !hidden;
                 _coverButton.userInteractionEnabled = !hidden;
@@ -1528,7 +1751,10 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
         _cameraButton.alpha = alpha;
         _cameraButton.userInteractionEnabled = !hidden;
         
+        _wegramBackButton.alpha = alpha;
+        _wegramPositionLabel.alpha = alpha;
         _checkButton.alpha = alpha;
+        _wegramBackButton.userInteractionEnabled = !hidden;
         _checkButton.userInteractionEnabled = !hidden;
         
         _muteButton.alpha = alpha;
@@ -1707,6 +1933,9 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 }
 
 - (void)onDismiss {
+    if (_usesWegramAppearance && _hidesWegramCaptionPanel)
+        _ignoreSelectionUpdates = true;
+    _wegramMergeView.userInteractionEnabled = false;
     [_captionMixin onAnimateOut];
 }
 
@@ -1802,11 +2031,13 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
         editingCover = true;
     }
     if (!editingCover) {
-        if (view == _photoCounterButton
+        if (view == _wegramBackButton
+            || view == _photoCounterButton
             || view == _checkButton
             || view == _muteButton
             || view == _groupButton
             || view == _cameraButton
+            || [view isDescendantOfView:_wegramMergeView]
             || view == _coverButton
             || [view isDescendantOfView:_headerWrapperView]
             || [view isDescendantOfView:_portraitToolbarView]
@@ -1949,6 +2180,9 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     screenEdges.left += _safeAreaInset.left;
     screenEdges.right -= _safeAreaInset.right;
     
+    if (_usesWegramAppearance)
+        return CGRectMake(screenEdges.right - 50, screenEdges.top + (UIInterfaceOrientationIsLandscape(orientation) ? 5 : 12), _checkButton.frame.size.width, _checkButton.frame.size.height);
+
     switch (orientation)
     {
         case UIInterfaceOrientationLandscapeLeft:
@@ -2092,6 +2326,8 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
 - (void)layoutSubviews
 {
     [super layoutSubviews];
+    if (_usesWegramAppearance && self.updateWegramMergeView != nil)
+        self.updateWegramMergeView();
 
     UIInterfaceOrientation orientation = [self interfaceOrientation];
     _captionMixin.interfaceOrientation = [[LegacyComponentsGlobals provider] applicationStatusBarOrientation];
@@ -2120,7 +2356,7 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     
     _selectedPhotosView.interfaceOrientation = orientation;
     
-    CGFloat photosViewSize = TGPhotoThumbnailSizeForCurrentScreen().height + 4 * 2;
+    CGFloat photosViewSize = _usesWegramAppearance ? 96 : TGPhotoThumbnailSizeForCurrentScreen().height + 4 * 2;
     
     bool hasHeaderView = (_currentItemView.headerView != nil);
     CGFloat headerInset = hasHeaderView ? 64.0f : 0.0f;
@@ -2128,7 +2364,11 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     CGFloat portraitToolbarViewBottomEdge = screenSide;
     if (self.usesSimpleLayout || TGIsPad())
         portraitToolbarViewBottomEdge = screenEdges.bottom;
-    _portraitToolbarView.frame = CGRectMake(screenEdges.left, portraitToolbarViewBottomEdge - TGPhotoEditorToolbarSize - _safeAreaInset.bottom, self.frame.size.width, TGPhotoEditorToolbarSize + _safeAreaInset.bottom);
+    bool usesWegramPreviewLayout = _usesWegramAppearance && _hidesWegramCaptionPanel && !UIInterfaceOrientationIsLandscape(orientation);
+    CGFloat portraitToolbarHeight = usesWegramPreviewLayout ? 50.0 : TGPhotoEditorToolbarSize;
+    CGFloat portraitBottomInset = usesWegramPreviewLayout ? MAX(_safeAreaInset.bottom, self.window.safeAreaInsets.bottom) : _safeAreaInset.bottom;
+    _portraitToolbarView.bottomInset = portraitBottomInset;
+    _portraitToolbarView.frame = CGRectMake(screenEdges.left, portraitToolbarViewBottomEdge - portraitToolbarHeight - portraitBottomInset, self.frame.size.width, portraitToolbarHeight + portraitBottomInset);
     
     CGFloat coverTitleTopY = screenEdges.top;
     if (_safeAreaInset.top > 20.0f + FLT_EPSILON)
@@ -2190,6 +2430,34 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
             break;
     }
     
+    CGFloat wegramMergeHeight = _usesWegramAppearance && _wegramMergeView != nil && !_wegramMergeView.hidden ? [_wegramMergeView sizeThatFits:CGSizeMake(self.frame.size.width - _safeAreaInset.left - _safeAreaInset.right, CGFLOAT_MAX)].height : 0.0;
+    _wegramMergeView.frame = CGRectMake(screenEdges.left + _safeAreaInset.left, CGRectGetMinY(_portraitToolbarView.frame) - wegramMergeHeight, self.frame.size.width - _safeAreaInset.left - _safeAreaInset.right, wegramMergeHeight);
+    if (_usesWegramAppearance && UIInterfaceOrientationIsLandscape(orientation))
+    {
+        CGFloat left = orientation == UIInterfaceOrientationLandscapeLeft ? CGRectGetMaxX(_selectedPhotosView.frame) + 16 : screenEdges.left + _safeAreaInset.left + 16;
+        CGFloat right = orientation == UIInterfaceOrientationLandscapeRight ? CGRectGetMinX(_selectedPhotosView.frame) - 16 : screenEdges.right - _safeAreaInset.right - 16;
+        CGFloat width = MAX(0, right - left);
+        CGFloat height = !_wegramMergeView.hidden ? [_wegramMergeView sizeThatFits:CGSizeMake(width, CGFLOAT_MAX)].height : 0;
+        _wegramMergeView.frame = CGRectMake(left, screenEdges.bottom - _safeAreaInset.bottom - height, width, height);
+    }
+    [_wegramMergeView layoutIfNeeded];
+    _wegramBackButton.frame = CGRectMake(screenEdges.left + _safeAreaInset.left, screenEdges.top + (_safeAreaInset.top > 20.0 ? _safeAreaInset.top : 0.0) + (UIInterfaceOrientationIsLandscape(orientation) ? 5 : 12), 44, 44);
+    _wegramPositionLabel.frame = CGRectMake(screenEdges.left + _safeAreaInset.left + 52, _wegramBackButton.frame.origin.y, MAX(0, self.frame.size.width - _safeAreaInset.left - _safeAreaInset.right - 104), 44);
+    if (_usesWegramAppearance && UIInterfaceOrientationIsPortrait(orientation))
+    {
+        CGFloat captionHeight = _hidesWegramCaptionPanel ? 0 : [_captionMixin.inputPanel baseHeight];
+        _selectedPhotosView.frame = CGRectMake(screenEdges.left + _safeAreaInset.left, CGRectGetMinY(_portraitToolbarView.frame) - captionHeight - wegramMergeHeight - (_hidesWegramCaptionPanel ? 90 : 104), self.frame.size.width - _safeAreaInset.left - _safeAreaInset.right, 96);
+    }
+    if (_usesWegramAppearance && _hidesWegramCaptionPanel)
+    {
+        if (UIInterfaceOrientationIsPortrait(orientation)) {
+            CGFloat top = _selectedPhotosView.selectedItemsModel.totalCount > 0 ? CGRectGetMinY(_selectedPhotosView.frame) : CGRectGetMinY(_portraitToolbarView.frame);
+            _wegramPreviewShade.frame = CGRectMake(screenEdges.left, top, self.frame.size.width, MAX(0, CGRectGetMaxY(_portraitToolbarView.frame) - top));
+        } else {
+            _wegramPreviewShade.frame = _wegramMergeView.frame;
+        }
+        _wegramPreviewGradient.frame = _wegramPreviewShade.bounds;
+    }
     _muteButton.frame = [self _muteButtonFrameForOrientation:orientation screenEdges:screenEdges hasHeaderView:true];
     _checkButton.frame = [self _checkButtonFrameForOrientation:orientation screenEdges:screenEdges hasHeaderView:hasHeaderView];
     _groupButton.frame = [self _groupButtonFrameForOrientation:orientation screenEdges:screenEdges hasHeaderView:hasHeaderView];
@@ -2208,6 +2476,11 @@ static TGMediaLivePhotoMode TGMediaPickerGalleryResolvedLivePhotoMode(NSNumber *
     CGRect itemFooterViewFrame = [self itemFooterViewFrameForSize:self.frame.size];
     for (UIView *itemFooterView in _itemFooterViews)
         itemFooterView.frame = itemFooterViewFrame;
+    if (_usesWegramAppearance)
+    {
+        [_selectedPhotosView layoutIfNeeded];
+        [self updateWegramPreviewSelection];
+    }
 }
 
 - (CGRect)doneButtonFrame {

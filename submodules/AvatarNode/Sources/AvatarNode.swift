@@ -915,7 +915,7 @@ public final class AvatarNode: ASDisplayNode {
             }
         }
         
-        public func setCustomLetters(_ letters: [String], explicitColor: AvatarNodeColorOverride? = nil, icon: AvatarNodeExplicitIcon? = nil, cutoutRect: CGRect? = nil) {
+        public func setCustomLetters(_ letters: [String], explicitColor: AvatarNodeColorOverride? = nil, icon: AvatarNodeExplicitIcon? = nil, cutoutRect: CGRect? = nil, clipStyle: AvatarNodeClipStyle = .round) {
             var explicitIndex: Int?
             if let explicitColor = explicitColor {
                 switch explicitColor {
@@ -924,14 +924,19 @@ public final class AvatarNode: ASDisplayNode {
                 }
             }
             let updatedState: AvatarNodeState = .custom(letter: letters, explicitColorIndex: explicitIndex, explicitIcon: icon)
-            if updatedState != self.state {
+            if updatedState != self.state || self.parameters?.clipStyle != clipStyle {
                 self.state = updatedState
+                self.params = nil
+                self.loadDisposable.set(nil)
+                self.imageNode.clearContents()
+                self.unroundedImage = nil
+                self.editOverlayNode?.isHidden = true
                 
                 let parameters: AvatarNodeParameters
                 if let icon = icon, case .phone = icon {
-                    parameters = AvatarNodeParameters(theme: nil, accountPeerId: nil, peerId: nil, colors: calculateAvatarColors(context: nil, explicitColorIndex: explicitIndex, peerId: nil, nameColor: nil, icon: .phoneIcon, theme: nil), letters: [], font: self.font, icon: .phoneIcon, explicitColorIndex: explicitIndex, hasImage: false, clipStyle: .round, cutoutRect: cutoutRect)
+                    parameters = AvatarNodeParameters(theme: nil, accountPeerId: nil, peerId: nil, colors: calculateAvatarColors(context: nil, explicitColorIndex: explicitIndex, peerId: nil, nameColor: nil, icon: .phoneIcon, theme: nil), letters: [], font: self.font, icon: .phoneIcon, explicitColorIndex: explicitIndex, hasImage: false, clipStyle: clipStyle, cutoutRect: cutoutRect)
                 } else {
-                    parameters = AvatarNodeParameters(theme: nil, accountPeerId: nil, peerId: nil, colors: calculateAvatarColors(context: nil, explicitColorIndex: explicitIndex, peerId: nil, nameColor: nil, icon: .none, theme: nil), letters: letters, font: self.font, icon: .none, explicitColorIndex: explicitIndex, hasImage: false, clipStyle: .round, cutoutRect: cutoutRect)
+                    parameters = AvatarNodeParameters(theme: nil, accountPeerId: nil, peerId: nil, colors: calculateAvatarColors(context: nil, explicitColorIndex: explicitIndex, peerId: nil, nameColor: nil, icon: .none, theme: nil), letters: letters, font: self.font, icon: .none, explicitColorIndex: explicitIndex, hasImage: false, clipStyle: clipStyle, cutoutRect: cutoutRect)
                 }
                 
                 self.displaySuspended = true
@@ -1373,8 +1378,8 @@ public final class AvatarNode: ASDisplayNode {
         )
     }
     
-    public func setCustomLetters(_ letters: [String], explicitColor: AvatarNodeColorOverride? = nil, icon: AvatarNodeExplicitIcon? = nil) {
-        self.contentNode.setCustomLetters(letters, explicitColor: explicitColor, icon: icon)
+    public func setCustomLetters(_ letters: [String], explicitColor: AvatarNodeColorOverride? = nil, icon: AvatarNodeExplicitIcon? = nil, clipStyle: AvatarNodeClipStyle = .round) {
+        self.contentNode.setCustomLetters(letters, explicitColor: explicitColor, icon: icon, clipStyle: clipStyle)
     }
     
     public func setStoryStats(storyStats: StoryStats?, presentationParams: StoryPresentationParams, transition: ComponentTransition) {

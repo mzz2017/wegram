@@ -303,11 +303,14 @@ open class ItemListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         }
     }
 
+    private let usesWegramAppearance: Bool
+
     var alwaysSynchronous = false
     
     private var previousContentOffset: ListViewVisibleContentOffset?
     
-    public init(controller: ItemListController?, navigationBar: NavigationBar, state: Signal<(ItemListPresentationData, (ItemListNodeState, Any)), NoError>) {
+    public init(controller: ItemListController?, navigationBar: NavigationBar, state: Signal<(ItemListPresentationData, (ItemListNodeState, Any)), NoError>, usesWegramAppearance: Bool = false) {
+        self.usesWegramAppearance = usesWegramAppearance
         self.controller = controller
         self.navigationBar = navigationBar
         
@@ -403,14 +406,14 @@ open class ItemListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
                     }
                     if let headerItemNode = strongSelf.headerItemNode {
                         headerItemNode.updateContentOffset(value, transition: transition)
-                        strongSelf.navigationBar.updateBackgroundAlpha(0.0, transition: .immediate)
+                        strongSelf.navigationBar.updateBackgroundAlpha(strongSelf.usesWegramAppearance ? 1.0 : 0.0, transition: .immediate)
                     } else {
-                        strongSelf.navigationBar.updateBackgroundAlpha(min(30.0, value) / 30.0, transition: transition)
+                        strongSelf.navigationBar.updateBackgroundAlpha(strongSelf.usesWegramAppearance ? 1.0 : min(30.0, value) / 30.0, transition: transition)
                     }
                 case .unknown, .none:
                     if let headerItemNode = strongSelf.headerItemNode {
                         headerItemNode.updateContentOffset(1000.0, transition: .immediate)
-                        strongSelf.navigationBar.updateBackgroundAlpha(0.0, transition: .immediate)
+                        strongSelf.navigationBar.updateBackgroundAlpha(strongSelf.usesWegramAppearance ? 1.0 : 0.0, transition: .immediate)
                     } else {
                         strongSelf.navigationBar.updateBackgroundAlpha(1.0, transition: .immediate)
                     }
@@ -477,7 +480,7 @@ open class ItemListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
     override open func didLoad() {
         super.didLoad()
         
-        self.navigationBar.updateBackgroundAlpha(0.0, transition: .immediate)
+        self.navigationBar.updateBackgroundAlpha(self.usesWegramAppearance ? 1.0 : 0.0, transition: .immediate)
         
         (self.view as? ItemListControllerNodeView)?.onLayout = { [weak self] in
             guard let strongSelf = self else {
@@ -656,7 +659,7 @@ open class ItemListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
         insets.bottom = max(insets.bottom, additionalInsets.bottom)
         
         let inset = max(16.0, floor((layout.size.width - 674.0) / 2.0))
-        if layout.size.width >= 320.0 {
+        if !self.usesWegramAppearance && layout.size.width >= 320.0 {
             insets.left += inset
             insets.right += inset
         }
@@ -1084,7 +1087,7 @@ open class ItemListControllerNode: ASDisplayNode, ASGestureRecognizerDelegate {
                             insets.bottom = footerHeight
                             
                             let inset = max(16.0, floor((layout.size.width - 674.0) / 2.0))
-                            if layout.size.width >= 320.0 {
+                            if !self.usesWegramAppearance && layout.size.width >= 320.0 {
                                 insets.left += inset
                                 insets.right += inset
                             }

@@ -2,7 +2,7 @@ import UIKit
 import AsyncDisplayKit
 import SwiftSignalKit
 
-private let containerInsets = UIEdgeInsets(top: 10.0, left: 10.0, bottom: 10.0, right: 10.0)
+private let defaultContainerInsets = UIEdgeInsets(top: 10.0, left: 10.0, bottom: 10.0, right: 10.0)
 
 final class ActionSheetControllerNode: ASDisplayNode, ASScrollViewDelegate {
     var theme: ActionSheetControllerTheme {
@@ -12,6 +12,10 @@ final class ActionSheetControllerNode: ASDisplayNode, ASScrollViewDelegate {
         }
     }
     
+    private var containerInsets: UIEdgeInsets {
+        return self.theme.usesWegramLayout ? .zero : defaultContainerInsets
+    }
+
     private var allowInputInset: Bool
     
     private let dismissTapView: UIView
@@ -26,6 +30,7 @@ final class ActionSheetControllerNode: ASDisplayNode, ASScrollViewDelegate {
     private let scrollNode: ASScrollNode
     private let scrollView: UIScrollView
     
+    var willDismiss: (() -> Void)?
     var dismiss: (Bool) -> Void = { _ in }
     
     private var validLayout: ContainerViewLayout?
@@ -110,17 +115,22 @@ final class ActionSheetControllerNode: ASDisplayNode, ASScrollViewDelegate {
         self.leftDimView.backgroundColor = self.theme.dimColor
         self.rightDimView.backgroundColor = self.theme.dimColor
         self.topDimView.backgroundColor = self.theme.dimColor
-        self.bottomDimView.backgroundColor = self.theme.dimColor
+        self.bottomDimView.backgroundColor = self.theme.usesWegramLayout ? self.theme.itemBackgroundColor : self.theme.dimColor
+        self.itemGroupsContainerNode.backgroundColor = self.theme.usesWegramLayout ? self.theme.itemHighlightedBackgroundColor : .clear
+        self.itemGroupsContainerNode.clipsToBounds = self.theme.usesWegramLayout
+        if !self.theme.usesWegramLayout {
+            self.itemGroupsContainerNode.layer.mask = nil
+        }
     }
     
     func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
         var insets = layout.insets(options: [.statusBar])
         
-        let containerWidth = horizontalContainerFillingSizeForLayout(layout: layout, sideInset: layout.safeInsets.left)
+        let containerWidth = self.theme.usesWegramLayout && layout.metrics.widthClass == .compact ? layout.size.width : horizontalContainerFillingSizeForLayout(layout: layout, sideInset: layout.safeInsets.left)
         
         insets.left = floor((layout.size.width - containerWidth) / 2.0)
         insets.right = insets.left
-        if !insets.bottom.isZero {
+        if !self.theme.usesWegramLayout && !insets.bottom.isZero {
             insets.bottom -= 12.0
         }
         
@@ -145,6 +155,11 @@ final class ActionSheetControllerNode: ASDisplayNode, ASScrollViewDelegate {
         }
         transition.updateFrame(node: self.itemGroupsContainerNode, frame: CGRect(origin: CGPoint(x: insets.left + containerInsets.left, y: layout.size.height - insets.bottom - containerInsets.bottom - itemGroupsContainerSize.height), size: itemGroupsContainerSize))
         
+        if self.theme.usesWegramLayout {
+            let mask = (self.itemGroupsContainerNode.layer.mask as? CAShapeLayer) ?? CAShapeLayer()
+            mask.path = UIBezierPath(roundedRect: CGRect(origin: .zero, size: itemGroupsContainerSize), byRoundingCorners: [.topLeft, .topRight], cornerRadii: CGSize(width: 8.0, height: 8.0)).cgPath
+            self.itemGroupsContainerNode.layer.mask = mask
+        }
         self.updateScrollDimViews(size: layout.size, insets: insets, transition: transition)
     }
     
@@ -172,6 +187,7 @@ final class ActionSheetControllerNode: ASDisplayNode, ASScrollViewDelegate {
     }
     
     func animateOut(cancelled: Bool) {
+        self.willDismiss?()
         let tempDimView = UIView()
         tempDimView.backgroundColor = self.theme.dimColor
         tempDimView.frame = self.bounds.offsetBy(dx: 0.0, dy: -self.bounds.size.height)
@@ -205,7 +221,7 @@ final class ActionSheetControllerNode: ASDisplayNode, ASScrollViewDelegate {
         if let layout = self.validLayout {
             var insets = layout.insets(options: [.statusBar])
             
-            let containerWidth = horizontalContainerFillingSizeForLayout(layout: layout, sideInset: layout.safeInsets.left)
+            let containerWidth = self.theme.usesWegramLayout && layout.metrics.widthClass == .compact ? layout.size.width : horizontalContainerFillingSizeForLayout(layout: layout, sideInset: layout.safeInsets.left)
             
             insets.left = floor((layout.size.width - containerWidth) / 2.0)
             insets.right = insets.left

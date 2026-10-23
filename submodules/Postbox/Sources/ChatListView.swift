@@ -80,9 +80,12 @@ public final class ChatListGroupReferencePeer: Equatable {
 public struct ChatListGroupReferenceEntry: Equatable {
     public let groupId: PeerGroupId
     public let message: Message?
+    // The newest message across the group, whatever the number of chats in it (`message` is only set
+    // for a single chat). WeGram's Folded Chats row previews it as "chat: text".
+    public let latestMessage: Message?
     public let renderedPeers: [ChatListGroupReferencePeer]
     public let unreadState: PeerGroupUnreadCountersCombinedSummary
-    
+
     public static func ==(lhs: ChatListGroupReferenceEntry, rhs: ChatListGroupReferenceEntry) -> Bool {
         if lhs.groupId != rhs.groupId {
             return false
@@ -91,6 +94,9 @@ public struct ChatListGroupReferenceEntry: Equatable {
             return false
         }
         if lhs.message?.stableVersion != rhs.message?.stableVersion {
+            return false
+        }
+        if lhs.latestMessage?.id != rhs.latestMessage?.id || lhs.latestMessage?.stableVersion != rhs.latestMessage?.stableVersion {
             return false
         }
         if lhs.renderedPeers != rhs.renderedPeers {
@@ -731,7 +737,14 @@ final class MutableChatListView {
                         }
                     }
                     
-                    self.groupEntries.append(ChatListGroupReferenceEntry(groupId: groupId, message: message, renderedPeers: renderedPeers, unreadState: postbox.groupMessageStatsTable.get(groupId: groupId)))
+                    let latestMessage: Message?
+                    if let message {
+                        latestMessage = message
+                    } else {
+                        latestMessage = postbox.messageHistoryTable.getMessage(foundIndices[0].1).flatMap({ postbox.messageHistoryTable.renderMessage($0, peerTable: postbox.peerTable, threadIndexTable: postbox.messageHistoryThreadIndexTable, storyTable: postbox.storyTable) })
+                    }
+
+                    self.groupEntries.append(ChatListGroupReferenceEntry(groupId: groupId, message: message, latestMessage: latestMessage, renderedPeers: renderedPeers, unreadState: postbox.groupMessageStatsTable.get(groupId: groupId)))
                 }
             }
         }
@@ -831,7 +844,7 @@ final class MutableChatListView {
             } else {
                 for i in 0 ..< self.groupEntries.count {
                     if let updatedState = transaction.currentUpdatedTotalUnreadSummaries[self.groupEntries[i].groupId] {
-                        self.groupEntries[i] = ChatListGroupReferenceEntry(groupId: self.groupEntries[i].groupId, message: self.groupEntries[i].message, renderedPeers: self.groupEntries[i].renderedPeers, unreadState: updatedState)
+                        self.groupEntries[i] = ChatListGroupReferenceEntry(groupId: self.groupEntries[i].groupId, message: self.groupEntries[i].message, latestMessage: self.groupEntries[i].latestMessage, renderedPeers: self.groupEntries[i].renderedPeers, unreadState: updatedState)
                         hasChanges = true
                     }
                 }
@@ -857,7 +870,7 @@ final class MutableChatListView {
                                 if isUnread != groupEntries[i].renderedPeers[j].isUnread {
                                     var renderedPeers = self.groupEntries[i].renderedPeers
                                     renderedPeers[j] = ChatListGroupReferencePeer(peer: groupEntries[i].renderedPeers[j].peer, isUnread: isUnread)
-                                    self.groupEntries[i] = ChatListGroupReferenceEntry(groupId: self.groupEntries[i].groupId, message: self.groupEntries[i].message, renderedPeers: renderedPeers, unreadState: self.groupEntries[i].unreadState)
+                                    self.groupEntries[i] = ChatListGroupReferenceEntry(groupId: self.groupEntries[i].groupId, message: self.groupEntries[i].message, latestMessage: self.groupEntries[i].latestMessage, renderedPeers: renderedPeers, unreadState: self.groupEntries[i].unreadState)
                                 }
                             }
                         }

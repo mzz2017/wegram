@@ -111,7 +111,6 @@ public func customizeDefaultDayTheme(theme: PresentationTheme, editing: Bool, ti
     if let accentColor = accentColor {
         intro = intro.withUpdated(accentTextColor: accentColor)
         rootController = rootController.withUpdated(
-            tabBar: rootController.tabBar.withUpdated(selectedIconColor: accentColor, selectedTextColor: accentColor),
             navigationBar: rootController.navigationBar.withUpdated(buttonColor: accentColor, accentTextColor: accentColor),
             navigationSearchBar: rootController.navigationSearchBar.withUpdated(accentColor: accentColor)
         )
@@ -434,10 +433,10 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
         backgroundColor: rootNavigationBar.blurredBackgroundColor,
         separatorColor: UIColor(rgb: 0xb2b2b2),
         iconColor: UIColor(rgb: 0x959595),
-        selectedIconColor: defaultDayAccentColor,
+        selectedIconColor: UIColor(rgb: 0x07c160),
         textColor: UIColor(rgb: 0x000000, alpha: 0.8),
-        selectedTextColor: defaultDayAccentColor,
-        badgeBackgroundColor: UIColor(rgb: 0xff3b30),
+        selectedTextColor: UIColor(rgb: 0x07c160),
+        badgeBackgroundColor: UIColor(rgb: 0xfa5151),
         badgeStrokeColor: UIColor(rgb: 0xff3b30),
         badgeTextColor: UIColor(rgb: 0xffffff)
     )
@@ -474,7 +473,7 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
         modalBlocksBackgroundColor: UIColor(rgb: 0xefeff4),
         plainBackgroundColor: UIColor(rgb: 0xffffff),
         modalPlainBackgroundColor: UIColor(rgb: 0xffffff),
-        itemPrimaryTextColor: UIColor(rgb: 0x000000),
+        itemPrimaryTextColor: UIColor(rgb: 0x000000, alpha: 0.9),
         itemSecondaryTextColor: UIColor(rgb: 0x8e8e93),
         itemDisabledTextColor: UIColor(rgb: 0x8e8e93),
         itemAccentColor: defaultDayAccentColor,
@@ -484,9 +483,9 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
         itemBlocksBackgroundColor: UIColor(rgb: 0xffffff),
         itemModalBlocksBackgroundColor: UIColor(rgb: 0xffffff),
         itemHighlightedBackgroundColor: UIColor(rgb: 0xe5e5ea),
-        itemBlocksSeparatorColor: UIColor(rgb: 0xc8c7cc),
-        itemPlainSeparatorColor: UIColor(rgb: 0xc8c7cc),
-        disclosureArrowColor: UIColor(rgb: 0xbab9be),
+        itemBlocksSeparatorColor: UIColor(rgb: 0x000000, alpha: 0.1),
+        itemPlainSeparatorColor: UIColor(rgb: 0x000000, alpha: 0.1),
+        disclosureArrowColor: UIColor(rgb: 0x000000, alpha: 0.3),
         sectionHeaderTextColor: UIColor(rgb: 0x6d6d72),
         freeTextColor: UIColor(rgb: 0x6d6d72),
         freeTextErrorColor: UIColor(rgb: 0xcf3030),
@@ -538,24 +537,27 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
     
     let chatList = PresentationThemeChatList(
         backgroundColor: UIColor(rgb: 0xffffff),
-        itemSeparatorColor: UIColor(rgb: 0xc8c7cc),
+        itemSeparatorColor: UIColor(rgb: 0x000000, alpha: 0.1),
         itemBackgroundColor: UIColor(rgb: 0xffffff),
-        pinnedItemBackgroundColor: UIColor(rgb: 0xf7f7f7),
+        pinnedItemBackgroundColor: UIColor(rgb: 0xf0f0f0),
         itemHighlightedBackgroundColor: UIColor(rgb: 0xe5e5ea),
         pinnedItemHighlightedBackgroundColor: UIColor(rgb: 0xe5e5ea),
         itemSelectedBackgroundColor: UIColor(rgb: 0xe9f0fa),
-        titleColor: UIColor(rgb: 0x000000),
+        // WeChat's list text is alpha black, which IMG_2439 shows on both row backgrounds: title 0.9,
+        // date 0.2, preview 0.3 (24/204/177 on white, 23/190/166 on the F0F0F0 pinned rows).
+        titleColor: UIColor(rgb: 0x000000, alpha: 0.9),
         secretTitleColor: UIColor(rgb: 0x00b12c),
-        dateTextColor: UIColor(rgb: 0x8e8e93),
+        dateTextColor: UIColor(rgb: 0x000000, alpha: 0.2),
         authorNameColor: UIColor(rgb: 0x000000),
-        messageTextColor: UIColor(rgb: 0x8e8e93),
+        messageTextColor: UIColor(rgb: 0x000000, alpha: 0.3),
         messageHighlightedTextColor: UIColor(rgb: 0x000000),
         messageDraftTextColor: UIColor(rgb: 0xdd4b39),
         checkmarkColor: day ? defaultDayAccentColor : UIColor(rgb: 0x21c004),
         pendingIndicatorColor: UIColor(rgb: 0x8e8e93),
         failedFillColor: UIColor(rgb: 0xff3b30),
         failedForegroundColor: UIColor(rgb: 0xffffff),
-        muteIconColor: UIColor(rgb: 0xa7a7ad),
+        // The bell reads 204 on white in IMG_2440, the date's alpha.
+        muteIconColor: UIColor(rgb: 0x000000, alpha: 0.2),
         unreadBadgeActiveBackgroundColor: defaultDayAccentColor,
         unreadBadgeActiveTextColor: UIColor(rgb: 0xffffff),
         unreadBadgeInactiveBackgroundColor: UIColor(rgb: 0xb6b6bb),
@@ -643,8 +645,8 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
         outgoing: PresentationThemePartedColors(
             bubble: PresentationThemeBubbleColor(
                 withWallpaper: PresentationThemeBubbleColorComponents(
-                    fill: [UIColor(rgb: 0xe1ffc7)],
-                    highlightedFill: UIColor(rgb: 0xbaff93),
+                    fill: [UIColor(rgb: 0x95ec69)],
+                    highlightedFill: UIColor(rgb: 0x86d45e),
                     stroke: bubbleStrokeColor,
                     shadow: nil,
                     reactionInactiveBackground: UIColor(rgb: 0x3fc33b).withMultipliedAlpha(0.12),
@@ -659,8 +661,8 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
                     reactionActiveMediaPlaceholder: UIColor(rgb: 0xffffff, alpha: 0.2)
                 ),
                 withoutWallpaper: PresentationThemeBubbleColorComponents(
-                    fill: [UIColor(rgb: 0xe1ffc7)],
-                    highlightedFill: UIColor(rgb: 0xbaff93),
+                    fill: [UIColor(rgb: 0x95ec69)],
+                    highlightedFill: UIColor(rgb: 0x86d45e),
                     stroke: bubbleStrokeColor,
                     shadow: nil,
                     reactionInactiveBackground: UIColor(rgb: 0x3fc33b).withMultipliedAlpha(0.12),
@@ -675,7 +677,7 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
                     reactionActiveMediaPlaceholder: UIColor(rgb: 0xffffff, alpha: 0.2)
                 )
             ),
-            primaryTextColor: UIColor(rgb: 0x000000),
+            primaryTextColor: UIColor(rgb: 0x000000, alpha: 0.9),
             secondaryTextColor: UIColor(rgb: 0x008c09, alpha: 0.8),
             linkTextColor: UIColor(rgb: 0x004bad),
             linkHighlightColor: defaultDayAccentColor.withAlphaComponent(0.3),
@@ -686,7 +688,7 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
             accentControlDisabledColor: UIColor(rgb: 0x3fc33b).withAlphaComponent(0.7),
             mediaActiveControlColor: UIColor(rgb: 0x3fc33b),
             mediaInactiveControlColor: UIColor(rgb: 0x93d987),
-            mediaControlInnerBackgroundColor: UIColor(rgb: 0xe1ffc7),
+            mediaControlInnerBackgroundColor: UIColor(rgb: 0x95ec69),
             pendingActivityColor: UIColor(rgb: 0x42b649),
             fileTitleColor: UIColor(rgb: 0x3faa3c),
             fileDescriptionColor: UIColor(rgb: 0x6fb26a),
@@ -1004,10 +1006,9 @@ public func makeDefaultDayPresentationTheme(extendingThemeReference: Presentatio
         badgeTextColor: UIColor(rgb: 0xffffff)
     )
 
-    let defaultPatternWallpaper: TelegramWallpaper = defaultBuiltinWallpaper(data: .default, colors: defaultBuiltinWallpaperGradientColors.map(\.rgb))
-
+    // WeChat's chat background is plain: Telegram's pattern wallpaper is theming WeGram does not offer.
     let chat = PresentationThemeChat(
-        defaultWallpaper: day ? .color(0xffffff) : defaultPatternWallpaper,
+        defaultWallpaper: day ? .color(0xffffff) : .color(0xededed),
         animateMessageColors: false,
         message: day ? messageDay : message,
         serviceMessage: day ? serviceMessageDay : serviceMessage,

@@ -14,6 +14,8 @@
 @property (nonatomic, readonly) bool isAnimating;
 
 @property (nonatomic, assign) bool removable;
+@property (nonatomic, assign) bool usesWegramAppearance;
+@property (nonatomic, copy) NSString *focusedItemIdentifier;
 
 @property (nonatomic, copy) void (^itemSelected)(NSInteger index);
 @property (nonatomic, copy) void (^itemRemoved)(NSInteger index);

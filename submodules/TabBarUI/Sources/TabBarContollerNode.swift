@@ -57,6 +57,8 @@ final class TabBarControllerNode: ASDisplayNode {
     
     private let tabBarView = ComponentView<Empty>()
     
+    private let tabBarBackgroundNode: NavigationBackgroundNode
+    private let tabBarSeparatorNode = ASDisplayNode()
     private let disabledOverlayNode: ASDisplayNode
     private var toolbar: ComponentView<Empty>?
     private let toolbarActionSelected: (ToolbarActionOption) -> Void
@@ -107,6 +109,7 @@ final class TabBarControllerNode: ASDisplayNode {
     
     init(theme: PresentationTheme, strings: PresentationStrings, itemSelected: @escaping (Int, Bool, [ASDisplayNode]) -> Void, itemHasDoubleTapAction: @escaping (Int) -> Bool, itemDoubleTapped: @escaping (Int) -> Void, contextAction: @escaping (Int, ContextExtractedContentContainingView, ContextGesture) -> Void, swipeAction: @escaping (Int, TabBarItemSwipeDirection) -> Void, toolbarActionSelected: @escaping (ToolbarActionOption) -> Void, disabledPressed: @escaping () -> Void, activateSearch: @escaping () -> Void, deactivateSearch: @escaping () -> Void) {
         self.theme = theme
+        self.tabBarBackgroundNode = NavigationBackgroundNode(color: theme.rootController.tabBar.backgroundColor)
         self.strings = strings
         self.itemSelected = itemSelected
         self.itemHasDoubleTapAction = itemHasDoubleTapAction
@@ -140,8 +143,9 @@ final class TabBarControllerNode: ASDisplayNode {
         
         self.backgroundColor = theme.list.plainBackgroundColor
         
-        //self.addSubnode(self.tabBarNode)
-        //self.addSubnode(self.disabledOverlayNode)
+        self.addSubnode(self.tabBarBackgroundNode)
+        self.addSubnode(self.tabBarSeparatorNode)
+        self.addSubnode(self.disabledOverlayNode)
     }
     
     override func didLoad() {
@@ -210,9 +214,14 @@ final class TabBarControllerNode: ASDisplayNode {
             }
         }
 
-        var sideInset: CGFloat = 12.0
-        if tabBarBottomInset <= 28.0 {
-            sideInset = 20.0
+        let sideInset: CGFloat = 0.0
+        tabBarBottomInset = params.layout.insets(options: []).bottom
+        // On iOS 26 DeviceMetrics reports 20pt for home-indicator iPhones so the floating glass bar can
+        // hug the indicator; WeChat's flat bar sits on the full system area (34pt, 21pt in landscape).
+        if tabBarBottomInset == 20.0, case .phone = params.layout.deviceMetrics.type {
+            // In portrait WeChat's bar stands one pixel higher still: its top line and labels sit 1px above a
+            // 34pt inset in all three 1206x2622 references (chat list, 发现, 我).
+            tabBarBottomInset = params.layout.size.width > params.layout.size.height ? 21.0 : 34.0 + 1.0 / UIScreen.main.scale
         }
         
         var selectedId: AnyHashable?
@@ -231,6 +240,8 @@ final class TabBarControllerNode: ASDisplayNode {
             transition: tabBarTransition,
             component: AnyComponent(TabBarComponent(
                 theme: self.theme,
+                isLiftedStateEnabled: false,
+                isFlat: true,
                 strings: self.strings,
                 items: self.tabBarItems.map { item in
                     let itemId = AnyHashable(ObjectIdentifier(item.item))
@@ -265,23 +276,7 @@ final class TabBarControllerNode: ASDisplayNode {
                         }
                     )
                 },
-                search: self.currentController?.tabBarSearchState.flatMap { tabBarSearchState in
-                    return TabBarComponent.Search(
-                        isActive: tabBarSearchState.isActive,
-                        activate: { [weak self] in
-                            guard let self else {
-                                return
-                            }
-                            self.activateSearch()
-                        },
-                        deactivate: { [weak self] in
-                            guard let self else {
-                                return
-                            }
-                            self.deactivateSearch()
-                        }
-                    )
-                },
+                search: nil,
                 selectedId: selectedId,
                 outerInsets: UIEdgeInsets(top: 0.0, left: sideInset, bottom: tabBarBottomInset, right: sideInset)
             )),
@@ -290,6 +285,14 @@ final class TabBarControllerNode: ASDisplayNode {
         )
         let tabBarFrame = CGRect(origin: CGPoint(x: floor((params.layout.size.width - tabBarSize.width) * 0.5), y: params.layout.size.height - (self.tabBarHidden ? 0.0 : (tabBarSize.height + tabBarBottomInset))), size: tabBarSize)
         
+        let backgroundFrame = CGRect(x: 0, y: tabBarFrame.minY, width: params.layout.size.width, height: tabBarFrame.height + tabBarBottomInset)
+        self.tabBarBackgroundNode.updateColor(color: self.theme.rootController.tabBar.backgroundColor, transition: .immediate)
+        self.tabBarSeparatorNode.backgroundColor = self.theme.rootController.tabBar.separatorColor
+        transition.updateFrame(node: self.tabBarBackgroundNode, frame: backgroundFrame)
+        self.tabBarBackgroundNode.update(size: backgroundFrame.size, transition: transition)
+        transition.updateFrame(node: self.tabBarSeparatorNode, frame: CGRect(x: 0, y: backgroundFrame.minY, width: backgroundFrame.width, height: 1.0 / UIScreen.main.scale))
+        transition.updateAlpha(node: self.tabBarBackgroundNode, alpha: params.toolbar == nil ? 1.0 : 0.0)
+        transition.updateAlpha(node: self.tabBarSeparatorNode, alpha: params.toolbar == nil ? 1.0 : 0.0)
         if let tabBarComponentView = self.tabBarView.view {
             if tabBarComponentView.superview == nil {
                 self.view.addSubview(tabBarComponentView)
@@ -298,10 +301,15 @@ final class TabBarControllerNode: ASDisplayNode {
             transition.updateAlpha(layer: tabBarComponentView.layer, alpha: params.toolbar == nil ? 1.0 : 0.0)
         }
         
-        transition.updateFrame(node: self.disabledOverlayNode, frame: tabBarFrame)
+        self.view.bringSubviewToFront(self.tabBarSeparatorNode.view)
+        self.view.bringSubviewToFront(self.disabledOverlayNode.view)
+        transition.updateFrame(node: self.disabledOverlayNode, frame: backgroundFrame)
         
+        // The flat tab bar spans the full width, but the edit toolbar keeps upstream's floating glass pills,
+        // which need upstream's side inset or the outer pills are cut by the screen edge.
+        let toolbarSideInset: CGFloat = panelsBottomInset <= 28.0 ? 20.0 : 12.0
         let toolbarHeight = 44.0
-        let toolbarFrame = CGRect(origin: CGPoint(x: sideInset, y: params.layout.size.height - panelsBottomInset - toolbarHeight), size: CGSize(width: params.layout.size.width - sideInset * 2.0, height: toolbarHeight))
+        let toolbarFrame = CGRect(origin: CGPoint(x: toolbarSideInset, y: params.layout.size.height - panelsBottomInset - toolbarHeight), size: CGSize(width: params.layout.size.width - toolbarSideInset * 2.0, height: toolbarHeight))
         
         if let toolbarData = params.toolbar {
             let toolbar: ComponentView<Empty>
@@ -389,6 +397,10 @@ final class TabBarControllerNode: ASDisplayNode {
         return params.layout.size.height - tabBarFrame.minY
     }
     
+    func contextSourceViewForControllerTab(at index: Int) -> ContextExtractedContentContainingView? {
+        return (self.tabBarView.view as? TabBarComponent.View)?.contextSourceViewForItem(at: index)
+    }
+
     func frameForControllerTab(at index: Int) -> CGRect? {
         guard let tabBarView = self.tabBarView.view as? TabBarComponent.View else {
             return nil

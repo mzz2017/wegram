@@ -17,6 +17,7 @@ const CGFloat TGPhotoCounterButtonMaskFade = 18;
     UILabel *_countLabel;
     UIImageView *_crossIconView;
     
+    bool _hiddenByInterface;
     bool _processing;
     UIView *_processingMaskView;
     UILabel *_processingLabel;
@@ -24,6 +25,12 @@ const CGFloat TGPhotoCounterButtonMaskFade = 18;
 @end
 
 @implementation TGMediaPickerPhotoCounterButton
+
+- (void)setHidesWhenUnselected:(bool)hidesWhenUnselected
+{
+    _hidesWhenUnselected = hidesWhenUnselected;
+    super.hidden = _hiddenByInterface || (_hidesWhenUnselected && !self.selected);
+}
 
 - (instancetype)initWithFrame:(CGRect)frame
 {
@@ -464,12 +471,15 @@ const CGFloat TGPhotoCounterButtonMaskFade = 18;
     }
     
     [super setSelected:selected];
+    if (_hidesWhenUnselected)
+        super.hidden = _hiddenByInterface || !selected;
 }
 
 - (void)setHidden:(BOOL)hidden
 {
+    _hiddenByInterface = hidden;
     self.alpha = hidden ? 0.0f : 1.0f;
-    super.hidden = hidden;
+    super.hidden = hidden || (_hidesWhenUnselected && !self.selected);
 }
 
 - (void)setHidden:(bool)hidden animated:(bool)animated
@@ -479,9 +489,10 @@ const CGFloat TGPhotoCounterButtonMaskFade = 18;
 
 - (void)setHidden:(bool)hidden delay:(NSTimeInterval)delay animated:(bool)animated
 {
+    _hiddenByInterface = hidden;
     if (animated)
     {
-        super.hidden = false;
+        super.hidden = _hidesWhenUnselected && !self.selected;
         
         [UIView animateWithDuration:0.2f delay:delay options:UIViewAnimationOptionCurveLinear animations:^
         {
@@ -495,7 +506,7 @@ const CGFloat TGPhotoCounterButtonMaskFade = 18;
     else
     {
         self.alpha = hidden ? 0.0f : 1.0f;
-        super.hidden = hidden;
+        super.hidden = hidden || (_hidesWhenUnselected && !self.selected);
     }
 }
 

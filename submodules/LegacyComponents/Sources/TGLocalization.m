@@ -37,6 +37,17 @@ static NSString *fallbackString(NSString *key, NSString *code) {
     }
 }
 
+static NSString *wegramBrandString(NSString *value) {
+    if ([value rangeOfString:@"Telegram" options:NSCaseInsensitiveSearch].location == NSNotFound && ![value containsString:@"تيليجرام"] && ![value containsString:@"تليجرام"] && ![value containsString:@"تلگرام"])
+        return value;
+    static NSRegularExpression *regex;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        regex = [NSRegularExpression regularExpressionWithPattern:@"(?<![A-Za-z0-9_/@.])(?:Telegram|تيليجرام|تليجرام|تلگرام)(?![A-Za-z0-9_]|[.][A-Za-z0-9])" options:NSRegularExpressionCaseInsensitive error:nil];
+    });
+    return [regex stringByReplacingMatchesInString:value options:0 range:NSMakeRange(0, value.length) withTemplate:@"WeGram"];
+}
+
 @interface TGLocalization () {
     NSDictionary<NSString *, NSString *> *_dict;
 }
@@ -55,7 +66,7 @@ static NSString *fallbackString(NSString *key, NSString *code) {
             appTitle = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleDisplayName"];
         }
         if (appTitle == nil) {
-            appTitle = @"Telegram";
+            appTitle = @"WeGram";
         }
         NSString *originalTitle = @"Telegram";
         if (![appTitle isEqualToString:originalTitle]) {
@@ -63,7 +74,7 @@ static NSString *fallbackString(NSString *key, NSString *code) {
             for (NSString *key in dict.keyEnumerator) {
                 NSString *value = dict[key];
                 if ([value rangeOfString:originalTitle].location != NSNotFound) {
-                    value = [value stringByReplacingOccurrencesOfString:originalTitle withString:appTitle];
+                    value = wegramBrandString(value);
                     updatedDict[key] = value;
                 }
             }
@@ -132,9 +143,9 @@ static NSString *fallbackString(NSString *key, NSString *code) {
     NSString *value = _dict[key];
 
     if (value != nil && value.length != 0) {
-        return value;
+        return wegramBrandString(value);
     } else {
-        return fallbackString(key, _code);
+        return wegramBrandString(fallbackString(key, _code));
     }
 }
 

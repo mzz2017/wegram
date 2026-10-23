@@ -33,8 +33,14 @@ public final class NavigationBarTheme {
     public let accentForegroundColor: UIColor
     public let style: NavigationBar.Style
     public let glassStyle: NavigationBar.GlassStyle
+    public let nominalHeight: CGFloat
+    /// Space between the status bar and the 44pt content row, included in `nominalHeight`. WeChat's bar starts
+    /// its content 7px (at 3x) below the status bar.
+    public let contentTopInset: CGFloat
+    /// The bar title's font; nil keeps the bar's own default.
+    public let titleFont: UIFont?
     
-    public init(overallDarkAppearance: Bool, buttonColor: UIColor, disabledButtonColor: UIColor, primaryTextColor: UIColor, backgroundColor: UIColor, opaqueBackgroundColor: UIColor? = nil, enableBackgroundBlur: Bool, separatorColor: UIColor, badgeBackgroundColor: UIColor, badgeStrokeColor: UIColor, badgeTextColor: UIColor, edgeEffectColor: UIColor? = nil, accentButtonColor: UIColor, accentDisabledButtonColor: UIColor, accentForegroundColor: UIColor, style: NavigationBar.Style = .legacy, glassStyle: NavigationBar.GlassStyle = .default) {
+    public init(overallDarkAppearance: Bool, buttonColor: UIColor, disabledButtonColor: UIColor, primaryTextColor: UIColor, backgroundColor: UIColor, opaqueBackgroundColor: UIColor? = nil, enableBackgroundBlur: Bool, separatorColor: UIColor, badgeBackgroundColor: UIColor, badgeStrokeColor: UIColor, badgeTextColor: UIColor, edgeEffectColor: UIColor? = nil, accentButtonColor: UIColor, accentDisabledButtonColor: UIColor, accentForegroundColor: UIColor, style: NavigationBar.Style = .legacy, glassStyle: NavigationBar.GlassStyle = .default, nominalHeight: CGFloat = 60, contentTopInset: CGFloat = 0, titleFont: UIFont? = nil) {
         self.overallDarkAppearance = overallDarkAppearance
         self.buttonColor = buttonColor
         self.disabledButtonColor = disabledButtonColor
@@ -52,14 +58,17 @@ public final class NavigationBarTheme {
         self.accentForegroundColor = accentForegroundColor
         self.style = style
         self.glassStyle = glassStyle
+        self.nominalHeight = nominalHeight
+        self.contentTopInset = contentTopInset
+        self.titleFont = titleFont
     }
     
     public func withUpdatedBackgroundColor(_ color: UIColor) -> NavigationBarTheme {
-        return NavigationBarTheme(overallDarkAppearance: self.overallDarkAppearance, buttonColor: self.buttonColor, disabledButtonColor: self.disabledButtonColor, primaryTextColor: self.primaryTextColor, backgroundColor: color, opaqueBackgroundColor: self.opaqueBackgroundColor, enableBackgroundBlur: false, separatorColor: self.separatorColor, badgeBackgroundColor: self.badgeBackgroundColor, badgeStrokeColor: self.badgeStrokeColor, badgeTextColor: self.badgeTextColor, edgeEffectColor: self.edgeEffectColor, accentButtonColor: self.accentButtonColor, accentDisabledButtonColor: self.accentDisabledButtonColor, accentForegroundColor: self.accentForegroundColor, style: self.style, glassStyle: self.glassStyle)
+        return NavigationBarTheme(overallDarkAppearance: self.overallDarkAppearance, buttonColor: self.buttonColor, disabledButtonColor: self.disabledButtonColor, primaryTextColor: self.primaryTextColor, backgroundColor: color, opaqueBackgroundColor: self.opaqueBackgroundColor, enableBackgroundBlur: false, separatorColor: self.separatorColor, badgeBackgroundColor: self.badgeBackgroundColor, badgeStrokeColor: self.badgeStrokeColor, badgeTextColor: self.badgeTextColor, edgeEffectColor: self.edgeEffectColor, accentButtonColor: self.accentButtonColor, accentDisabledButtonColor: self.accentDisabledButtonColor, accentForegroundColor: self.accentForegroundColor, style: self.style, glassStyle: self.glassStyle, nominalHeight: self.nominalHeight, contentTopInset: self.contentTopInset, titleFont: self.titleFont)
     }
     
     public func withUpdatedSeparatorColor(_ color: UIColor) -> NavigationBarTheme {
-        return NavigationBarTheme(overallDarkAppearance: self.overallDarkAppearance, buttonColor: self.buttonColor, disabledButtonColor: self.disabledButtonColor, primaryTextColor: self.primaryTextColor, backgroundColor: self.backgroundColor, opaqueBackgroundColor: self.opaqueBackgroundColor, enableBackgroundBlur: self.enableBackgroundBlur, separatorColor: color, badgeBackgroundColor: self.badgeBackgroundColor, badgeStrokeColor: self.badgeStrokeColor, badgeTextColor: self.badgeTextColor, edgeEffectColor: self.edgeEffectColor, accentButtonColor: self.accentButtonColor, accentDisabledButtonColor: self.accentDisabledButtonColor, accentForegroundColor: self.accentForegroundColor, style: self.style, glassStyle: self.glassStyle)
+        return NavigationBarTheme(overallDarkAppearance: self.overallDarkAppearance, buttonColor: self.buttonColor, disabledButtonColor: self.disabledButtonColor, primaryTextColor: self.primaryTextColor, backgroundColor: self.backgroundColor, opaqueBackgroundColor: self.opaqueBackgroundColor, enableBackgroundBlur: self.enableBackgroundBlur, separatorColor: color, badgeBackgroundColor: self.badgeBackgroundColor, badgeStrokeColor: self.badgeStrokeColor, badgeTextColor: self.badgeTextColor, edgeEffectColor: self.edgeEffectColor, accentButtonColor: self.accentButtonColor, accentDisabledButtonColor: self.accentDisabledButtonColor, accentForegroundColor: self.accentForegroundColor, style: self.style, glassStyle: self.glassStyle, nominalHeight: self.nominalHeight, contentTopInset: self.contentTopInset, titleFont: self.titleFont)
     }
 }
 
@@ -108,6 +117,44 @@ public enum NavigationPreviousAction: Equatable {
 public enum NavigationBarStyle {
     case legacy
     case glass
+}
+
+/// WeChat's back chevron: 10x18pt, 1.5pt stroke. Its ink spans x 17-25.7pt at a 16pt button inset, as in
+/// the user's IMG_2446; Telegram's 13x22 arrow below is 3pt wider.
+/// WeChat's back chevron, measured in IMG_2444/2446 at 3x: a 1.5pt round-capped, round-joined stroke whose centre
+/// line runs 7.4pt across and 7.53pt up and down from the tip. The 10x18 box is the one every WeGram bar places.
+public func wegramNavigationBackArrowImage(color: UIColor) -> UIImage? {
+    return generateImage(CGSize(width: 10, height: 18), rotatedContext: { size, context in
+        context.clear(CGRect(origin: .zero, size: size))
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(1.5)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.move(to: CGPoint(x: 9.04, y: 1.47))
+        context.addLine(to: CGPoint(x: 1.64, y: 9))
+        context.addLine(to: CGPoint(x: 9.04, y: 16.53))
+        context.strokePath()
+    })
+}
+
+/// WeChat's list row chevron, measured on every row of IMG_2442–2446 at 3x: a 1.5pt round-capped stroke whose
+/// centre line runs 5.67pt across and 11.33pt down. A template image: rows tint it with
+/// Table_Row_RightSide_Arrow_FG (black/white at 0.3, the theme's `disclosureArrowColor`).
+public let wegramDisclosureArrowImage: UIImage? = generateImage(CGSize(width: 8, height: 13), rotatedContext: { size, context in
+    context.clear(CGRect(origin: .zero, size: size))
+    context.setStrokeColor(UIColor.black.cgColor)
+    context.setLineWidth(1.5)
+    context.setLineCap(.round)
+    context.setLineJoin(.round)
+    context.move(to: CGPoint(x: 1.27, y: 0.83))
+    context.addLine(to: CGPoint(x: 6.94, y: 6.5))
+    context.addLine(to: CGPoint(x: 1.27, y: 12.17))
+    context.strokePath()
+})?.withRenderingMode(.alwaysTemplate)
+
+/// Where a row's chevron sits: its tip 19.06pt in from the row's trailing edge, wherever WeChat draws one.
+public func wegramDisclosureArrowFrame(trailingEdge: CGFloat, centerY: CGFloat) -> CGRect {
+    return CGRect(x: trailingEdge - 26, y: centerY - 6.5, width: 8, height: 13)
 }
 
 public func navigationBarBackArrowImage(color: UIColor) -> UIImage? {
@@ -165,7 +212,8 @@ public protocol NavigationBar: ASDisplayNode {
     var secondaryContentNodeDisplayFraction: CGFloat { get set }
     
     var item: UINavigationItem? { get set }
-    var customBackButtonText: String? { get }
+    var customBackButtonText: String? { get set }
+    var nominalHeight: CGFloat { get }
     var titleView: UIView? { get }
     var layoutSuspended: Bool { get set }
     

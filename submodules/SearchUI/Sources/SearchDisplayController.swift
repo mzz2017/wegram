@@ -50,14 +50,15 @@ public final class SearchDisplayController {
         inline: Bool = false,
         cancel: @escaping () -> Void,
         fieldStyle: SearchBarStyle = .modern,
-        searchBarIsExternal: Bool = false
+        searchBarIsExternal: Bool = false,
+        usesWegramAppearance: Bool = false
     ) {
         self.inline = inline
         self.cancel = cancel
         self.searchBarIsExternal = searchBarIsExternal
 
         if !searchBarIsExternal {
-            self.searchBar = SearchBarNode(theme: SearchBarNodeTheme(theme: presentationData.theme, hasBackground: hasBackground, hasSeparator: hasSeparator, inline: inline), presentationTheme: presentationData.theme, strings: presentationData.strings, fieldStyle: fieldStyle, forceSeparator: hasSeparator, displayBackground: hasBackground)
+            self.searchBar = SearchBarNode(theme: SearchBarNodeTheme(theme: presentationData.theme, hasBackground: hasBackground, hasSeparator: hasSeparator, inline: inline), presentationTheme: presentationData.theme, strings: presentationData.strings, fieldStyle: fieldStyle, forceSeparator: hasSeparator, displayBackground: hasBackground, usesWegramAppearance: usesWegramAppearance)
         }
         self.backgroundNode = BackgroundNode()
         self.backgroundNode.allowsGroupOpacity = true
@@ -179,7 +180,10 @@ public final class SearchDisplayController {
         
         if !self.searchBarIsExternal, let searchBar = self.searchBar {
             let searchBarFrame: CGRect
-            if case .navigation = self.mode {
+            if searchBar.usesWegramAppearance {
+                navigationBarHeight = statusBarHeight + 52
+                searchBarFrame = CGRect(x: 0, y: 0, width: layout.size.width, height: 52)
+            } else if case .navigation = self.mode {
                 if case .glass = searchBar.fieldStyle {
                     navigationBarHeight = defaultNavigationBarHeight
                     searchBarFrame = CGRect(x: 0.0, y: 0.0, width: layout.size.width, height: 44.0)
@@ -284,7 +288,7 @@ public final class SearchDisplayController {
         }
         
         if !self.searchBarIsExternal, let searchBar = self.searchBar {
-            searchBar.frame = navigationBarFrame
+            searchBar.frame = searchBar.usesWegramAppearance ? CGRect(x: 0, y: 0, width: layout.size.width, height: 52) : navigationBarFrame
             insertSubnode(searchBar, true)
             searchBar.layout()
             
