@@ -1053,6 +1053,7 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
     private let usesWegramLayout: Bool
     private let isOutgoing: Bool
     private var wegramTopInset: CGFloat
+    private var wegramAvatarTop: CGFloat?
     private var layoutParams: (size: CGSize, leftInset: CGFloat, rightInset: CGFloat)?
     private var avatarDiameter: CGFloat { self.usesWegramLayout ? WegramMessageLayout.avatarDiameter : avatarHeaderSize() }
     
@@ -1330,9 +1331,17 @@ public final class ChatMessageAvatarHeaderNodeImpl: ListViewItemHeaderNode, Chat
         }
     }
 
+    public func updateWegramAvatarTop(_ top: CGFloat?) {
+        guard top != self.wegramAvatarTop else { return }
+        self.wegramAvatarTop = top
+        if let params = self.layoutParams {
+            self.updateLayout(size: params.size, leftInset: params.leftInset, rightInset: params.rightInset, transition: .immediate)
+        }
+    }
+
     override public func updateLayout(size: CGSize, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition) {
         self.layoutParams = (size, leftInset, rightInset)
-        let frame = self.usesWegramLayout ? WegramMessageLayout.avatarFrame(width: size.width, leftInset: leftInset, rightInset: rightInset, outgoing: self.isOutgoing).offsetBy(dx: 0.0, dy: self.wegramTopInset) : CGRect(origin: CGPoint(x: leftInset + 7.0, y: -3.0), size: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
+        let frame = self.usesWegramLayout ? WegramMessageLayout.avatarFrame(width: size.width, leftInset: leftInset, rightInset: rightInset, outgoing: self.isOutgoing).offsetBy(dx: 0.0, dy: self.wegramAvatarTop ?? self.wegramTopInset) : CGRect(origin: CGPoint(x: leftInset + 7.0, y: -3.0), size: CGSize(width: avatarHeaderSize(), height: avatarHeaderSize()))
         transition.updateFrame(node: self.containerNode, frame: frame)
         let avatarFrame = CGRect(origin: CGPoint(), size: frame.size)
         self.avatarNode.position = avatarFrame.center

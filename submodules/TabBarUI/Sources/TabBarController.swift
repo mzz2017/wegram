@@ -278,30 +278,16 @@ open class TabBarControllerImpl: ViewController, TabBarController {
             return
         }
         
-        var animated = animated
-        if let layout = self.validLayout, case .regular = layout.metrics.widthClass {
-            animated = false
-        }
-        
+        // WeChat switches tabs instantly: no micro-zoom or cross-fade, so `animated` is intentionally unused.
+        _ = animated
+
         let tabBarSelectedIndex = self.selectedIndex
         self.tabBarControllerNode.updateSelectedIndex(index: tabBarSelectedIndex)
         
-        var transitionScale: CGFloat = 0.998
-        if let currentView = self.currentController?.view {
-            transitionScale = (currentView.frame.height - 3.0) / currentView.frame.height
-        }
         if let currentController = self.currentController {
             currentController.willMove(toParent: nil)
             currentController.tabBarSearchStateUpdated = nil
             currentController.currentTabBarSearchNode = nil
-            
-            if animated {
-                currentController.view.layer.animateScale(from: 1.0, to: transitionScale, duration: 0.12, timingFunction: kCAMediaTimingFunctionSpring, removeOnCompletion: false, completion: { completed in
-                    if completed {
-                        currentController.view.layer.removeAllAnimations()
-                    }
-                })
-            }
             currentController.removeFromParent()
             currentController.didMove(toParent: nil)
             
@@ -317,18 +303,7 @@ open class TabBarControllerImpl: ViewController, TabBarController {
             self.addChild(currentController)
             
             let commit = self.tabBarControllerNode.setCurrentController(currentController)
-            if animated {
-                currentController.view.layer.animateScale(from: transitionScale, to: 1.0, duration: 0.15, delay: 0.1, timingFunction: kCAMediaTimingFunctionSpring)
-                currentController.view.layer.allowsGroupOpacity = true
-                currentController.view.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.1, completion: { completed in
-                    if completed {
-                        currentController.view.layer.allowsGroupOpacity = false
-                    }
-                    commit()
-                })
-            } else {
-                commit()
-            }
+            commit()
             currentController.didMove(toParent: self)
 
             currentController.displayNode.recursivelyEnsureDisplaySynchronously(true)

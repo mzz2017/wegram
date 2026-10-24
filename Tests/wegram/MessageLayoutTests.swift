@@ -22,11 +22,13 @@ struct MessageLayoutTests {
         if WegramMessageLayout.avatarSelectionOffset(outgoing: false, isSelected: true) != 42 { failures.append("Incoming avatar does not move with selection controls") }
         if WegramMessageLayout.avatarSelectionOffset(outgoing: false, isSelected: false) != 0 { failures.append("Avatar does not return after selection ends") }
         let bubble = CGRect(x: 60, y: 32, width: 100, height: 41)
-        let headerSize = CGSize(width: 210, height: 21)
+        let headerSize = CGSize(width: 210, height: 20)
         let header = WegramMessageLayout.authorHeaderFrame(bubbleFrame: bubble, headerSize: headerSize)
         let name = WegramMessageLayout.authorNameFrame(bubbleFrame: bubble, nameSize: CGSize(width: 200, height: 17), headerSize: headerSize)
         if header.maxY != bubble.minY { failures.append("Author header consumes space inside the message bubble") }
-        if name.maxY + 4 != bubble.minY { failures.append("Author name overlaps the bubble instead of leaving a 4pt gap") }
+        if name.maxY + WegramMessageLayout.authorNameBottomGap != bubble.minY { failures.append("Author name does not leave the measured gap above the bubble: \(name.maxY) vs \(bubble.minY)") }
+        if WegramMessageLayout.authorNameFontSize(baseDisplaySize: 17) != 12 { failures.append("Author nickname is not 12pt at the default text size") }
+        if WegramMessageLayout.authorHeaderAvatarOverhang != 13 { failures.append("Avatar overhang above a named bubble changed") }
         if name.minX != 65 || name.width != 200 { failures.append("Long author name is indented or constrained by short message width") }
         if !bubble.union(header).contains(name) { failures.append("Author name falls outside the extraction and touch bounds") }
         if !failures.isEmpty {

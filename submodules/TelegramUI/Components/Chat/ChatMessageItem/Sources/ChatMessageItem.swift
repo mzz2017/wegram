@@ -106,6 +106,8 @@ public protocol ChatMessageDateHeaderNode: ListViewItemHeaderNode {
 public protocol ChatMessageAvatarHeaderNode: ListViewItemHeaderNode {
     func updateSelectionState(animated: Bool)
     func updateAvatarIsHidden(isHidden: Bool, transition: ContainedViewLayoutTransition)
+    /// Top of the WeGram gutter avatar in item coordinates, set by the message node that knows where its bubble is. `nil` falls back to the header's own estimate.
+    func updateWegramAvatarTop(_ top: CGFloat?)
 }
 
 /// An item that publishes floating headers — a date separator, a gutter avatar.

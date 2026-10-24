@@ -1694,7 +1694,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         }
 
         let fontSize = floor(item.presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)
-        let nameFont = usesWegramLayout ? Font.regular(fontSize) : Font.semibold(fontSize)
+        let nameFont = usesWegramLayout ? Font.regular(WegramMessageLayout.authorNameFontSize(baseDisplaySize: item.presentationData.fontSize.baseDisplaySize)) : Font.semibold(fontSize)
         let regularFont = Font.regular(fontSize)
 
         let inlineBotPrefixFont = Font.regular(fontSize - 1.0)
@@ -3018,7 +3018,7 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
                     if currentCredibilityIcon != nil { rowHeight = max(rowHeight, 20.0) }
                     if boostBadgeWidth > 0.0 { rowHeight = max(rowHeight, 22.0) }
                     if rankBadgeNodeSizeApply.0.width > 0.0 { rowHeight = max(rowHeight, 17.0) }
-                    externalAuthorHeaderSize = CGSize(width: headerSize.width - bubbleWidthInsets + 5.0, height: rowHeight + 4.0)
+                    externalAuthorHeaderSize = CGSize(width: headerSize.width - bubbleWidthInsets + 5.0, height: rowHeight + WegramMessageLayout.authorNameBottomGap)
                     headerSize = .zero
                 }
             }
@@ -4152,6 +4152,12 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
         
         if let avatarOffset {
             strongSelf.updateAttachedAvatarNodeOffset(offset: avatarOffset, transition: .animated(duration: 0.3, curve: .spring))
+        }
+        if item.usesWegramMessageLayout && !isSidePanelOpen {
+            // The avatar's top is the bubble's top; a group's author name sits above both, so the avatar is lifted by the part of the name row that overhangs it.
+            strongSelf.updateAttachedWegramAvatarTop(backgroundFrame.minY - (authorHeaderFrame != nil ? WegramMessageLayout.authorHeaderAvatarOverhang : 0.0))
+        } else {
+            strongSelf.updateAttachedWegramAvatarTop(nil)
         }
         strongSelf.updateAttachedAvatarNodeIsHidden(isHidden: isSidePanelOpen, transition: animation.transition)
         strongSelf.updateAttachedDateHeader(hasDate: inputParams.dateHeaderAtBottom.hasDate, hasPeer: inputParams.dateHeaderAtBottom.hasTopic)

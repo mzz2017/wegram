@@ -8,6 +8,14 @@ public enum WegramMessageLayout {
     public static let edgeInset: CGFloat = 12
     public static let avatarInset: CGFloat = 48
     public static let messageSpacing: CGFloat = 8
+    /// Space between the bottom of an author name row and the bubble below it.
+    public static let authorNameBottomGap: CGFloat = 3
+    /// How far the gutter avatar's top sits above the bubble's top when an author name row is present (measured on a 402pt chat-4 reference: 13pt).
+    public static let authorHeaderAvatarOverhang: CGFloat = 13
+    /// Author nickname size at the default text size; the reference's three-character nicknames measure 12pt.
+    public static func authorNameFontSize(baseDisplaySize: CGFloat) -> CGFloat {
+        return floor(baseDisplaySize * 12.0 / 17.0)
+    }
 
     public static func avatarSelectionOffset(outgoing: Bool, isSelected: Bool) -> CGFloat {
         return isSelected && !outgoing ? 42 : 0
@@ -19,7 +27,7 @@ public enum WegramMessageLayout {
 
     public static func authorNameFrame(bubbleFrame: CGRect, nameSize: CGSize, headerSize: CGSize) -> CGRect {
         let header = authorHeaderFrame(bubbleFrame: bubbleFrame, headerSize: headerSize)
-        return CGRect(x: header.minX, y: header.minY + floor((header.height - 4 - nameSize.height) / 2), width: nameSize.width, height: nameSize.height)
+        return CGRect(x: header.minX, y: header.minY + floor((header.height - authorNameBottomGap - nameSize.height) / 2), width: nameSize.width, height: nameSize.height)
     }
 
     public static func avatarFrame(width: CGFloat, leftInset: CGFloat, rightInset: CGFloat, outgoing: Bool) -> CGRect {

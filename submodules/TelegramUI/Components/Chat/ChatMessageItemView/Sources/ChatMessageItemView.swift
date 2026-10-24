@@ -914,6 +914,7 @@ open class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol {
 
     private var attachedAvatarNodeOffset: CGFloat = 0.0
     private var attachedAvatarNodeIsHidden: Bool = false
+    private var attachedWegramAvatarTop: CGFloat?
     
     private var attachedDateHeader: (hasDate: Bool, hasPeer: Bool) = (false, false)
 
@@ -931,6 +932,7 @@ open class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol {
         for headerNode in self.attachedHeaderNodes {
             if let headerNode = headerNode as? ChatMessageAvatarHeaderNode {
                 headerNode.updateAvatarIsHidden(isHidden: self.attachedAvatarNodeIsHidden, transition: .immediate)
+                headerNode.updateWegramAvatarTop(self.attachedWegramAvatarTop)
             }
         }
         
@@ -946,6 +948,15 @@ open class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol {
         for headerNode in self.attachedHeaderNodes {
             if let headerNode = headerNode as? ChatMessageAvatarHeaderNode {
                 transition.updateSublayerTransformOffset(layer: headerNode.layer, offset: CGPoint(x: offset, y: 0.0))
+            }
+        }
+    }
+    
+    open func updateAttachedWegramAvatarTop(_ top: CGFloat?) {
+        self.attachedWegramAvatarTop = top
+        for headerNode in self.attachedHeaderNodes {
+            if let headerNode = headerNode as? ChatMessageAvatarHeaderNode {
+                headerNode.updateWegramAvatarTop(top)
             }
         }
     }
