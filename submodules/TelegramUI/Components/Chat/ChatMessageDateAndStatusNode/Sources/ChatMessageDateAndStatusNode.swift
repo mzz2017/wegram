@@ -300,7 +300,8 @@ public class ChatMessageDateAndStatusNode: ASDisplayNode {
             self.context = context
             self.presentationData = presentationData
             self.edited = edited
-            self.impressionCount = impressionCount == 0 ? nil : impressionCount
+            // WeChat bubbles carry no counters; a channel post reads like a group message.
+            self.impressionCount = impressionCount == 0 || presentationData.chatBubbleCorners.usesWegramShape ? nil : impressionCount
             self.dateText = dateText
             self.type = type
             self.layoutInput = layoutInput

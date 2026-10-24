@@ -523,7 +523,7 @@ public class ChatMessageStickerItemNode: ChatMessageItemView {
                 }
             } else if item.message.effectivelyIncoming(item.context.account.peerId) {
                 if let peer = item.message.peers[item.message.id.peerId] {
-                    if let channel = peer as? TelegramChannel {
+                    if let channel = peer as? TelegramChannel, !usesWegramLayout {
                         if case .broadcast = channel.info {
                             needsShareButton = true
                         }

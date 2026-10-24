@@ -211,7 +211,6 @@ public func wegramMessageLayoutIsSupported(presentationData: ChatPresentationDat
     if message.id.peerId != accountPeerId && message.id.peerId.isRepliesOrSavedMessages(accountPeerId: accountPeerId) { return false }
     if message.adAttribute != nil { return false }
     if Namespaces.Message.allEphemeral.contains(message.id.namespace) || Namespaces.Message.allWelcomeMessages.contains(message.id.namespace) { return false }
-    if let channel = message.peers[message.id.peerId] as? TelegramChannel, case .broadcast = channel.info { return false }
     for media in message.media {
         if media is TelegramMediaAction || media is TelegramMediaDice || media is TelegramMediaExpiredContent { return false }
         if let file = media as? TelegramMediaFile {

@@ -1999,13 +1999,14 @@ public class ChatMessageBubbleItemNode: ChatMessageItemView, ChatMessagePreviewI
             }
             
             if let peer = item.message.peers[item.message.id.peerId] {
-                if let channel = peer as? TelegramChannel {
+                // In WeGram a channel post shares through the long-press menu, as a group message does.
+                if let channel = peer as? TelegramChannel, !usesWegramLayout {
                     if case .broadcast = channel.info {
                         needsShareButton = true
                     }
                 }
             }
-            
+
             if let info = item.message.forwardInfo {
                 if let author = info.author as? TelegramUser, let _ = author.botInfo, !item.message.media.isEmpty && !(item.message.media.first is TelegramMediaAction) {
                     needsShareButton = true
