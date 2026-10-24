@@ -258,6 +258,14 @@ public func universalServiceMessageString(presentationData: (PresentationTheme, 
                     attributedString = addAttributesToStringWithRanges(strings.Notification_ChangedGroupName(authorName, title)._tuple, body: bodyAttributes, argumentAttributes: peerMentionsAttributes(primaryTextColor: primaryTextColor, peerIds: [(0, message.author?.id)]))
                 }
             case .pinnedMessageUpdated:
+                // WeGram: WeChat words your own pin as 你置顶了一条消息 whatever was pinned (IMG_2490); the
+                // language pack has no "you" form.
+                if message.author?.id == accountPeerId {
+                    let languageCode = strings.primaryComponent.languageCode
+                    let text = languageCode.hasPrefix("zh") ? (languageCode.hasSuffix("hant") ? "你置頂了一條消息" : "你置顶了一条消息") : strings.Message_PinnedGenericMessage(strings.DialogList_You).string
+                    attributedString = NSAttributedString(string: text, font: titleFont, textColor: primaryTextColor)
+                    break
+                }
                 enum PinnnedMediaType {
                     case text(String, [MessageTextEntity])
                     case game
@@ -352,6 +360,8 @@ public func universalServiceMessageString(presentationData: (PresentationTheme, 
                     if clippedText.count > 14 {
                         clippedText = "\(clippedText[...clippedText.index(clippedText.startIndex, offsetBy: 14)])..."
                     }
+                    // WeGram: the pin notice never quotes the message (WeChat: "You pinned a message").
+                    clippedText = ""
                     let textWithRanges: PresentationStrings.FormattedString
                     if clippedText.isEmpty {
                         textWithRanges = strings.Message_PinnedGenericMessage(authorName)

@@ -322,7 +322,7 @@ private final class ChatMessageDateContentNode: ASDisplayNode {
         
         if let wegramDateNode = self.wegramDateNode {
             self.addSubnode(wegramDateNode)
-            wegramDateNode.update(text: self.text, font: Font.regular(floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)), isDark: presentationData.theme.theme.overallDarkAppearance, synchronous: presentationData.isPreview)
+            wegramDateNode.update(text: self.text, font: Font.regular(floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)), isDark: presentationData.theme.theme.overallDarkAppearance, usesCapsuleMaterial: WegramCapsuleBackgroundNode.isApplicable(wallpaper: presentationData.theme.wallpaper, isDark: presentationData.theme.theme.overallDarkAppearance), synchronous: presentationData.isPreview)
             return
         }
 
@@ -359,7 +359,7 @@ private final class ChatMessageDateContentNode: ASDisplayNode {
         }
         
         if let wegramDateNode = self.wegramDateNode {
-            wegramDateNode.update(text: self.text, font: Font.regular(floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)), isDark: presentationData.theme.theme.overallDarkAppearance, synchronous: presentationData.isPreview)
+            wegramDateNode.update(text: self.text, font: Font.regular(floor(presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)), isDark: presentationData.theme.theme.overallDarkAppearance, usesCapsuleMaterial: WegramCapsuleBackgroundNode.isApplicable(wallpaper: presentationData.theme.wallpaper, isDark: presentationData.theme.theme.overallDarkAppearance), synchronous: presentationData.isPreview)
             return
         }
 

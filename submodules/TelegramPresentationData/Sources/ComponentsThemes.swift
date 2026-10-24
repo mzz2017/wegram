@@ -63,11 +63,13 @@ public struct WegramNavigationColors {
 }
 
 public extension NavigationBarTheme {
+    /// `translucent`: the chat bar is the bar colour at 90% over a blurred chat wallpaper (IMG_2487/2490: bar colour follows the
+    /// wallpaper by x, and solving bar = a*#eeeeee + (1-a)*wallpaper below the bar gives a = 0.89-0.93 on all channels).
     /// `contentTopInset`: measured on every WeChat screen with a bar (IMG_2437-2446): titles at 212-262px and
     /// content from 301px, i.e. the 44pt row starts 7px (7/3pt) below the status bar.
-    convenience init(wegramTheme: PresentationTheme, hideBadge: Bool = false, nominalHeight: CGFloat = 44, contentTopInset: CGFloat = 7.0 / 3.0) {
+    convenience init(wegramTheme: PresentationTheme, hideBadge: Bool = false, nominalHeight: CGFloat = 44, contentTopInset: CGFloat = 7.0 / 3.0, translucent: Bool = false) {
         let colors = WegramNavigationColors(isDark: wegramTheme.overallDarkAppearance)
-        self.init(overallDarkAppearance: wegramTheme.overallDarkAppearance, buttonColor: colors.control, disabledButtonColor: colors.control.withAlphaComponent(0.5), primaryTextColor: colors.control, backgroundColor: colors.background, opaqueBackgroundColor: colors.background, enableBackgroundBlur: false, separatorColor: .clear, badgeBackgroundColor: hideBadge ? .clear : colors.badge, badgeStrokeColor: .clear, badgeTextColor: hideBadge ? .clear : colors.control, edgeEffectColor: .clear, accentButtonColor: wegramTheme.list.itemCheckColors.fillColor, accentDisabledButtonColor: wegramTheme.chat.inputPanel.panelControlDisabledColor, accentForegroundColor: wegramTheme.list.itemCheckColors.foregroundColor, style: .legacy, nominalHeight: nominalHeight + contentTopInset, contentTopInset: contentTopInset, titleFont: wegramNavigationTitleFont)
+        self.init(overallDarkAppearance: wegramTheme.overallDarkAppearance, buttonColor: colors.control, disabledButtonColor: colors.control.withAlphaComponent(0.5), primaryTextColor: colors.control, backgroundColor: translucent ? colors.background.withAlphaComponent(0.9) : colors.background, opaqueBackgroundColor: colors.background, enableBackgroundBlur: translucent, separatorColor: .clear, badgeBackgroundColor: hideBadge ? .clear : colors.badge, badgeStrokeColor: .clear, badgeTextColor: hideBadge ? .clear : colors.control, edgeEffectColor: .clear, accentButtonColor: wegramTheme.list.itemCheckColors.fillColor, accentDisabledButtonColor: wegramTheme.chat.inputPanel.panelControlDisabledColor, accentForegroundColor: wegramTheme.list.itemCheckColors.foregroundColor, style: .legacy, nominalHeight: nominalHeight + contentTopInset, contentTopInset: contentTopInset, titleFont: wegramNavigationTitleFont)
     }
 
 

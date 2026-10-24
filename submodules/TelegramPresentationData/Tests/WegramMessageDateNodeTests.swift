@@ -2,6 +2,7 @@ import XCTest
 import UIKit
 import AsyncDisplayKit
 import Display
+import TelegramCore
 import ChatMessageItemCommon
 
 final class WegramMessageDateNodeTests: XCTestCase {
@@ -109,5 +110,49 @@ extension WegramMessageDateNodeTests {
             XCTAssertEqual(chatMessageDateHeaderSpacing(headers: headers, hasDate: true, hasTopic: false, constants: constants), 34)
             XCTAssertEqual(chatMessageDateHeaderSpacing(headers: headers, hasDate: true, hasTopic: true, constants: constants), constants.timestampDateAndTopicHeaderHeight)
         }
+    }
+
+    func testCapsuleMaterialAppliesOnlyToPhotoWallpapersInLightMode() throws {
+        let settings = WallpaperSettings()
+        guard case var .file(file) = TelegramWallpaper.emoticonWallpaper(emoticon: "") else {
+            return XCTFail("expected a file wallpaper")
+        }
+        XCTAssertTrue(WegramCapsuleBackgroundNode.isApplicable(wallpaper: .image([], settings), isDark: false))
+        XCTAssertTrue(WegramCapsuleBackgroundNode.isApplicable(wallpaper: .file(file), isDark: false))
+        XCTAssertFalse(WegramCapsuleBackgroundNode.isApplicable(wallpaper: .image([], settings), isDark: true), "No dark reference exists")
+        file.isPattern = true
+        XCTAssertFalse(WegramCapsuleBackgroundNode.isApplicable(wallpaper: .file(file), isDark: false), "A pattern is not a photo")
+        XCTAssertFalse(WegramCapsuleBackgroundNode.isApplicable(wallpaper: .color(0xededed), isDark: false))
+        XCTAssertFalse(WegramCapsuleBackgroundNode.isApplicable(wallpaper: .builtin(settings), isDark: false))
+        XCTAssertFalse(WegramCapsuleBackgroundNode.isApplicable(wallpaper: .gradient(TelegramWallpaper.Gradient(id: nil, colors: [0xffffff, 0x000000], settings: settings)), isDark: false))
+    }
+
+    func testCapsuleMaterialReplacesTheFillUnderTheTimeAndCanBeRemoved() throws {
+        let node = WegramMessageDateNode()
+        _ = node.view
+        let capsules = { node.subnodes?.compactMap { $0 as? WegramCapsuleBackgroundNode } ?? [] }
+        let textColor = { node.labelNode.cachedLayout?.attributedString?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor }
+
+        node.update(text: "14:03", font: Font.regular(14), isDark: false, usesCapsuleMaterial: true, synchronous: true)
+        node.updateLayout(size: CGSize(width: 402, height: 34), leftInset: 0, rightInset: 0, transition: .immediate)
+        let capsule = try XCTUnwrap(capsules().first)
+        XCTAssertEqual(capsules().count, 1)
+        XCTAssertEqual(capsule.frame, node.backgroundNode.frame)
+        XCTAssertEqual(capsule.layer.cornerRadius, 4)
+        XCTAssertEqual(capsule.layer.borderWidth, 0.5)
+        XCTAssertGreaterThan(node.subnodes!.firstIndex(of: capsule)!, node.subnodes!.firstIndex(of: node.backgroundNode)!)
+        XCTAssertLessThan(node.subnodes!.firstIndex(of: capsule)!, node.subnodes!.firstIndex(of: node.labelNode)!, "The time is drawn over the capsule")
+        XCTAssertEqual(node.backgroundNode.color, .clear)
+        XCTAssertEqual(textColor(), WegramCapsuleBackgroundNode.timeTextColor)
+        let label = node.labelNode.frame
+        XCTAssertGreaterThanOrEqual(label.minY, capsule.frame.minY)
+        XCTAssertLessThanOrEqual(label.maxY, capsule.frame.maxY)
+
+        node.update(text: "14:03", font: Font.regular(14), isDark: false, synchronous: true)
+        node.updateLayout(size: CGSize(width: 402, height: 34), leftInset: 0, rightInset: 0, transition: .immediate)
+        XCTAssertTrue(capsules().isEmpty)
+        XCTAssertNil(capsule.supernode)
+        XCTAssertEqual(node.backgroundNode.color, UIColor(rgb: 0xdadada))
+        XCTAssertEqual(textColor(), UIColor(rgb: 0x999999))
     }
 }

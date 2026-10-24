@@ -30,6 +30,58 @@ private enum PinnedMessageAnimation {
     case slideToBottom
 }
 
+/// WeGram card metrics (measured on the 402pt group chat reference: card 45pt tall, 8pt side margins, 10pt corners).
+private enum PinnedCardMetrics {
+    static let topInset: CGFloat = 4.0
+    static let height: CGFloat = 45.0
+    static let bottomInset: CGFloat = 8.0
+    static let stackPeek: CGFloat = 6.0
+    static let cornerRadius: CGFloat = 8.0
+    /// The icon's 24pt canvas relative to the card, which `generatePinnedCardIcon` was traced in.
+    static let iconFrame = CGRect(x: 16.0, y: 10.0, width: 24.0, height: 24.0)
+    static let textLeft: CGFloat = 51.7
+    static let trailingInset: CGFloat = 17.0
+    static let fontSize: CGFloat = 14.0
+    static let removeColor = UIColor(rgb: 0x576B95)
+    /// WeChat's primary text (IMG_2486/2488: fully covered glyph pixels read 0x18).
+    static let textColor = UIColor(rgb: 0x181818)
+}
+
+private func generatePinnedCardIcon() -> UIImage? {
+    return generateImage(CGSize(width: 24.0, height: 24.0), contextGenerator: { size, context in
+        context.clear(CGRect(origin: CGPoint(), size: size))
+        context.translateBy(x: 0.0, y: size.height)
+        context.scaleBy(x: 1.0, y: -1.0)
+        // Traced from IMG_2486's alpha (core #FFBB00 over white): area within 0.4% and centroid within 0.2px at 3x.
+        // The rays are tapered, wide at the outer end.
+        context.setFillColor(UIColor(rgb: 0xFFBB00).cgColor)
+        context.fillEllipse(in: CGRect(x: 9.267 - 8.433, y: 13.767 - 7.2, width: 8.433 * 2.0, height: 7.2 * 2.0))
+        context.move(to: CGPoint(x: 3.633, y: 17.667))
+        context.addLine(to: CGPoint(x: 3.433, y: 21.533))
+        context.addLine(to: CGPoint(x: 3.867, y: 21.833))
+        context.addLine(to: CGPoint(x: 7.167, y: 20.167))
+        context.closePath()
+        context.fillPath()
+        func fillTaper(from p1: CGPoint, radius r1: CGFloat, to p2: CGPoint, radius r2: CGFloat) {
+            let dx = p2.x - p1.x
+            let dy = p2.y - p1.y
+            let angle = atan2(dy, dx)
+            let spread = acos((r1 - r2) / sqrt(dx * dx + dy * dy))
+            context.fillEllipse(in: CGRect(x: p1.x - r1, y: p1.y - r1, width: r1 * 2.0, height: r1 * 2.0))
+            context.fillEllipse(in: CGRect(x: p2.x - r2, y: p2.y - r2, width: r2 * 2.0, height: r2 * 2.0))
+            context.move(to: CGPoint(x: p1.x + r1 * cos(angle + spread), y: p1.y + r1 * sin(angle + spread)))
+            context.addLine(to: CGPoint(x: p2.x + r2 * cos(angle + spread), y: p2.y + r2 * sin(angle + spread)))
+            context.addLine(to: CGPoint(x: p2.x + r2 * cos(angle - spread), y: p2.y + r2 * sin(angle - spread)))
+            context.addLine(to: CGPoint(x: p1.x + r1 * cos(angle - spread), y: p1.y + r1 * sin(angle - spread)))
+            context.closePath()
+            context.fillPath()
+        }
+        fillTaper(from: CGPoint(x: 14.833, y: 2.767), radius: 1.0, to: CGPoint(x: 13.833, y: 5.7), radius: 0.433)
+        fillTaper(from: CGPoint(x: 19.967, y: 4.567), radius: 1.1, to: CGPoint(x: 17.0, y: 7.4), radius: 0.467)
+        fillTaper(from: CGPoint(x: 21.467, y: 9.2), radius: 1.0, to: CGPoint(x: 18.733, y: 10.3), radius: 0.4)
+    })
+}
+
 private final class ButtonsContainerNode: ASDisplayNode {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         if let subnodes = self.subnodes {
@@ -67,6 +119,15 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
     
     private let imageNode: TransformImageNode
     private let imageNodeContainer: ASDisplayNode
+    
+    private let cardStackNode: ASDisplayNode
+    private let cardBackgroundNode: ASDisplayNode
+    private let cardIconNode: ASImageNode
+    private let removeButton: HighlightableButtonNode
+    private var removeButtonWidth: CGFloat = 0.0
+    private var lastInterfaceState: ChatPresentationInterfaceState?
+    private var listOverlay: PinnedListOverlayView?
+    private let listDisposable = MetaDisposable()
 
     private var currentLayout: (CGFloat, CGFloat, CGFloat)?
     private var currentMessage: ChatPinnedMessage?
@@ -164,6 +225,20 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         
         self.imageNodeContainer = ASDisplayNode()
         
+        self.cardStackNode = ASDisplayNode()
+        self.cardStackNode.isUserInteractionEnabled = false
+        self.cardStackNode.cornerRadius = PinnedCardMetrics.cornerRadius
+        self.cardBackgroundNode = ASDisplayNode()
+        self.cardBackgroundNode.isUserInteractionEnabled = false
+        self.cardBackgroundNode.cornerRadius = PinnedCardMetrics.cornerRadius
+        self.cardIconNode = ASImageNode()
+        self.cardIconNode.isUserInteractionEnabled = false
+        self.cardIconNode.displaysAsynchronously = false
+        self.cardIconNode.image = generatePinnedCardIcon()
+        self.removeButton = HighlightableButtonNode()
+        self.removeButton.hitTestSlop = UIEdgeInsets(top: -8.0, left: -10.0, bottom: -8.0, right: -10.0)
+        self.removeButton.displaysAsynchronously = false
+        
         super.init()
         
         self.tapButton.highligthedChanged = { [weak self] highlighted in
@@ -204,6 +279,8 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         
         self.addSubnode(self.contextContainer)
         
+        self.contextContainer.addSubnode(self.cardStackNode)
+        self.contextContainer.addSubnode(self.cardBackgroundNode)
         self.contextContainer.addSubnode(self.clippingContainer)
         self.clippingContainer.addSubnode(self.contentContainer)
         self.contextContainer.addSubnode(self.lineNode)
@@ -224,6 +301,12 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         
         self.tapButton.addTarget(self, action: #selector(self.tapped), forControlEvents: [.touchUpInside])
         self.contextContainer.addSubnode(self.tapButton)
+        self.contextContainer.addSubnode(self.cardIconNode)
+        self.contextContainer.addSubnode(self.removeButton)
+        self.removeButton.addTarget(self, action: #selector(self.closePressed), forControlEvents: [.touchUpInside])
+        self.removeButton.highligthedChanged = { [weak self] highlighted in
+            self?.removeButton.alpha = highlighted ? 0.4 : 1.0
+        }
         
         self.contextContainer.activated = { [weak self] gesture, _ in
             guard let strongSelf = self else {
@@ -244,8 +327,21 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
     
     private var theme: PresentationTheme?
     
+    /// WeGram draws the pinned bar as a white card with a "Remove" action; reply threads keep the upstream bar.
+    func usesCardStyle(interfaceState: ChatPresentationInterfaceState) -> Bool {
+        if case let .replyThread(message) = interfaceState.chatLocation, !message.isForumPost {
+            return false
+        }
+        return true
+    }
+    
     override func updateLayout(width: CGFloat, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition, interfaceState: ChatPresentationInterfaceState) -> LayoutResult {
-        let panelHeight: CGFloat = 50.0
+        self.lastInterfaceState = interfaceState
+        let usesCard = self.usesCardStyle(interfaceState: interfaceState)
+        let isStacked = usesCard && (interfaceState.pinnedMessage?.totalCount ?? 1) > 1
+        let cardTop: CGFloat = usesCard ? PinnedCardMetrics.topInset : 0.0
+        let cardHeight: CGFloat = usesCard ? PinnedCardMetrics.height : 50.0
+        let panelHeight: CGFloat = usesCard ? PinnedCardMetrics.topInset + PinnedCardMetrics.height + PinnedCardMetrics.bottomInset + (isStacked ? PinnedCardMetrics.stackPeek : 0.0) : 50.0
         var themeUpdated = false
         
         self.contextContainer.frame = CGRect(origin: CGPoint(), size: CGSize(width: width, height: panelHeight))
@@ -253,6 +349,8 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         if self.theme !== interfaceState.theme {
             themeUpdated = true
             self.theme = interfaceState.theme
+            self.cardBackgroundNode.backgroundColor = interfaceState.theme.list.itemBlocksBackgroundColor
+            self.cardStackNode.backgroundColor = interfaceState.theme.list.itemBlocksBackgroundColor.withAlphaComponent(0.5)
             self.closeButton.setImage(generateImage(CGSize(width: 12.0, height: 12.0), contextGenerator: { size, context in
                 context.clear(CGRect(origin: CGPoint(), size: size))
                 context.setStrokeColor(interfaceState.theme.chat.inputPanel.panelControlColor.cgColor)
@@ -339,7 +437,7 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         var displayCloseButton = false
         var displayListButton = false
         
-        if isReplyThread || actionTitle != nil {
+        if usesCard || isReplyThread || actionTitle != nil {
             displayCloseButton = false
             displayListButton = false
         } else if let message = interfaceState.pinnedMessage {
@@ -451,7 +549,7 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
             
             let actionButtonTitleSize = self.actionButtonTitleNode.updateLayout(CGSize(width: 150.0, height: .greatestFiniteMagnitude))
             let actionButtonSize = CGSize(width: max(actionButtonTitleSize.width + 20.0, 40.0), height: 28.0)
-            let actionButtonFrame = CGRect(origin: CGPoint(x: buttonsContainerSize.width + 11.0 - actionButtonSize.width, y: floor((panelHeight - actionButtonSize.height) / 2.0)), size: actionButtonSize)
+            let actionButtonFrame = CGRect(origin: CGPoint(x: buttonsContainerSize.width + 11.0 - actionButtonSize.width, y: cardTop + floor((cardHeight - actionButtonSize.height) / 2.0)), size: actionButtonSize)
             actionButtonTransition.updateFrame(node: self.actionButton, frame: actionButtonFrame)
             actionButtonTransition.updateFrame(node: self.actionButtonBackgroundNode, frame: CGRect(origin: CGPoint(), size: actionButtonFrame.size))
             actionButtonTransition.updateFrame(node: self.actionButtonTitleNode, frame: CGRect(origin: CGPoint(x: floorToScreenPixels((actionButtonFrame.width - actionButtonTitleSize.width) / 2.0), y: floorToScreenPixels((actionButtonFrame.height - actionButtonTitleSize.height) / 2.0)), size: actionButtonTitleSize))
@@ -489,6 +587,29 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         transition.updateFrame(node: self.activityIndicatorContainer, frame: CGRect(origin: CGPoint(x: width - rightInset - indicatorSize.width + 5.0, y: 15.0), size: indicatorSize))
         transition.updateFrame(node: self.activityIndicator, frame: CGRect(origin: CGPoint(), size: indicatorSize))
         
+        // A stack of pins has no Remove on its card (IMG_2487): unpinning happens in the list the card expands into.
+        let showsRemove = usesCard && actionTitle == nil && !isStacked
+        if usesCard {
+            transition.updateFrame(node: self.cardBackgroundNode, frame: CGRect(x: 0.0, y: cardTop, width: width, height: cardHeight))
+            transition.updateFrame(node: self.cardStackNode, frame: CGRect(x: 8.0, y: cardTop + PinnedCardMetrics.stackPeek, width: max(0.0, width - 16.0), height: cardHeight))
+            self.cardStackNode.isHidden = !isStacked
+            self.cardIconNode.frame = PinnedCardMetrics.iconFrame.offsetBy(dx: 0.0, dy: cardTop)
+            
+            let removeTitle = NSAttributedString(string: interfaceState.strings.DownloadList_RemoveFileAlertRemove, font: Font.regular(PinnedCardMetrics.fontSize), textColor: PinnedCardMetrics.removeColor)
+            self.removeButton.setAttributedTitle(removeTitle, for: [])
+            self.removeButtonWidth = ceil(removeTitle.size().width)
+            let removeHeight: CGFloat = 24.0
+            self.removeButton.frame = CGRect(x: width - PinnedCardMetrics.trailingInset - self.removeButtonWidth, y: cardTop + floor((cardHeight - removeHeight) / 2.0) + 0.5, width: self.removeButtonWidth, height: removeHeight)
+            if showsRemove {
+                tapButtonRightInset = PinnedCardMetrics.trailingInset + self.removeButtonWidth + 10.0
+            }
+        }
+        self.cardBackgroundNode.isHidden = !usesCard
+        self.cardIconNode.isHidden = !usesCard
+        self.removeButton.isHidden = !showsRemove
+        self.lineNode.isHidden = usesCard
+        self.titleNode.isHidden = usesCard
+        
         self.tapButton.frame = CGRect(origin: CGPoint(), size: CGSize(width: width - tapButtonRightInset, height: panelHeight))
         
         self.clippingContainer.frame = CGRect(origin: CGPoint(), size: CGSize(width: width, height: panelHeight))
@@ -521,7 +642,7 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
             
             if let currentMessage = self.currentMessage, let currentLayout = self.currentLayout {
                 self.dustNode?.update(revealed: false, animated: false)
-                self.enqueueTransition(width: currentLayout.0, panelHeight: panelHeight, leftInset: currentLayout.1, rightInset: currentLayout.2, transition: messageUpdated ? .immediate : transition, animation: messageUpdatedAnimation, pinnedMessage: currentMessage, theme: interfaceState.theme, strings: interfaceState.strings, nameDisplayOrder: interfaceState.nameDisplayOrder, dateTimeFormat: interfaceState.dateTimeFormat, accountPeerId: self.context.account.peerId, firstTime: previousMessageWasNil, isReplyThread: isReplyThread, translateToLanguage: translateToLanguage?.toLang)
+                self.enqueueTransition(width: currentLayout.0, panelHeight: panelHeight, leftInset: currentLayout.1, rightInset: currentLayout.2, transition: messageUpdated ? .immediate : transition, animation: messageUpdatedAnimation, pinnedMessage: currentMessage, theme: interfaceState.theme, strings: interfaceState.strings, nameDisplayOrder: interfaceState.nameDisplayOrder, dateTimeFormat: interfaceState.dateTimeFormat, accountPeerId: self.context.account.peerId, firstTime: previousMessageWasNil, isReplyThread: isReplyThread, translateToLanguage: translateToLanguage?.toLang, usesCard: usesCard, cardTop: cardTop, cardHeight: cardHeight)
             }
         }
         
@@ -569,7 +690,7 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         }
     }
     
-    private func enqueueTransition(width: CGFloat, panelHeight: CGFloat, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition, animation: PinnedMessageAnimation?, pinnedMessage: ChatPinnedMessage, theme: PresentationTheme, strings: PresentationStrings, nameDisplayOrder: PresentationPersonNameOrder, dateTimeFormat: PresentationDateTimeFormat, accountPeerId: EnginePeer.Id, firstTime: Bool, isReplyThread: Bool, translateToLanguage: String?) {
+    private func enqueueTransition(width: CGFloat, panelHeight: CGFloat, leftInset: CGFloat, rightInset: CGFloat, transition: ContainedViewLayoutTransition, animation: PinnedMessageAnimation?, pinnedMessage: ChatPinnedMessage, theme: PresentationTheme, strings: PresentationStrings, nameDisplayOrder: PresentationPersonNameOrder, dateTimeFormat: PresentationDateTimeFormat, accountPeerId: EnginePeer.Id, firstTime: Bool, isReplyThread: Bool, translateToLanguage: String?, usesCard: Bool, cardTop: CGFloat, cardHeight: CGFloat) {
         let message = pinnedMessage.message
         
         var animationTransition: ContainedViewLayoutTransition = .immediate
@@ -607,13 +728,16 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         let previousMediaReference = self.previousMediaReference
         let context = self.context
         
-        let contentLeftInset: CGFloat = leftInset + 18.0
-        var textLineInset: CGFloat = 10.0
+        let contentLeftInset: CGFloat = usesCard ? 0.0 : leftInset + 18.0
+        var textLineInset: CGFloat = usesCard ? PinnedCardMetrics.textLeft : 10.0
         var rightInset: CGFloat = 14.0 + rightInset
+        if usesCard {
+            rightInset = PinnedCardMetrics.trailingInset + (self.actionButton.isHidden ? (self.removeButton.isHidden ? 0.0 : self.removeButtonWidth) : self.actionButton.bounds.width) + 2.0
+        }
         
         let textRightInset: CGFloat = 0.0
         
-        if !self.actionButton.isHidden {
+        if !self.actionButton.isHidden && !usesCard {
             rightInset += self.actionButton.bounds.width - 14.0
         }
         
@@ -703,6 +827,10 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
             }
         }
         
+        if usesCard {
+            imageDimensions = nil
+        }
+        
         var applyImage: (() -> Void)?
         if let imageDimensions = imageDimensions {
             let boundingSize = CGSize(width: 35.0, height: 35.0)
@@ -749,8 +877,9 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         
         let (textString, _, isText) = descriptionStringForMessage(contentSettings: context.currentContentSettings.with { $0 }, message: EngineMessage(message), strings: strings, nameDisplayOrder: nameDisplayOrder, dateTimeFormat: dateTimeFormat, accountPeerId: accountPeerId)
         
-        let messageText: NSAttributedString
-        let textFont = Font.regular(15.0)
+        var messageText: NSAttributedString
+        let textFont = Font.regular(usesCard ? PinnedCardMetrics.fontSize : 15.0)
+        let primaryTextColor = usesCard ? PinnedCardMetrics.textColor : theme.chat.inputPanel.primaryTextColor
         if let giveaway {
             let dateString = stringForDateWithoutYear(date: Date(timeIntervalSince1970: TimeInterval(giveaway.untilDate)), timeZone: .current, strings: strings)
             let currentTime = Int32(CFAbsoluteTimeGetCurrent() + kCFAbsoluteTimeIntervalSince1970)
@@ -763,7 +892,7 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
                 let winnersString = strings.Conversation_PinnedGiveaway_Ongoing_Winners(giveaway.quantity)
                 text = strings.Conversation_PinnedGiveaway_Ongoing(winnersString, dateString).string
             }
-            messageText = NSAttributedString(string: text, font: textFont, textColor: theme.chat.inputPanel.primaryTextColor)
+            messageText = NSAttributedString(string: text, font: textFont, textColor: primaryTextColor)
         } else if isText {
             var text = message.text
             var messageEntities = message.textEntitiesAttribute?.entities ?? []
@@ -786,16 +915,22 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
                     return false
                 }
             }
-            let textColor = theme.chat.inputPanel.primaryTextColor
+            let textColor = primaryTextColor
             if entities.count > 0 {
                 messageText = stringWithAppliedEntities(trimToLineCount(text, lineCount: 1), entities: entities, baseColor: textColor, linkColor: textColor, baseFont: textFont, linkFont: textFont, boldFont: textFont, italicFont: textFont, boldItalicFont: textFont, fixedFont: textFont, blockQuoteFont: textFont, underlineLinks: false, message: message)
             } else {
                 messageText = NSAttributedString(string: foldLineBreaks(text), font: textFont, textColor: textColor)
             }
         } else {
-            let textColor = message.media.isEmpty || message.media.first is TelegramMediaWebpage ? theme.chat.inputPanel.primaryTextColor : theme.chat.inputPanel.secondaryTextColor
+            let textColor = message.media.isEmpty || message.media.first is TelegramMediaWebpage ? primaryTextColor : theme.chat.inputPanel.secondaryTextColor
             let mutableTextString = styleInstantPagePreview(foldLineBreaks(textString), font: textFont, italicFont: Font.italic(textFont.pointSize), textColor: textColor)
             messageText = renderInstantPagePreviewIcons(mutableTextString, font: textFont, textColor: textColor)
+        }
+        
+        if usesCard, giveaway == nil, let author = message.effectiveAuthor {
+            let prefix = NSMutableAttributedString(string: "\(EnginePeer(author).displayTitle(strings: strings, displayOrder: nameDisplayOrder)): ", font: textFont, textColor: primaryTextColor)
+            prefix.append(messageText)
+            messageText = prefix
         }
         
         let textConstrainedSize = CGSize(width: width - textLineInset - contentLeftInset - rightInset - textRightInset - 10.0, height: CGFloat.greatestFiniteMagnitude)
@@ -829,7 +964,7 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         
         strongSelf.titleNode.frame = CGRect(origin: CGPoint(x: 0.0, y: 6.0), size: titleLayout.size)
         
-        let textFrame = CGRect(origin: CGPoint(x: 0.0, y: 23.0), size: textLayout.size)
+        let textFrame = CGRect(origin: CGPoint(x: 0.0, y: usesCard ? cardTop + floor((cardHeight - textLayout.size.height) / 2.0) + 0.5 : 23.0), size: textLayout.size)
         strongSelf.textNode.textNode.frame = textFrame
         
         if let (_, spoilerTextApply) = spoilerTextLayoutAndApply {
@@ -911,10 +1046,86 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
         if let interfaceInteraction = self.interfaceInteraction, let message = self.currentMessage {
             if self.isReplyThread {
                 interfaceInteraction.scrollToTop()
+            } else if message.totalCount > 1, self.lastInterfaceState != nil, self.presentPinnedList() {
+                return
+            } else if message.totalCount > 1 {
+                interfaceInteraction.openPinnedList(message.message.id)
             } else {
                 interfaceInteraction.navigateToMessage(message.message.id, false, true, .pinnedMessage)
             }
         }
+    }
+    
+    private func presentPinnedList() -> Bool {
+        guard let interfaceState = self.lastInterfaceState, let interfaceInteraction = self.interfaceInteraction, self.listOverlay == nil else {
+            return self.listOverlay != nil
+        }
+        var hostNode: ChatControllerNode?
+        var current: UIView? = self.view
+        while let view = current {
+            if let node = view.asyncdisplaykit_node as? ChatControllerNode {
+                hostNode = node
+                break
+            }
+            current = view.superview
+        }
+        let dimColor = UIColor(white: 0.0, alpha: 0.5)
+        guard let hostNode, let barBottom = hostNode.updatePinnedListBackdrop(dimColor: dimColor) else {
+            return false
+        }
+        let host = hostNode.view
+        let panelTop = host.convert(CGPoint(), from: self.view).y + PinnedCardMetrics.topInset
+        let strings = interfaceState.strings
+        let nameDisplayOrder = interfaceState.nameDisplayOrder
+        let dateTimeFormat = interfaceState.dateTimeFormat
+        let accountPeerId = interfaceState.accountPeerId
+        let context = self.context
+        // WeChat's armed confirm reads 移除置顶 (IMG_2489), where the language pack's Unpin is 取消置顶.
+        let languageCode = strings.primaryComponent.languageCode
+        let unpinTitle = languageCode.hasPrefix("zh") ? (languageCode.hasSuffix("hant") ? "移除置頂" : "移除置顶") : strings.Conversation_Unpin
+        let overlay = PinnedListOverlayView(theme: interfaceState.theme, unpinTitle: unpinTitle, removeTitle: strings.DownloadList_RemoveFileAlertRemove, dimColor: dimColor, barBottom: barBottom, panelTop: panelTop)
+        overlay.frame = host.bounds
+        overlay.onDismiss = { [weak self, weak overlay, weak hostNode] in
+            self?.listDisposable.set(nil)
+            overlay?.dismiss()
+            let _ = hostNode?.updatePinnedListBackdrop(dimColor: nil)
+            self?.listOverlay = nil
+        }
+        overlay.onSelect = { [weak self] id in
+            self?.listOverlay?.onDismiss?()
+            interfaceInteraction.navigateToMessage(id, false, true, .pinnedMessage)
+        }
+        overlay.onUnpin = { id in
+            interfaceInteraction.unpinMessage(id, false, nil)
+        }
+        host.addSubview(overlay)
+        self.listOverlay = overlay
+        
+        let location: ChatLocation
+        if case let .replyThread(message) = interfaceState.chatLocation {
+            location = .replyThread(message: message)
+        } else {
+            location = interfaceState.chatLocation
+        }
+        let signal = chatHistoryViewForLocation(ChatHistoryLocationInput(content: .Initial(count: 100), id: 0), ignoreMessagesInTimestampRange: nil, ignoreMessageIds: Set(), context: context, chatLocation: location, chatLocationContextHolder: Atomic<ChatLocationContextHolder?>(value: nil), scheduled: false, fixedCombinedReadStates: nil, tag: .tag(EngineMessage.Tags.pinned), appendMessagesFromTheSameGroup: false, additionalData: [], orderStatistics: [])
+        self.listDisposable.set((signal
+        |> deliverOnMainQueue).startStrict(next: { [weak overlay] update in
+            guard case let .HistoryView(view, _, _, _, _, _, _) = update else {
+                return
+            }
+            var items: [PinnedListOverlayView.Item] = []
+            for entry in view.entries.reversed() {
+                let message = entry.message
+                let (textString, _, _) = descriptionStringForMessage(contentSettings: context.currentContentSettings.with { $0 }, message: EngineMessage(message), strings: strings, nameDisplayOrder: nameDisplayOrder, dateTimeFormat: dateTimeFormat, accountPeerId: accountPeerId)
+                var text = foldLineBreaks(textString).string
+                if let author = message.author {
+                    text = "\(EnginePeer(author).displayTitle(strings: strings, displayOrder: nameDisplayOrder)): \(text)"
+                }
+                items.append(PinnedListOverlayView.Item(id: message.id, text: text))
+            }
+            overlay?.setItems(items, animated: true)
+        }))
+        return true
     }
     
     @objc func closePressed() {
@@ -1062,5 +1273,250 @@ final class ChatPinnedMessageTitlePanelNode: ChatTitleAccessoryPanelNode {
                 }
             }
         }
+    }
+}
+
+/// The expanded pinned list (IMG_2488/2489): white cards on the bar's own material, which runs on below the bar,
+/// a grey collapse pill, a dimmed chat.
+private final class PinnedListOverlayView: UIView {
+    struct Item: Equatable {
+        let id: EngineMessage.Id
+        let text: String
+    }
+    
+    private final class CardView: UIView {
+        let id: EngineMessage.Id
+        let label = UILabel()
+        let icon = UIImageView()
+        let button = UIButton(type: .custom)
+        
+        init(id: EngineMessage.Id) {
+            self.id = id
+            super.init(frame: .zero)
+        }
+        
+        required init?(coder: NSCoder) {
+            preconditionFailure()
+        }
+
+        // The same slop as the collapsed card's Remove: the button is only as large as its title.
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            if self.button.frame.insetBy(dx: -10.0, dy: -8.0).contains(point) {
+                return self.button
+            }
+            return super.hitTest(point, with: event)
+        }
+    }
+
+    private let theme: PresentationTheme
+    private let unpinTitle: String
+    private let removeTitle: String
+    private let barBottom: CGFloat
+    private let panelTop: CGFloat
+    private let dimView = UIView()
+    private let panelView = UIView()
+    private let panelBackground: NavigationBackgroundNode
+    private let pillView = UIButton(type: .custom)
+    private let scrollView = UIScrollView()
+    private var cardViews: [CardView] = []
+    private var items: [Item] = []
+    private var removedIds = Set<EngineMessage.Id>()
+    private var confirmingId: EngineMessage.Id?
+    private let icon = generatePinnedCardIcon()
+    
+    var onDismiss: (() -> Void)?
+    var onSelect: ((EngineMessage.Id) -> Void)?
+    var onUnpin: ((EngineMessage.Id) -> Void)?
+    
+    init(theme: PresentationTheme, unpinTitle: String, removeTitle: String, dimColor: UIColor, barBottom: CGFloat, panelTop: CGFloat) {
+        self.theme = theme
+        self.unpinTitle = unpinTitle
+        self.removeTitle = removeTitle
+        self.barBottom = barBottom
+        self.panelTop = panelTop
+        self.panelBackground = NavigationBackgroundNode(color: ChatControllerImpl.wegramNavigationBarTheme(theme, hideBadge: false).backgroundColor)
+        super.init(frame: .zero)
+
+        self.dimView.backgroundColor = dimColor
+        self.addSubview(self.dimView)
+        self.dimView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.dimTapped)))
+
+        // The material blurs the dimmed chat under it, as the bar above does, so the two read as one surface.
+        self.panelView.clipsToBounds = true
+        self.panelView.layer.cornerRadius = 12.0
+        self.panelView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        self.panelView.addSubview(self.panelBackground.view)
+        self.addSubview(self.panelView)
+        self.scrollView.showsVerticalScrollIndicator = false
+        self.scrollView.contentInsetAdjustmentBehavior = .never
+        self.panelView.addSubview(self.scrollView)
+        
+        self.pillView.backgroundColor = UIColor(rgb: 0xD2D2D2)
+        self.pillView.layer.cornerRadius = 8.0
+        let chevron = CAShapeLayer()
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 15.5, y: 9.5))
+        path.addLine(to: CGPoint(x: 19.5, y: 5.5))
+        path.addLine(to: CGPoint(x: 23.5, y: 9.5))
+        chevron.path = path.cgPath
+        chevron.strokeColor = UIColor(rgb: 0x151515).cgColor
+        chevron.fillColor = nil
+        chevron.lineWidth = 1.5
+        chevron.lineCap = .round
+        chevron.lineJoin = .round
+        self.pillView.layer.addSublayer(chevron)
+        self.pillView.addTarget(self, action: #selector(self.dimTapped), for: .touchUpInside)
+        self.panelView.addSubview(self.pillView)
+    }
+    
+    required init?(coder: NSCoder) {
+        preconditionFailure()
+    }
+    
+    @objc private func dimTapped() {
+        self.onDismiss?()
+    }
+    
+    func dismiss() {
+        UIView.animate(withDuration: 0.2, animations: {
+            self.alpha = 0.0
+        }, completion: { _ in
+            self.removeFromSuperview()
+        })
+    }
+    
+    func setItems(_ items: [Item], animated: Bool) {
+        self.items = items.filter { !self.removedIds.contains($0.id) }
+        self.rebuildCards()
+        self.setNeedsLayout()
+        if animated {
+            UIView.animate(withDuration: 0.2) {
+                self.layoutIfNeeded()
+            }
+        }
+    }
+    
+    private func rebuildCards() {
+        for card in self.cardViews where !self.items.contains(where: { $0.id == card.id }) {
+            card.removeFromSuperview()
+        }
+        var updated: [CardView] = []
+        for item in self.items {
+            let card: CardView
+            if let existing = self.cardViews.first(where: { $0.id == item.id }) {
+                card = existing
+            } else {
+                card = CardView(id: item.id)
+                card.backgroundColor = self.theme.list.itemBlocksBackgroundColor
+                card.layer.cornerRadius = PinnedCardMetrics.cornerRadius
+                card.icon.image = self.icon
+                card.addSubview(card.icon)
+                card.label.font = Font.regular(PinnedCardMetrics.fontSize)
+                card.label.textColor = PinnedCardMetrics.textColor
+                card.label.lineBreakMode = .byTruncatingTail
+                card.addSubview(card.label)
+                card.button.titleLabel?.font = Font.regular(PinnedCardMetrics.fontSize)
+                card.button.layer.cornerRadius = 6.0
+                card.button.addTarget(self, action: #selector(self.buttonPressed(_:)), for: .touchUpInside)
+                card.addSubview(card.button)
+                card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(self.cardTapped(_:))))
+                self.scrollView.addSubview(card)
+            }
+            card.label.text = item.text
+            self.updateButton(card)
+            updated.append(card)
+        }
+        self.cardViews = updated
+    }
+    
+    private func updateButton(_ card: CardView) {
+        let confirming = self.confirmingId == card.id
+        card.button.setTitle(confirming ? self.unpinTitle : self.removeTitle, for: .normal)
+        // IMG_2489: the armed confirm is a medium-weight title on a grey box.
+        card.button.titleLabel?.font = confirming ? Font.medium(PinnedCardMetrics.fontSize) : Font.regular(PinnedCardMetrics.fontSize)
+        card.button.setTitleColor(confirming ? PinnedCardMetrics.textColor : PinnedCardMetrics.removeColor, for: .normal)
+        card.button.backgroundColor = confirming ? UIColor(rgb: 0xEDEDED) : .clear
+    }
+    
+    @objc private func cardTapped(_ recognizer: UITapGestureRecognizer) {
+        guard let card = recognizer.view as? CardView else {
+            return
+        }
+        if self.confirmingId != nil {
+            let previous = self.cardViews.first(where: { $0.id == self.confirmingId })
+            self.confirmingId = nil
+            if let previous {
+                self.updateButton(previous)
+                self.setNeedsLayout()
+            }
+            return
+        }
+        self.onSelect?(card.id)
+    }
+    
+    @objc private func buttonPressed(_ sender: UIButton) {
+        guard let card = sender.superview as? CardView else {
+            return
+        }
+        if self.confirmingId == card.id {
+            self.confirmingId = nil
+            self.removedIds.insert(card.id)
+            self.items.removeAll(where: { $0.id == card.id })
+            self.onUnpin?(card.id)
+            self.rebuildCards()
+            if self.items.isEmpty {
+                self.onDismiss?()
+                return
+            }
+        } else {
+            let previous = self.cardViews.first(where: { $0.id == self.confirmingId })
+            self.confirmingId = card.id
+            if let previous {
+                self.updateButton(previous)
+            }
+            self.updateButton(card)
+        }
+        self.setNeedsLayout()
+        UIView.animate(withDuration: 0.2) {
+            self.layoutIfNeeded()
+        }
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = self.bounds.width
+        self.dimView.frame = CGRect(x: 0.0, y: self.barBottom, width: width, height: max(0.0, self.bounds.height - self.barBottom))
+        var y: CGFloat = 0.0
+        for card in self.cardViews {
+            card.frame = CGRect(x: 8.0, y: y, width: width - 16.0, height: PinnedCardMetrics.height)
+            card.icon.frame = PinnedCardMetrics.iconFrame
+            let confirming = self.confirmingId == card.id
+            let title = (confirming ? self.unpinTitle : self.removeTitle) as NSString
+            // Sized to its title like the collapsed card's Remove; UIButton's own fitting size put the title 1pt left
+            // of IMG_2488, where Remove sits one pixel below the card's centre. The armed box is IMG_2489's 80x29pt,
+            // 16pt from the card's edge.
+            let font = confirming ? Font.medium(PinnedCardMetrics.fontSize) : Font.regular(PinnedCardMetrics.fontSize)
+            let textWidth = ceil(title.size(withAttributes: [.font: font]).width)
+            let buttonHeight: CGFloat = confirming ? 29.0 : 24.0
+            let buttonWidth = textWidth + (confirming ? 24.0 : 0.0)
+            let buttonRight: CGFloat = confirming ? 16.0 : PinnedCardMetrics.trailingInset
+            let buttonY = floor((PinnedCardMetrics.height - buttonHeight) / 2.0) + (confirming ? 0.0 : UIScreenPixel)
+            card.button.frame = CGRect(x: card.bounds.width - buttonRight - buttonWidth, y: buttonY, width: buttonWidth, height: buttonHeight)
+            card.label.frame = CGRect(x: PinnedCardMetrics.textLeft, y: 0.0, width: max(0.0, card.button.frame.minX - 8.0 - PinnedCardMetrics.textLeft), height: PinnedCardMetrics.height)
+            y += PinnedCardMetrics.height + 8.0
+        }
+        let contentHeight = max(0.0, y - 8.0)
+        // IMG_2488: 16pt from the last card to the pill, a 16pt pill, 16pt to the panel's bottom edge.
+        let cardsTop = self.panelTop - self.barBottom
+        let maxVisible = max(PinnedCardMetrics.height, self.bounds.height * 0.62 - cardsTop - 48.0)
+        let visibleHeight = min(contentHeight, maxVisible)
+        self.scrollView.frame = CGRect(x: 0.0, y: cardsTop, width: width, height: visibleHeight)
+        self.scrollView.contentSize = CGSize(width: width, height: contentHeight)
+        let pillTop = cardsTop + visibleHeight + 16.0
+        self.pillView.frame = CGRect(x: floor((width - 39.0) / 2.0), y: pillTop, width: 39.0, height: 16.0)
+        let panelFrame = CGRect(x: 0.0, y: self.barBottom, width: width, height: pillTop + 16.0 + 16.0)
+        self.panelView.frame = panelFrame
+        self.panelBackground.frame = CGRect(origin: CGPoint(), size: panelFrame.size)
+        self.panelBackground.update(size: panelFrame.size, transition: .immediate)
     }
 }

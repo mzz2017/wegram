@@ -37,17 +37,21 @@ public final class HeaderPanelContainerComponent: Component {
     
     public let theme: PresentationTheme
     public let preferClearGlass: Bool
+    /// WeGram: the single panel draws its own card, so the container adds no glass, clipping or side inset beyond 8pt.
+    public let plainCards: Bool
     public let tabs: AnyComponent<Empty>?
     public let panels: [Panel]
     
     public init(
         theme: PresentationTheme,
         preferClearGlass: Bool = false,
+        plainCards: Bool = false,
         tabs: AnyComponent<Empty>?,
         panels: [Panel]
     ) {
         self.theme = theme
         self.preferClearGlass = preferClearGlass
+        self.plainCards = plainCards
         self.tabs = tabs
         self.panels = panels
     }
@@ -57,6 +61,9 @@ public final class HeaderPanelContainerComponent: Component {
             return false
         }
         if lhs.preferClearGlass != rhs.preferClearGlass {
+            return false
+        }
+        if lhs.plainCards != rhs.plainCards {
             return false
         }
         if lhs.tabs != rhs.tabs {
@@ -127,7 +134,7 @@ public final class HeaderPanelContainerComponent: Component {
             self.component = component
             self.state = state
             
-            let sideInset: CGFloat = 16.0
+            let sideInset: CGFloat = component.plainCards ? 8.0 : 16.0
             
             var size = CGSize(width: availableSize.width, height: 0.0)
             
@@ -267,11 +274,24 @@ public final class HeaderPanelContainerComponent: Component {
             transition.setFrame(view: self.backgroundView, frame: backgroundFrame)
             self.backgroundView.update(size: backgroundFrame.size, cornerRadius: cornerRadius, isDark: component.theme.overallDarkAppearance, tintColor: .init(kind: component.preferClearGlass ? .clear : .panel), isInteractive: true, transition: transition)
             
-            transition.setAlpha(view: self.backgroundContainer, alpha: (component.tabs != nil || !component.panels.isEmpty) ? 1.0 : 0.0)
+            transition.setAlpha(view: self.backgroundContainer, alpha: (component.tabs != nil || !component.panels.isEmpty) && !component.plainCards ? 1.0 : 0.0)
+            self.contentContainer.clipsToBounds = !component.plainCards
             
-            transition.setFrame(view: self.contentContainer, frame: CGRect(origin: CGPoint(), size: backgroundFrame.size))
+            // The panels live in the glass view's content view, which fades with the glass, so a card
+            // layout hosts them directly instead.
+            if component.plainCards {
+                if self.contentContainer.superview !== self {
+                    self.addSubview(self.contentContainer)
+                }
+                self.contentContainer.frame = CGRect(origin: CGPoint(x: sideInset, y: 0.0), size: backgroundFrame.size)
+            } else {
+                if self.contentContainer.superview !== self.backgroundView.contentView {
+                    self.backgroundView.contentView.addSubview(self.contentContainer)
+                }
+                transition.setFrame(view: self.contentContainer, frame: CGRect(origin: CGPoint(), size: backgroundFrame.size))
+            }
             
-            transition.setCornerRadius(layer: self.contentContainer.layer, cornerRadius: min(cornerRadius, backgroundFrame.height * 0.5))
+            transition.setCornerRadius(layer: self.contentContainer.layer, cornerRadius: component.plainCards ? 0.0 : min(cornerRadius, backgroundFrame.height * 0.5))
             
             return size
         }

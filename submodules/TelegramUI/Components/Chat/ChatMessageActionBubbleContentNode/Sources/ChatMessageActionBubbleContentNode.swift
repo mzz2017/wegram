@@ -53,6 +53,7 @@ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
     private let fetchDisposable = MetaDisposable()
     
     private var leadingIconView: UIImageView?
+    private var wegramCapsuleNode: WegramCapsuleBackgroundNode?
 
     private var cachedMaskBackgroundImage: (CGPoint, UIImage, [CGRect])?
     private var absoluteRect: (CGRect, CGSize)?
@@ -246,6 +247,18 @@ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
                     updatedAttributedString = mutableString
                 }
                 
+                // WeGram: on a photo wallpaper in light mode a plain notice is WeChat's capsule (input5
+                // IMG_2490): 14pt grey regular text, 10pt side padding, 21pt tall.
+                let usesWegramCapsule = suggestedPost == nil && image == nil && leadingIcon == nil && WegramCapsuleBackgroundNode.isApplicable(wallpaper: item.presentationData.theme.wallpaper, isDark: item.presentationData.theme.theme.overallDarkAppearance)
+                let wegramCapsuleInset: CGFloat = 10.0
+                if usesWegramCapsule, let attributedString = updatedAttributedString {
+                    let mutableString = NSMutableAttributedString(attributedString: attributedString)
+                    let fullRange = NSRange(location: 0, length: mutableString.length)
+                    mutableString.addAttribute(.font, value: Font.regular(floor(item.presentationData.fontSize.baseDisplaySize * 14.0 / 17.0)), range: fullRange)
+                    mutableString.addAttribute(.foregroundColor, value: WegramCapsuleBackgroundNode.noticeTextColor, range: fullRange)
+                    updatedAttributedString = mutableString
+                }
+                
                 var textAlignment: NSTextAlignment = .center
                 
                 let primaryTextColor = serviceMessageColorComponents(theme: item.presentationData.theme.theme, wallpaper: item.presentationData.theme.wallpaper).primaryText
@@ -426,7 +439,7 @@ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
                     titleLayoutAndApply = makeTitleLayout(TextNodeLayoutArguments(attributedString: titleString, backgroundColor: nil, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: constrainedSize.width - 32.0, height: CGFloat.greatestFiniteMagnitude), alignment: .center, cutout: nil, insets: UIEdgeInsets()))
                 }
                 
-                let (labelLayout, apply) = makeLabelLayout(TextNodeLayoutArguments(attributedString: updatedAttributedString, backgroundColor: nil, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: constrainedSize.width - 32.0, height: CGFloat.greatestFiniteMagnitude), alignment: textAlignment, cutout: nil, insets: UIEdgeInsets()))
+                let (labelLayout, apply) = makeLabelLayout(TextNodeLayoutArguments(attributedString: updatedAttributedString, backgroundColor: nil, maximumNumberOfLines: 0, truncationType: .end, constrainedSize: CGSize(width: constrainedSize.width - 32.0 - (usesWegramCapsule ? wegramCapsuleInset * 2.0 : 0.0), height: CGFloat.greatestFiniteMagnitude), alignment: textAlignment, cutout: nil, insets: UIEdgeInsets()))
             
                 var labelRects = labelLayout.linesRects()
                 if labelRects.count > 1 {
@@ -451,7 +464,7 @@ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
 
                 let backgroundMaskImage: (CGPoint, UIImage)?
                 var backgroundMaskUpdated = false
-                if suggestedPost != nil {
+                if suggestedPost != nil || usesWegramCapsule {
                     backgroundMaskImage = nil
                     if cachedMaskBackgroundImage != nil {
                         backgroundMaskUpdated = true
@@ -488,6 +501,11 @@ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
                     
                     backgroundSize.width += contentInsets.left + contentInsets.right
                     backgroundSize.height += contentInsets.top + contentInsets.bottom
+                } else if usesWegramCapsule {
+                    backgroundSize.width += wegramCapsuleInset * 2.0
+                    backgroundSize.height = ceil(labelLayout.size.height) + 4.0
+                    // 12pt between capsules and from a time capsule above (whose header leaves 7pt below it).
+                    contentOuterInsets = UIEdgeInsets(top: 5.0 - layoutConstants.bubble.defaultSpacing, left: 0.0, bottom: 7.0 - layoutConstants.bubble.defaultSpacing, right: 0.0)
                 } else {
                     backgroundSize.width += 8.0 + 8.0
                     backgroundSize.height += 4.0
@@ -623,6 +641,9 @@ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
                                     animation.animator.updatePosition(layer: titleNode.layer, position: titleFrame.origin, completion: nil)
                                     titleNode.bounds = CGRect(origin: CGPoint(), size: titleFrame.size)
                                 }
+                            } else if usesWegramCapsule {
+                                contentFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((boundingWidth - backgroundSize.width) / 2.0), y: contentOuterInsets.top), size: backgroundSize)
+                                labelFrame = CGRect(origin: CGPoint(x: contentFrame.minX + wegramCapsuleInset, y: contentFrame.minY + floorToScreenPixels((contentFrame.height - labelLayout.size.height) / 2.0) + UIScreenPixel), size: labelLayout.size)
                             } else {
                                 labelFrame = CGRect(origin: CGPoint(x: floorToScreenPixels((boundingWidth - labelLayout.size.width) / 2.0) - 1.0, y: image != nil ? 2.0 : floorToScreenPixels((backgroundSize.height - labelLayout.size.height) / 2.0) - 1.0), size: labelLayout.size)
                                 contentFrame = labelFrame
@@ -761,7 +782,36 @@ public class ChatMessageActionBubbleContentNode: ChatMessageBubbleContentNode {
                                 strongSelf.expandHighlightingNode = nil
                             }
                             
-                            if suggestedPost != nil {
+                            if usesWegramCapsule {
+                                let capsuleNode: WegramCapsuleBackgroundNode
+                                if let current = strongSelf.wegramCapsuleNode {
+                                    capsuleNode = current
+                                } else {
+                                    capsuleNode = WegramCapsuleBackgroundNode()
+                                    strongSelf.wegramCapsuleNode = capsuleNode
+                                    strongSelf.insertSubnode(capsuleNode, at: 0)
+                                }
+                                animation.animator.updateFrame(layer: capsuleNode.layer, frame: contentFrame, completion: nil)
+                                capsuleNode.update(size: contentFrame.size, transition: .immediate)
+                            } else if let capsuleNode = strongSelf.wegramCapsuleNode {
+                                strongSelf.wegramCapsuleNode = nil
+                                capsuleNode.removeFromSupernode()
+                            }
+                            strongSelf.backgroundNode?.isHidden = usesWegramCapsule
+                            
+                            if usesWegramCapsule {
+                                strongSelf.cachedMaskBackgroundImage = nil
+                                
+                                switch strongSelf.visibility {
+                                case .none:
+                                    strongSelf.labelNode.visibilityRect = nil
+                                case let .visible(_, subRect):
+                                    var subRect = subRect
+                                    subRect.origin.x = 0.0
+                                    subRect.size.width = 10000.0
+                                    strongSelf.labelNode.visibilityRect = subRect
+                                }
+                            } else if suggestedPost != nil {
                                 let backgroundFrame = contentFrame
                                 
                                 if strongSelf.backgroundNode == nil {

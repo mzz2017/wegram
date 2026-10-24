@@ -7294,7 +7294,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                 case .embedded:
                     self.statusBar.statusBarStyle = .Ignore
                 default:
-                    if let contentStats = self.chatDisplayNode.backgroundNode.contentStats {
+                    // The WeGram bar covers the wallpaper at 90% of the theme's bar colour, so the status bar follows the theme
+                    // (IMG_2487: black over a dark photo), not the wallpaper's brightness as it does over upstream's glass.
+                    if !self.usesWegramNavigation, let contentStats = self.chatDisplayNode.backgroundNode.contentStats {
                         if contentStats.isDark {
                             self.statusBar.statusBarStyle = .White
                         } else {
@@ -7422,9 +7424,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
         badge.updateTheme(fillColor: self.forcedNavigationBarTheme == nil ? colors.badge : .clear, strokeColor: .clear, textColor: self.forcedNavigationBarTheme == nil ? colors.control : .clear)
     }
 
-    /// WeChat's chat bar ends in a `Toolbar_Separator` line (black/white 0.1; IMG_2437), which its list pages do not have.
+    /// WeChat's chat bar is translucent over the wallpaper and has no bottom line (IMG_2486-2490).
     static func wegramNavigationBarTheme(_ theme: PresentationTheme, hideBadge: Bool) -> NavigationBarTheme {
-        return NavigationBarTheme(wegramTheme: theme, hideBadge: hideBadge).withUpdatedSeparatorColor(UIColor(white: theme.overallDarkAppearance ? 1.0 : 0.0, alpha: 0.1))
+        return NavigationBarTheme(wegramTheme: theme, hideBadge: hideBadge, translucent: true)
     }
 
     func updateNavigationBarPresentation() {

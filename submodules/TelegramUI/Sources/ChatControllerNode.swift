@@ -268,6 +268,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
     private var floatingTopicsPanelContainer: ChatControllerTitlePanelNodeContainer
     private var floatingTopicsPanel: (view: ComponentView<ChatSidePanelEnvironment>, component: ChatFloatingTopicsPanel)?
     private var headerPanelsView: ComponentView<Empty>?
+    private var pinnedCardHeaderBackground: NavigationBackgroundNode?
+    private var pinnedListBarDimView: UIView?
     private var footerPanelsView: ComponentView<Empty>?
     
     private var topBackgroundEdgeEffectNode: WallpaperEdgeEffectNode?
@@ -1209,7 +1211,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                     statusBar.updateStatusBarStyle(.White, animated: true)
                 } else {
                     let statusBarStyle: StatusBarStyle
-                    if let contentStats = self.backgroundNode.contentStats {
+                    // As in `ChatControllerImpl.updateStatusBarPresentation`: the WeGram bar, not the wallpaper, is behind it.
+                    if self.controller?.usesWegramNavigation != true, let contentStats = self.backgroundNode.contentStats {
                         if contentStats.isDark {
                             statusBarStyle = .White
                         } else {
@@ -1735,6 +1738,7 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         var floatingTopicsPanelInsets = UIEdgeInsets()
         
         var headerPanelsSize: CGSize?
+        var headerPanelsUsePinnedCard = false
         if !headerPanels.isEmpty {
             let headerPanelsView: ComponentView<Empty>
             var headerPanelsTransition = ComponentTransition(transition)
@@ -1745,11 +1749,14 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
                 headerPanelsView = ComponentView()
                 self.headerPanelsView = headerPanelsView
             }
+            let usesPinnedCard = headerPanels.count == 1 && (self.currentTitleAccessoryPanelNode as? ChatPinnedMessageTitlePanelNode)?.usesCardStyle(interfaceState: self.chatPresentationInterfaceState) == true
+            headerPanelsUsePinnedCard = usesPinnedCard
             let headerPanelsSizeValue = headerPanelsView.update(
                 transition: headerPanelsTransition,
                 component: AnyComponent(HeaderPanelContainerComponent(
                     theme: self.chatPresentationInterfaceState.theme,
                     preferClearGlass: self.chatPresentationInterfaceState.preferredGlassType == .clear,
+                    plainCards: usesPinnedCard,
                     tabs: nil,
                     panels: headerPanels
                 )),
@@ -2763,6 +2770,35 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
             }
             headerPanelsTransition.setFrame(view: headerPanelsComponentView, frame: headerPanelsFrame)
             sidePanelTopInset += headerPanelsSize.height + 2.0
+            
+            // WeChat's bar material runs on behind the pinned card down to the panel's bottom inset, with no band of
+            // chat between them (IMG_2486: the margins beside the card stay bar-coloured until y=484px, the panel's end).
+            if headerPanelsUsePinnedCard {
+                let backgroundColor = ChatControllerImpl.wegramNavigationBarTheme(self.chatPresentationInterfaceState.theme, hideBadge: false).backgroundColor
+                let background: NavigationBackgroundNode
+                var backgroundTransition = transition
+                if let current = self.pinnedCardHeaderBackground {
+                    background = current
+                    background.updateColor(color: backgroundColor, transition: .immediate)
+                } else {
+                    background = NavigationBackgroundNode(color: backgroundColor)
+                    // The container hit-tests its subviews bottom-up, so an interactive material here would take
+                    // every tap meant for the card above it.
+                    background.isUserInteractionEnabled = false
+                    self.pinnedCardHeaderBackground = background
+                    backgroundTransition = .immediate
+                }
+                if background.view.superview !== headerPanelsComponentView.superview {
+                    self.floatingTopicsPanelContainer.view.insertSubview(background.view, belowSubview: headerPanelsComponentView)
+                }
+                let backgroundFrame = CGRect(x: 0.0, y: insets.top, width: layout.size.width, height: max(0.0, headerPanelsFrame.maxY - insets.top))
+                backgroundTransition.updateFrame(node: background, frame: backgroundFrame)
+                background.update(size: backgroundFrame.size, transition: backgroundTransition)
+            }
+        }
+        if !headerPanelsUsePinnedCard || self.headerPanelsView == nil, let background = self.pinnedCardHeaderBackground {
+            self.pinnedCardHeaderBackground = nil
+            background.view.removeFromSuperview()
         }
         
         if let footerPanelsComponentView = self.footerPanelsView?.view, let footerPanelsSize {
@@ -4272,6 +4308,40 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
         parent.insertSubview(container, aboveSubview: self.historyNodeContainer.view)
         self.contextTransitionContainer = container
         return container
+    }
+
+    /// WeGram: the expanded pinned list (IMG_2488) dims the chat behind the navigation bar too, so the bar's
+    /// translucent material darkens with it (dee0e2 -> d9dbdc measured), and it replaces the collapsed card, which must
+    /// leave the backdrop of the list's own material. Returns the bar's bottom edge, where the list begins.
+    func updatePinnedListBackdrop(dimColor: UIColor?) -> CGFloat? {
+        guard let navigationBar = self.navigationBar, let barParent = navigationBar.view.superview else {
+            return nil
+        }
+        if let dimColor {
+            let dimView: UIView
+            if let current = self.pinnedListBarDimView {
+                dimView = current
+            } else {
+                dimView = UIView()
+                dimView.isUserInteractionEnabled = false
+                self.pinnedListBarDimView = dimView
+                barParent.insertSubview(dimView, belowSubview: navigationBar.view)
+            }
+            dimView.backgroundColor = dimColor
+            dimView.frame = CGRect(x: 0.0, y: 0.0, width: barParent.bounds.width, height: navigationBar.frame.maxY)
+        } else if let dimView = self.pinnedListBarDimView {
+            self.pinnedListBarDimView = nil
+            UIView.animate(withDuration: 0.2, animations: {
+                dimView.alpha = 0.0
+            }, completion: { _ in
+                dimView.removeFromSuperview()
+            })
+        }
+        let collapsedAlpha: CGFloat = dimColor == nil ? 1.0 : 0.0
+        for view in [self.headerPanelsView?.view, self.pinnedCardHeaderBackground?.view] {
+            view?.alpha = collapsedAlpha
+        }
+        return navigationBar.view.convert(navigationBar.view.bounds, to: self.view).maxY
     }
 
     func frameForVisibleArea() -> CGRect {
