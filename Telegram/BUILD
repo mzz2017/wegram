@@ -316,6 +316,16 @@ filegroup(
     ], exclude = ["Telegram-iOS/DefaultAppIcon.xcassets/**/.*"]),
 )
 
+# WeGram's primary icon: one 1024pt universal image that actool expands into every iPhone and iPad size,
+# including the 152x152 and 167x167 iPad files and CFBundleIcons~ipad entries App Store Connect requires
+# (ITMS-90892). rules_apple rejects mixing it with an Icon Composer .icon, which emits no iPad files below iOS 26.
+filegroup(
+    name = "WeGramAppIcon",
+    srcs = glob([
+        "Telegram-iOS/WeGramAppIcon.xcassets/**/*",
+    ], exclude = ["Telegram-iOS/WeGramAppIcon.xcassets/**/.*"]),
+)
+
 filegroup(
     name = "DefaultIcon",
     srcs = glob([
@@ -1850,7 +1860,7 @@ ios_application(
         ":RequiredDeviceCapabilitiesPlist",
         ":UrlTypesInfoPlist",
     ],
-    app_icons = [ ":{}_icon".format(name) for name in composer_icon_folders ],
+    app_icons = [":WeGramAppIcon"],
     alternate_icons = [
         ":{}".format(name) for name in alternate_icon_folders
     ],
