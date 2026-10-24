@@ -391,6 +391,12 @@ func inputPanelForChatPresentationIntefaceState(_ chatPresentationInterfaceState
                 if chatPresentationInterfaceState.interfaceState.editMessage != nil, channel.hasPermission(.editAllMessages) {
                     displayInputTextPanel = true
                 } else if !channel.hasPermission(.sendSomething) || !isMember {
+                    // A subscribed WeGram channel has no bottom bar, like a WeChat chat you only read.
+                    // Mute and search are on its 聊天信息 page and gifts on the full profile behind it;
+                    // a channel not yet joined keeps the bar for its join button.
+                    if isMember, case .peer = chatPresentationInterfaceState.chatLocation {
+                        return (nil, nil)
+                    }
                     if let currentPanel = (currentPanel as? ChatChannelSubscriberInputPanelNode) ?? (currentSecondaryPanel as? ChatChannelSubscriberInputPanelNode) {
                         return (currentPanel, nil)
                     } else {

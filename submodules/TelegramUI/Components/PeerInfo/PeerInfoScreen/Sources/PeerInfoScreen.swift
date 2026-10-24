@@ -7828,17 +7828,31 @@ extension PeerInfoScreenImpl {
               self.sharedMediaFromForumTopic == nil, case .peer = self.chatLocation,
               let data = self.controllerNode.data, let peer = data.peer,
               !peer.isScam, !peer.isFake, !peer.isVerified,
-              data.peerNotificationSettings != nil, data.globalNotificationSettings != nil,
-              data.members != nil else { return false }
+              data.peerNotificationSettings != nil, data.globalNotificationSettings != nil else { return false }
         switch peer {
         case let .legacyGroup(group):
-            return group.membership == .Member && group.migrationReference == nil
+            return data.members != nil && group.membership == .Member && group.migrationReference == nil
         case let .channel(channel):
-            guard case .group = channel.info, channel.participationStatus == .member,
+            guard channel.participationStatus == .member,
                   !channel.isForumOrMonoForum, channel.restrictionInfo == nil else { return false }
-            return true
+            switch channel.info {
+            case .group: return data.members != nil
+            // A subscribed channel has no bottom bar in WeGram, so this page is where its mute and
+            // search live. Subscribers are not listed, so it needs no members.
+            case .broadcast: return true
+            }
         default: return false
         }
+    }
+
+    private var isWegramChannelDetails: Bool {
+        if case let .channel(channel) = self.controllerNode.data?.peer, case .broadcast = channel.info { return true }
+        return false
+    }
+
+    /// A group needs its member preview before the page can draw; a channel shows only itself.
+    private var hasWegramGroupContent: Bool {
+        self.isWegramChannelDetails || !self.currentWegramGroupMembers.isEmpty
     }
 
     fileprivate func updateWegramGroup(layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
@@ -7880,14 +7894,14 @@ extension PeerInfoScreenImpl {
                 }))
             }
         }
-        let visible = self.canUseWegramGroupDetails && !self.currentWegramGroupMembers.isEmpty && !node.state.isEditing && !node.headerNode.isAvatarExpanded && node.searchDisplayController == nil
+        let visible = self.canUseWegramGroupDetails && self.hasWegramGroupContent && !node.state.isEditing && !node.headerNode.isAvatarExpanded && node.searchDisplayController == nil
         if visible && self.wegramGroupView == nil {
             let view = WegramGroupContentView(frame: .zero)
             view.open = { [weak self] action in self?.performWegramGroupAction(action) }
             view.configureAvatar = { [weak self] id, host in
                 guard let self, self.wegramGroupView?.membersExpanded == true,
                       let member = self.currentWegramGroupMembers.first(where: { $0.id.toInt64() == id }) else { return }
-                self.configureWegramGroupAvatar(member: member, host: host)
+                self.configureWegramGroupAvatar(id: id, peer: member.peer, host: host)
             }
             view.releaseAvatar = { [weak self] id, host in
                 guard let self, let avatar = self.wegramGroupAvatars[id], avatar.view.superview === host else { return }
@@ -7932,6 +7946,22 @@ extension PeerInfoScreenImpl {
         else { membersLoading = false }
         let managementRequests = Int(data.requests?.count ?? 0)
         let managementActions = wegramGroupManagementActions(peer: peer, pendingRequests: managementRequests)
+        if self.isWegramChannelDetails {
+            // The channel's own tile, where a WeChat private chat shows the friend; it opens the full profile.
+            let isMuted = peerInfoIsChatMuted(peer: peer, peerNotificationSettings: data.peerNotificationSettings, threadNotificationSettings: nil, globalNotificationSettings: data.globalNotificationSettings)
+            var content = WegramGroupContent(name: peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder), about: about, members: [.init(id: peer.id.toInt64(), name: peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder))], memberCount: 1, canAddMembers: false, hasMoreMembers: false, canShowQRCode: !(peer.addressName?.isEmpty ?? true), isPinned: self.wegramGroupIsPinned, pinIsBusy: self.wegramGroupPinIsBusy, isMuted: isMuted)
+            content.isChannel = true
+            view.update(content, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.itemListBaseFontSize, chinese: self.presentationData.strings.baseLanguageCode.hasPrefix("zh"), statusHeight: layout.statusBarHeight ?? 0, bottomInset: layout.intrinsicInsets.bottom)
+            view.layoutIfNeeded()
+            for id in Array(self.wegramGroupAvatars.keys) where id != peer.id.toInt64() {
+                self.wegramGroupAvatars.removeValue(forKey: id)?.removeFromSupernode()
+            }
+            if let host = view.avatarHosts[peer.id.toInt64()] {
+                self.configureWegramGroupAvatar(id: peer.id.toInt64(), peer: peer, host: host)
+            }
+            node.view.bringSubviewToFront(view)
+            return
+        }
         let content = WegramGroupContent(name: peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder), about: about, members: previewMembers.map { .init(id: $0.id.toInt64(), name: $0.peer.displayTitle(strings: self.presentationData.strings, displayOrder: self.presentationData.nameDisplayOrder)) }, memberCount: count, canAddMembers: peerInfoCanAddMembers(peer: peer), hasMoreMembers: hasMoreMembers, canShowQRCode: !(peer.addressName?.isEmpty ?? true) || self.wegramGroupQRCodeInvite != nil, isPinned: self.wegramGroupIsPinned, pinIsBusy: self.wegramGroupPinIsBusy, isMuted: peerInfoIsChatMuted(peer: peer, peerNotificationSettings: data.peerNotificationSettings, threadNotificationSettings: nil, globalNotificationSettings: data.globalNotificationSettings), canClearHistory: self.wegramGroupHistoryPermissions.map { $0.canClearForMyself != nil || $0.canClearForEveryone != nil } ?? false, canManageGroup: !managementActions.isEmpty, managementRequestCount: managementActions.contains(.requests) ? managementRequests : 0)
         view.update(content, dark: self.presentationData.theme.overallDarkAppearance, fontSize: self.presentationData.listsFontSize.itemListBaseFontSize, chinese: self.presentationData.strings.baseLanguageCode.hasPrefix("zh"), statusHeight: layout.statusBarHeight ?? 0, bottomInset: layout.intrinsicInsets.bottom, membersLoading: membersLoading)
         view.layoutIfNeeded()
@@ -7944,23 +7974,23 @@ extension PeerInfoScreenImpl {
             }
             for member in previewMembers {
                 guard let host = view.avatarHosts[member.id.toInt64()] else { continue }
-                self.configureWegramGroupAvatar(member: member, host: host)
+                self.configureWegramGroupAvatar(id: member.id.toInt64(), peer: member.peer, host: host)
             }
         }
         node.view.bringSubviewToFront(view)
     }
 
-    private func configureWegramGroupAvatar(member: PeerInfoMember, host: UIView) {
+    private func configureWegramGroupAvatar(id: Int64, peer: EnginePeer, host: UIView) {
         let avatar: AvatarNode
-        if let current = self.wegramGroupAvatars[member.id.toInt64()] { avatar = current }
+        if let current = self.wegramGroupAvatars[id] { avatar = current }
         else {
             avatar = AvatarNode(font: avatarPlaceholderFont(size: 20))
             avatar.cornerRadius = 4
             avatar.clipsToBounds = true
-            self.wegramGroupAvatars[member.id.toInt64()] = avatar
+            self.wegramGroupAvatars[id] = avatar
         }
         if avatar.view.superview !== host { host.addSubnode(avatar) }
-        avatar.setPeer(context: self.context, theme: self.presentationData.theme, peer: member.peer, clipStyle: .none, displayDimensions: CGSize(width: 48, height: 48))
+        avatar.setPeer(context: self.context, theme: self.presentationData.theme, peer: peer, clipStyle: .none, displayDimensions: CGSize(width: 48, height: 48))
         avatar.frame = CGRect(x: 0, y: 0, width: 48, height: 48)
         avatar.updateSize(size: CGSize(width: 48, height: 48))
     }
@@ -7969,7 +7999,19 @@ extension PeerInfoScreenImpl {
         guard self.wegramGroupView?.isHidden == false, self.displayNode.view.window != nil,
               (self.navigationController as? NavigationController)?.topViewController === self else { return }
         if action == .back { self.dismiss(); return }
-        guard self.canUseWegramGroupDetails, !self.currentWegramGroupMembers.isEmpty, let data = self.controllerNode.data, let peer = data.peer else { return }
+        guard self.canUseWegramGroupDetails, self.hasWegramGroupContent, let data = self.controllerNode.data, let peer = data.peer else { return }
+        if self.isWegramChannelDetails {
+            switch action {
+            // The channel's tile and its description open the full profile, which also holds gifts,
+            // links, similar channels and the admin tools.
+            case .member, .about, .details:
+                self.openWegramFullGroup()
+                return
+            case .management, .addMember, .allMembers, .searchMembers, .clearHistory:
+                return
+            default: break
+            }
+        }
         switch action {
         case .back: break
         case .details:
@@ -8031,7 +8073,7 @@ extension PeerInfoScreenImpl {
         }
     }
     private var canPerformWegramGroupAction: Bool {
-        self.isNodeLoaded && self.wegramGroupView?.isHidden == false && self.displayNode.view.window != nil && (self.navigationController as? NavigationController)?.topViewController === self && self.canUseWegramGroupDetails && !self.currentWegramGroupMembers.isEmpty
+        self.isNodeLoaded && self.wegramGroupView?.isHidden == false && self.displayNode.view.window != nil && (self.navigationController as? NavigationController)?.topViewController === self && self.canUseWegramGroupDetails && self.hasWegramGroupContent
     }
 
     private var wegramGroupHistoryPermissions: ClearPeerHistory? {

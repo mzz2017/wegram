@@ -29,6 +29,8 @@ struct WegramGroupContent: Equatable {
     var canClearHistory = false
     var canManageGroup = false
     var managementRequestCount = 0
+    /// A broadcast channel: its one tile is the channel itself, and there is no name row or member search.
+    var isChannel = false
 }
 
 private final class WegramGroupMemberRowCell: UITableViewCell {
@@ -206,8 +208,9 @@ final class WegramGroupContentView: UIView, UITableViewDataSource, UITableViewDe
         self.chinese = chinese
         self.statusHeight = statusHeight
         self.bottomInset = bottomInset
-        self.rows = [[.details] + (content.canShowQRCode ? [.qr] : []) + [.about] + (content.canManageGroup ? [.management] : []), [.search], [.mute(content.isMuted)] + (content.isPinned.map { [.pin($0)] } ?? []), [.more], (content.canClearHistory ? [.clearHistory] : []) + [.leave]]
-        self.title.text = (chinese ? "聊天信息" : "Chat Info") + " (\(content.memberCount))"
+        self.rows = [(content.isChannel ? [] : [.details]) + (content.canShowQRCode ? [.qr] : []) + [.about] + (content.canManageGroup ? [.management] : []), [.search], [.mute(content.isMuted)] + (content.isPinned.map { [.pin($0)] } ?? []), [.more], (content.canClearHistory ? [.clearHistory] : []) + [.leave]]
+        self.title.text = (chinese ? "聊天信息" : "Chat Info") + (content.isChannel ? "" : " (\(content.memberCount))")
+        self.memberSearch.isHidden = content.isChannel
         self.title.textColor = self.foreground
         self.header.backgroundColor = UIColor(white: dark ? 0.082 : 0.929, alpha: 1)
         self.backgroundColor = self.header.backgroundColor
@@ -364,7 +367,9 @@ final class WegramGroupContentView: UIView, UITableViewDataSource, UITableViewDe
     private func destructiveTitle(_ action: Action) -> String? {
         switch action {
         case .clearHistory: return self.chinese ? "清空聊天记录" : "Clear Chat History"
-        case .leave: return self.chinese ? "退出群聊" : "Leave Group"
+        case .leave:
+            if self.content?.isChannel == true { return self.chinese ? "退出频道" : "Leave Channel" }
+            return self.chinese ? "退出群聊" : "Leave Group"
         default: return nil
         }
     }
@@ -411,7 +416,11 @@ final class WegramGroupContentView: UIView, UITableViewDataSource, UITableViewDe
             cell.textLabel?.text = self.chinese ? "群聊名称" : "Group Name"
             cell.detailTextLabel?.text = self.content?.name
         case .about:
-            cell.textLabel?.text = self.chinese ? "群介绍" : "Group Description"
+            if self.content?.isChannel == true {
+                cell.textLabel?.text = self.chinese ? "频道简介" : "Channel Description"
+            } else {
+                cell.textLabel?.text = self.chinese ? "群介绍" : "Group Description"
+            }
             cell.detailTextLabel?.text = self.content?.about.map { $0.isEmpty ? (self.chinese ? "未设置" : "Not Set") : $0 }
             cell.accessibilityIdentifier = "Wegram.Group.About"
             cell.isAccessibilityElement = true
@@ -428,7 +437,12 @@ final class WegramGroupContentView: UIView, UITableViewDataSource, UITableViewDe
             cell.accessibilityLabel = cell.textLabel?.text
             cell.accessibilityValue = cell.detailTextLabel?.text
             cell.accessibilityTraits = .button
-        case .qr: cell.textLabel?.text = self.chinese ? "群二维码" : "Group QR Code"
+        case .qr:
+            if self.content?.isChannel == true {
+                cell.textLabel?.text = self.chinese ? "频道二维码" : "Channel QR Code"
+            } else {
+                cell.textLabel?.text = self.chinese ? "群二维码" : "Group QR Code"
+            }
         case .search: cell.textLabel?.text = self.chinese ? "查找聊天内容" : "Search Chat History"
         case .more: cell.textLabel?.text = self.chinese ? "更多设置" : "More Settings"
         case .clearHistory, .leave:
