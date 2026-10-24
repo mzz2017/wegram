@@ -15,6 +15,20 @@ import QrCodeUI
 import CallListUI
 import StoryContainerScreen
 import AvatarNode
+import ContextUI
+
+private final class WegramDiscoverTabBarContextReferenceContentSource: ContextReferenceContentSource {
+    let keepInPlace: Bool = true
+    private let sourceView: ContextExtractedContentContainingView
+
+    init(sourceView: ContextExtractedContentContainingView) {
+        self.sourceView = sourceView
+    }
+
+    func transitionInfo() -> ContextControllerReferenceViewInfo? {
+        return ContextControllerReferenceViewInfo(referenceView: self.sourceView.contentView, contentAreaInScreenSpace: UIScreen.main.bounds, actionsPosition: .top)
+    }
+}
 
 private struct WegramMomentItem {
     let peer: EnginePeer
@@ -362,22 +376,30 @@ final class WegramDiscoverController: ViewController, UITableViewDataSource, UIT
         }
     }
 
+    // A context menu like the other tabs' long-press menus: the root NavigationController traps on any
+    // UIKit `present(_:animated:)`, so a UIAlertController here crashed the app.
     override func tabBarItemContextAction(sourceView: ContextExtractedContentContainingView, gesture: ContextGesture) {
         guard let rootController = self.context.sharedContext.mainWindow?.viewController as? NavigationController else {
             return
         }
-        let menu = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        menu.addAction(UIAlertAction(title: "通话", style: .default, handler: { [weak self] _ in
-            guard let self else { return }
-            rootController.pushViewController(CallListController(context: self.context, mode: .navigation))
-        }))
-        menu.addAction(UIAlertAction(title: "频道", style: .default, handler: { [weak self] _ in
-            self?.openSearch(.channels)
-        }))
-        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
-        menu.popoverPresentationController?.sourceView = sourceView
-        menu.popoverPresentationController?.sourceRect = sourceView.bounds
-        rootController.present(menu, animated: true)
+        var items: [ContextMenuItem] = []
+        items.append(.action(ContextMenuActionItem(text: "通话", icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Call"), color: theme.contextMenu.primaryColor)
+        }, action: { [weak self] c, _ in
+            c?.dismiss(completion: { [weak self] in
+                guard let self else { return }
+                rootController.pushViewController(CallListController(context: self.context, mode: .navigation))
+            })
+        })))
+        items.append(.action(ContextMenuActionItem(text: "频道", icon: { theme in
+            return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Channels"), color: theme.contextMenu.primaryColor)
+        }, action: { [weak self] c, _ in
+            c?.dismiss(completion: { [weak self] in
+                self?.openSearch(.channels)
+            })
+        })))
+        let controller = makeContextController(presentationData: self.presentationData, source: .reference(WegramDiscoverTabBarContextReferenceContentSource(sourceView: sourceView)), items: .single(ContextController.Items(content: .list(items))), recognizer: nil, gesture: gesture)
+        self.context.sharedContext.mainWindow?.presentInGlobalOverlay(controller)
     }
 
     private func openMoment(_ moment: WegramMomentItem, focus: Int32?, interaction: WegramStoryInteraction? = nil) {
