@@ -21,7 +21,8 @@ class BuildConfiguration:
         app_specific_url_scheme,
         premium_iap_product_id,
         enable_siri,
-        enable_icloud
+        enable_icloud,
+        enable_app_groups=True
     ):
         self.bundle_id = bundle_id
         self.api_id = api_id
@@ -35,6 +36,7 @@ class BuildConfiguration:
         self.premium_iap_product_id = premium_iap_product_id
         self.enable_siri = enable_siri
         self.enable_icloud = enable_icloud
+        self.enable_app_groups = enable_app_groups
 
     def write_to_variables_file(self, bazel_path, use_xcode_managed_codesigning, aps_environment, path, disable_provisioning_profiles=False):
         string = ''
@@ -54,6 +56,7 @@ class BuildConfiguration:
         string += 'telegram_aps_environment = "{}"\n'.format(aps_environment)
         string += 'telegram_enable_siri = {}\n'.format(self.enable_siri)
         string += 'telegram_enable_icloud = {}\n'.format(self.enable_icloud)
+        string += 'telegram_enable_app_groups = {}\n'.format(self.enable_app_groups)
         string += 'telegram_enable_watch = True\n'
 
         if os.path.exists(path):
@@ -97,7 +100,9 @@ def build_configuration_from_json(path):
             app_specific_url_scheme=configuration_dict['app_specific_url_scheme'],
             premium_iap_product_id=configuration_dict['premium_iap_product_id'],
             enable_siri=configuration_dict['enable_siri'],
-            enable_icloud=configuration_dict['enable_icloud']
+            enable_icloud=configuration_dict['enable_icloud'],
+            # Optional: a profile without an app group (the main-app-only internal build) sets this to false.
+            enable_app_groups=configuration_dict.get('enable_app_groups', True)
         )
 
 
@@ -216,8 +221,9 @@ def resolve_aps_environment_from_directory(source_path, team_id, bundle_id):
                 profile_base_name = profile_name[len(team_id + '.' + bundle_id):]
                 if profile_base_name == '':
                     if 'aps-environment' not in profile_dict['Entitlements']:
-                        print('Provisioning profile at {} does not include an aps-environment entitlement'.format(file_path))
-                        sys.exit(1)
+                        # Push is off for this profile (e.g. the main-app-only internal build); push needs the extensions anyway.
+                        print('Provisioning profile at {} does not include an aps-environment entitlement; push is disabled'.format(file_path))
+                        return ''
                     return profile_dict['Entitlements']['aps-environment']
     return None
 

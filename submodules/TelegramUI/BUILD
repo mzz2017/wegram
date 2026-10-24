@@ -11,7 +11,7 @@ filegroup(
     srcs = glob([
         "Sounds/**/*",
         "Resources/**/*",
-    ], exclude = ["Sounds/**/.*", "Resources/**/.*"]),
+    ], exclude = ["Sounds/**/.*", "Resources/**/.*", "Resources/Fonts/AremacFS-*.otf"]),
     visibility = ["//visibility:public"],
 )
 

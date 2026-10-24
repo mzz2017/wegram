@@ -265,6 +265,8 @@ class BazelCommandLine:
 
     def get_additional_build_arguments(self):
         combined_arguments = []
+        if self.additional_args is not None:
+            combined_arguments += self.additional_args
         if self.split_submodules:
             combined_arguments += [
                 # https://github.com/bazelbuild/rules_swift
@@ -654,6 +656,9 @@ def build(bazel, arguments):
 
     if arguments.lock:
         bazel_command_line.set_lock(True)
+
+    if arguments.bazelArguments:
+        bazel_command_line.add_additional_args(arguments.bazelArguments.split())
 
     if arguments.cacheDir is not None:
         bazel_command_line.add_cache_dir(arguments.cacheDir)

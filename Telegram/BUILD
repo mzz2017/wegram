@@ -58,6 +58,7 @@ load(
     "telegram_team_id",
     "telegram_enable_icloud",
     "telegram_enable_siri",
+    "telegram_enable_app_groups",
 )
 
 load("@build_bazel_rules_apple//apple:resources.bzl",
@@ -543,14 +544,18 @@ aps_fragment = "" if telegram_aps_environment == "" else """
 <string>{telegram_aps_environment}</string>
 """.format(telegram_aps_environment=telegram_aps_environment)
 
+# Only the extensions read the app group container; the main-app-only internal build has no group in its
+# profile and turns it off with "enable_app_groups": false in its build configuration.
+
 app_groups_fragment = """
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>group.{telegram_bundle_id}</string>
-    </array>
+    {application_groups}
     <key>application-identifier</key>
     <string>{telegram_team_id}.{telegram_bundle_id}</string>
 """.format(
+    application_groups = "" if not telegram_enable_app_groups else """<key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.{}</string>
+    </array>""".format(telegram_bundle_id),
     telegram_team_id=telegram_team_id,
     telegram_bundle_id=telegram_bundle_id
 )
@@ -1687,6 +1692,8 @@ plist_fragment(
     <string>Telegram stores your contacts heavily encrypted in the cloud to let you connect with your friends across all your devices.</string>
     <key>NSFaceIDUsageDescription</key>
     <string>You can use Face ID to unlock the app.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>When you send your location to your friends, Telegram needs access to show them a map. You also need this to send locations from an Apple Watch.</string>
     <key>NSLocationAlwaysUsageDescription</key>
     <string>When you send your location to your friends, Telegram needs access to show them a map. You also need this to send locations from an Apple Watch.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
@@ -1707,11 +1714,6 @@ plist_fragment(
     <array>
         <string>INSendMessageIntent</string>
         <string>RemindAboutChatIntent</string>
-    </array>
-    <key>UIAppFonts</key>
-    <array>
-        <string>AremacFS-Regular.otf</string>
-        <string>AremacFS-Semibold.otf</string>
     </array>
     <key>UIApplicationSceneManifest</key>
     <dict>
