@@ -249,6 +249,10 @@
   ```
 
   产物为 `bazel-bin/Telegram/Telegram.ipa`。
+- 带推送的发布构建：把上面的 `--//Telegram:disableExtensions` 换成 `--//Telegram:notificationServiceExtensionOnly`，只嵌入通知服务扩展（解密推送），其它扩展不打包；两个开关不要同时传。
+  - 需要两份描述文件：主应用（含 `aps-environment` 和 App Group）和 `<bundle id>.NotificationService`（含同一 App Group）。App Group 固定为 `group.<bundle id>`，代码按这个名字找共享容器，选错组扩展就读不到账号数据。发布配置里 `enable_app_groups` 为 `true`。
+  - Telegram 侧要在 my.telegram.org 为该 api_id 配置 APNs 证书（"Sandbox & Production" SSL 证书转成 PEM）。App Store Connect API 不能创建 APNs 证书和 App Group，这两步只能在开发者网站手动做。
+  - 验证过的事实：配置证书后 Telegram 服务器会向自建 bundle id 投递 APNs 推送（用不加密注册的探测构建确认）。
 - 发布配置是 git 忽略的 JSON，键由 `build-system/Make/BuildConfiguration.py` 读取，如 `bundle_id`、`team_id`、`enable_app_groups`（描述文件没有 App Group 时设为 `false`，entitlements 不再声明 application-groups）。描述文件不含 `aps-environment` 时构建关闭推送而不是失败。仓库里不提交任何具体值。
 - `build-system/Make/tests/test_project_generation.py`：unsigned 标志要同时传给生成和构建；unsigned 工程只生成模拟器 target。
 - Bazel 偶发 swiftdoc「File exists」复制错误，原样重跑即可。项目自己的 Bazel CAS 缓存会占满磁盘，可以修剪。
@@ -302,5 +306,5 @@
 - **数字字体**：返回角标数字用的是 SF 字体，与微信自有字体不同（后者不能随应用发布）。
 - **欢迎页**：除中/英文外，其它语言的文案仍用英文 fallback；背景图仍需精修。
 - **应用图标**：备用图标仍是 Telegram 的。
-- **扩展**：Watch / Siri / 小组件的品牌替换只做了源码层面，未实际运行验证；发布构建目前不含扩展，推送关闭。
+- **扩展**：Watch / Siri / 小组件的品牌替换只做了源码层面，未实际运行验证；发布构建只含通知服务扩展；加密推送的通知内容尚未在设备上验证，发送人头像（需 Communication Notifications 权限）和通话推送未处理。
 - **普遍缺口**：大量入口只验证了编译接线或组件渲染，仍缺真实账号下的端到端验证（动作执行、权限变化、VoiceOver 连续手势、横屏、大字号、深色），以及同尺寸整页像素对照。

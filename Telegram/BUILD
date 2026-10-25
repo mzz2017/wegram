@@ -82,6 +82,14 @@ bool_flag(
     visibility = ["//visibility:public"],
 )
 
+# Embed only the notification service extension (push decryption), for a build whose profiles cover the main
+# app and that one extension. Do not combine with disableExtensions.
+bool_flag(
+    name = "notificationServiceExtensionOnly",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
 bool_flag(
     name = "disableProvisioningProfiles",
     build_setting_default = False,
@@ -98,6 +106,13 @@ config_setting(
     name = "disableExtensionsSetting",
     flag_values = {
         ":disableExtensions": "True",
+    },
+)
+
+config_setting(
+    name = "notificationServiceExtensionOnlySetting",
+    flag_values = {
+        ":notificationServiceExtensionOnly": "True",
     },
 )
 
@@ -1880,6 +1895,9 @@ ios_application(
     ],
     extensions = select({
         ":disableExtensionsSetting": [],
+        ":notificationServiceExtensionOnlySetting": [
+            ":NotificationServiceExtension" + notificationServiceExtensionVersion,
+        ],
         "//conditions:default": [
             ":ShareExtension",
             ":NotificationContentExtension",
