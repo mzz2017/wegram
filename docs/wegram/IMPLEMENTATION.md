@@ -91,7 +91,7 @@
   - 置顶卡片与展开列表：`TelegramUI/Sources/ChatPinnedMessageTitlePanelNode.swift`（含 `PinnedCardMetrics`、`PinnedListOverlayView`）。
 - **通话**：`CallScreen/Sources/Components/WegramVoiceCallView.swift`、`TelegramCallsUI/Sources/WegramCallFloatingWindow.swift`（72pt 浮窗卡片，拖到边缘收成 16×72pt 把手）。
 - **登录**：`AuthorizationUI/Sources/WegramWelcomeView.swift`（欢迎页，经 `AuthorizationSequenceSplashController` 启用）、`WegramAuthorizationLanguageController`、`WegramPhoneEntryLayout`。
-- **应用图标**：`Telegram/Telegram-iOS/WeGramAppIcon.xcassets`（标准 `.appiconset`，由 `Telegram/BUILD` 的 `app_icons` 引用）。
+- **应用图标**：`Telegram/Telegram-iOS/WeGramAppIcon.xcassets`（标准 `.appiconset`，由 `Telegram/BUILD` 的 `app_icons` 引用）。图案是绿色气泡围一条珊瑚色针织围巾，侧边打结、两条方头带流苏的尾巴；围巾全程等宽、横向罗纹，不收尖也不变成别的东西（旧版末端折成纸飞机，看着像豆荚）。各尺寸由 1024 母版缩放，RGB 无透明。
 
 ## 3. Telegram 功能 → 隐藏入口
 
